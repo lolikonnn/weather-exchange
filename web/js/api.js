@@ -113,7 +113,9 @@
     const ep = { now: '/api/now/', view: '/api/weather/view?stationid=', hourly: '/api/hourly/' }[sub] || '/api/now/';
     if (LOCAL) {
       try {
-        return await getJSON('api/cma/' + sub + '?st=' + encodeURIComponent(id) +
+        // 必须用绝对路径：APK 里页面挂在 /web/index.html 下，写成相对路径
+        // 会解析成 /web/api/cma/...，被 Java 拦截器当成静态资源而 404。
+        return await getJSON('/api/cma/' + sub + '?st=' + encodeURIComponent(id) +
                              '&ttl=' + Math.max(10, Math.round(ttlMs / 1000)),
                              { ttl: ttlMs, key: 'cl:' + key });
       } catch (e) { /* 落到直连 */ }
@@ -207,6 +209,10 @@
       const url = OM_F + '?latitude=' + lat + '&longitude=' + lon +
         '&hourly=temperature_2m,precipitation,relative_humidity_2m,wind_speed_10m,weather_code' +
         '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,sunrise,sunset' +
+        // Open-Meteo 的风速默认单位是 km/h，而中国气象局给的是 m/s。
+        // 不显式指定的话，"平均风速"会显示成 17.6 m/s（其实是 17.6 km/h ≈ 4.9 m/s），
+        // 和一墙之隔的实况风速 5.0 m/s 自相矛盾。
+        '&wind_speed_unit=ms' +
         '&past_days=' + (pastDays == null ? 92 : pastDays) +
         '&forecast_days=' + (fcstDays == null ? 16 : fcstDays) +
         '&timezone=' + encodeURIComponent(TZ);
@@ -519,6 +525,7 @@
         try {
           const d = await getJSON(OM_F + '?latitude=' + city.lat + '&longitude=' + city.lon +
             '&current=temperature_2m,precipitation,relative_humidity_2m,wind_speed_10m,weather_code' +
+            '&wind_speed_unit=ms' +          // 同上：默认 km/h，不指定会和气象局的 m/s 混着显示
             '&timezone=' + encodeURIComponent(TZ), { ttl: 300000, key: 'q|' + city.id });
           const c = d && d.current;
           if (c) return {

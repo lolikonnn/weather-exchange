@@ -30,9 +30,10 @@ import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
- * 天交所 · 天气行情终端 (Android)
+ * 天气战士 · 天气行情终端 (Android)
  *
  * 设计要点：
  *  1) 前端整包放在 assets/web 下，通过 https://tjs.local/web/... 由
@@ -44,6 +45,9 @@ import java.util.Map;
  *     由 /api/cma/* 代理并补桌面 Chrome UA。
  *  4) 所有被拦截的响应都补 Access-Control-Allow-Origin: *，让页面里的
  *     fetch('https://tjs.local/api/...') 能通过 CORS 检查。
+ *  5) /api/om/* 与 /api/nmc/* 是给 ?local=1 强制本地取数留的后门 ——
+ *     正常情况页面直连上游（上游都带 ACAO: *），只有想统一走 Java 的
+ *     UA / 缓存时才需要它们。nmc 用白名单正则挡住任意路径。
  */
 public class MainActivity extends Activity {
 
@@ -156,6 +160,7 @@ public class MainActivity extends Activity {
         if (path.startsWith("/api/cn/")) return cn(path.substring(8), qs);
         if (path.startsWith("/api/cma/")) return cma(path.substring(9), qs);
         if (path.startsWith("/api/om/")) return om(path.substring(8), query);
+        if (path.startsWith("/api/nmc/")) return nmc(path.substring(9));
         return json(404, "{\"ok\":false,\"error\":\"not found\"}");
     }
 
@@ -251,13 +256,43 @@ public class MainActivity extends Activity {
     /* ───────── Open-Meteo 透传 ───────── */
 
     private WebResourceResponse om(String rest, String query) {
+        // 页面传的是 /api/om/v1/forecast 这种带版本前缀的形式，也兼容去掉 v1 的写法
+        if (rest.startsWith("v1/")) rest = rest.substring(3);
         String host;
         if (rest.startsWith("forecast")) host = "https://api.open-meteo.com/v1/forecast";
         else if (rest.startsWith("archive")) host = "https://archive-api.open-meteo.com/v1/archive";
+        else if (rest.startsWith("air-quality")) host = "https://air-quality-api.open-meteo.com/v1/air-quality";
         else if (rest.startsWith("geocode")) host = "https://geocoding-api.open-meteo.com/v1/search";
         else return json(404, "{\"ok\":false,\"error\":\"unknown om sub\"}");
         try {
             return json(200, utf8(fetch(host + "?" + query, null, 20000)));
+        } catch (Exception e) {
+            return json(502, "{\"ok\":false,\"error\":\"" + esc(e.toString()) + "\"}");
+        }
+    }
+
+    /* ───────── 中国气象局台风/预警（typhoon.nmc.cn） ───────── */
+
+    /** 只放行已知的几个数据接口，挡住任意路径穿透。
+     *  注意 /weatherservice 前缀不能省，否则 /typhoon/jsons/* 全 404。 */
+    private static final Pattern NMC_RE = Pattern.compile(
+            "^(typhoon/jsons/[A-Za-z0-9_]+"
+            + "|fetch_json/[A-Za-z0-9_/]+"
+            + "|jsons/[A-Za-z0-9_]+"
+            + "|diamond\\d+/[A-Za-z0-9_/.-]+)$");
+
+    private WebResourceResponse nmc(String sub) {
+        if (!NMC_RE.matcher(sub).matches()) {
+            return json(403, "{\"ok\":false,\"error\":\"blocked\"}");
+        }
+        try {
+            // 上游返回的是 JSONP 包裹（fname({...})），这里原样透传，
+            // 剥壳交给 web/js/weather.js 的 parseLoose()。
+            byte[] raw = fetch("https://typhoon.nmc.cn/weatherservice/" + sub, null, 20000);
+            Map<String, String> h = cors(new HashMap<String, String>());
+            h.put("Cache-Control", "no-cache");
+            return new WebResourceResponse("application/javascript", "utf-8", 200, "OK", h,
+                    new ByteArrayInputStream(raw));
         } catch (Exception e) {
             return json(502, "{\"ok\":false,\"error\":\"" + esc(e.toString()) + "\"}");
         }

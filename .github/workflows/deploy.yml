@@ -1,4 +1,4 @@
-name: 天交所 · 抓数据并部署
+name: 天气战士 · 抓数据并部署
 
 # 为什么把"抓数据"和"部署"放在同一个工作流里:
 #   用 GITHUB_TOKEN 推送产生的 commit **不会**触发其它 workflow 运行,
@@ -58,14 +58,13 @@ jobs:
 
       - name: 把客户端安装包放进站点
         # dist/ 是本地构建好并提交进仓库的（仓库里没有 CI 能跑的 Android SDK / JDK 组合），
-        # 这里只把它拷进 web/dist/ 让 Pages 能直接下载站点底部的 .exe / .apk。
+        # 这里只把它拷进 web/dist/ 让 Pages 能直接下载站点底部的 .apk。
         # 拷贝是临时的，web/dist/ 已在 .gitignore 里，不会被提交。
         # 用纯 ASCII 别名发布：中文文件名在 CDN / 不同浏览器上的百分号编码行为不一致，
         # 别名能保证下载链接在任何环境都点得通，下载下来的文件名也不会乱码。
         run: |
           mkdir -p web/dist
-          cp -f dist/*.exe web/dist/tjs-weather-windows.exe 2>/dev/null || echo "还没有 .exe，跳过"
-          cp -f dist/*.apk web/dist/tjs-weather-android.apk 2>/dev/null || echo "还没有 .apk，跳过"
+          cp -f dist/*.apk web/dist/weather-warrior-android.apk 2>/dev/null || echo "还没有 .apk，跳过"
           ls -lh web/dist || true
 
       - name: 配置 Pages

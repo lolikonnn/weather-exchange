@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#12141a">
-<title>天交所 · 天气行情终端</title>
+<title>天气战士 · 老实看天气预报，很枯燥吧？</title>
+<meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、五档盘口、MACD/KDJ/RSI/BOLL。老实看天气预报，很枯燥吧？">
 <link rel="stylesheet" href="css/app.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23f0b90b'/><path d='M7 21l5-7 4 4 4-9 5 5' stroke='%23121418' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 </head>
@@ -12,9 +13,9 @@
 
 <!-- ══════════════════════ 顶栏 ══════════════════════ -->
 <header class="topbar">
-  <div class="brand">
-    <span class="brand-mark">天</span>
-    <span class="brand-text">天交所<em>天气行情终端</em></span>
+  <div class="brand" title="老实看天气预报，很枯燥吧？">
+    <span class="brand-mark">战</span>
+    <span class="brand-text">天气战士<em>老实看天气预报，很枯燥吧？</em></span>
   </div>
 
   <div class="search-wrap">
@@ -39,14 +40,14 @@
       </select>
     </label>
     <label class="ctrl">
-      <span>涨跌配色</span>
+      <span>涨跌颜色</span>
       <select id="colorMode">
-        <option value="cn" selected>红涨绿跌（A股）</option>
-        <option value="us">绿涨红跌（美股）</option>
+        <option value="cn" selected>红＝升温（国内习惯）</option>
+        <option value="us">绿＝升温（国外习惯）</option>
       </select>
     </label>
     <label class="ctrl">
-      <span>量能指标</span>
+      <span>波动柱口径</span>
       <select id="volumeMetric">
         <option value="range" selected>日内温差</option>
         <option value="precip">降水量</option>
@@ -54,10 +55,24 @@
         <option value="humid">湿度</option>
       </select>
     </label>
+    <button id="btnHelp" class="btn" title="术语对照表：每个词用天气话讲一遍">？术语</button>
     <button id="btnManual" class="btn" title="立即刷新一次">⟳ 刷新</button>
     <div class="clock"><span id="clock">--:--:--</span><em id="clockDate">----</em></div>
   </div>
 </header>
+
+<!-- ══════════════════════ 天气功能条 ══════════════════════
+     这些才是天气网站该有的东西：雷达回波、卫星云图、降水预报、台风路径、预警信号。
+     长相还是行情终端，但点开就是正经的天气图。 -->
+<div class="wx-bar">
+  <button class="wxbtn" data-wx="wxRadar"  title="最近几小时的雷达回波动画，能看出雨在哪、往哪走">🛰 <b>雷达回波</b></button>
+  <button class="wxbtn" data-wx="wxSat"    title="风云卫星云图，看大范围的云系"><span>☁</span> <b>卫星云图</b></button>
+  <button class="wxbtn" data-wx="wxPrecip" title="中央气象台画的全国降水量预报图，未来 24 小时">🌧 <b>降水预报</b></button>
+  <button class="wxbtn" data-wx="wxTy"     title="台风和热带气旋的实况路径与预报路径">🌀 <b>台风路径</b></button>
+  <button class="wxbtn" data-wx="wxWarn"   title="全国正在生效的气象预警信号">⚠ <b>预警信号</b></button>
+  <button class="wxbtn" id="btnLocate"     title="用浏览器定位，找出离你最近的城市">📍 <b>我附近</b></button>
+  <span class="wx-bar-hint" id="wxHint"></span>
+</div>
 
 <!-- ══════════════════════ 指数条 ══════════════════════ -->
 <div class="index-strip" id="indexStrip">
@@ -106,12 +121,12 @@
     </div>
 
     <div class="tabbar" id="periodTabs">
-      <button data-period="trend"  class="tab active">分时</button>
-      <button data-period="5day"   class="tab">五日</button>
-      <button data-period="day"    class="tab">日K</button>
-      <button data-period="week"   class="tab">周K</button>
-      <button data-period="month"  class="tab">月K</button>
-      <button data-period="fcst"   class="tab">预报K</button>
+      <button data-period="trend"  class="tab active" title="今天的每小时气温，和股价分时图一个画法">分时</button>
+      <button data-period="5day"   class="tab" title="最近 5 天连起来的每小时气温">五日</button>
+      <button data-period="day"    class="tab" title="每天一根蜡烛：开盘＝当天 0 点，收盘＝当天 23 点，上下影线＝当天最高／最低">日K</button>
+      <button data-period="week"   class="tab" title="每周一根蜡烛：开盘＝周一 0 点，收盘＝周日 23 点">周K</button>
+      <button data-period="month"  class="tab" title="每月一根蜡烛">月K</button>
+      <button data-period="fcst"   class="tab" title="未来 15 天的预报气温，用同样的蜡烛画法">预报K</button>
       <span class="tab-spacer"></span>
       <span class="chart-hint" id="chartHint"></span>
       <button class="mini" id="btnZoomReset" title="重置缩放">⤢</button>
@@ -122,12 +137,11 @@
     </div>
 
     <div class="tabbar sub">
-      <button data-ind="vol"  class="tab active">成交量</button>
-      <button data-ind="macd" class="tab">MACD</button>
-      <button data-ind="kdj"  class="tab">KDJ</button>
-      <button data-ind="rsi"  class="tab">RSI</button>
-      <button data-ind="boll" class="tab">BOLL</button>
-      <button data-ind="wr"   class="tab">WR</button>
+      <button data-ind="vol"    class="tab active" title="柱子高度＝当天温差（最高气温减最低气温），越高说明那天忽冷忽热">温差</button>
+      <button data-ind="precip" class="tab" title="未来两天每个小时的降水量（柱子）和降水概率（黄线）">降水</button>
+      <button data-ind="wind"   class="tab" title="风速（柱子）、阵风（紫虚线）和风向（箭头，指风吹去的方向）">风</button>
+      <button data-ind="cloud"  class="tab" title="低云／中云／高云的占比，白线是总云量。云越厚越可能阴天">云量</button>
+      <button data-ind="air"    class="tab" title="PM2.5（柱子）和空气质量指数 AQI（黄线），虚线是「良」的分界 100">空气</button>
     </div>
     <div class="chart-box sub">
       <div id="subChart" class="chart"></div>
@@ -137,12 +151,16 @@
 
   <!-- ───────── 右：盘口 + 明细 ───────── -->
   <aside class="pane pane-right">
-    <div class="pane-head"><span>五档盘口 <em class="dim">未来 5 日预报</em></span></div>
-    <div class="orderbook" id="orderbook"></div>
+    <section class="rblock" id="obBlock">
+      <div class="pane-head"><span>未来 5 天高低温 <em class="dim">上面＝每天最高 · 下面＝每天最低</em></span></div>
+      <div class="orderbook" id="orderbook"></div>
+    </section>
 
-    <div class="pane-head"><span>逐时成交 <em class="dim">最近观测</em></span></div>
-    <div class="tape-head"><span>时间</span><span>气温</span><span>量</span></div>
-    <div class="scroll grow" id="tape"></div>
+    <section class="rblock" id="tapeBlock">
+      <div class="pane-head"><span>每小时气温流水 <em class="dim">最近观测，倒序</em></span></div>
+      <div class="tape-head"><span>时间</span><span>气温</span><span>雨量</span></div>
+      <div class="scroll grow" id="tape"></div>
+    </section>
   </aside>
 
 </main>
@@ -155,8 +173,7 @@
   <span id="statusNext" class="dim"></span>
   <span class="dl-box" id="dlBox" hidden>
     <span class="dim">下载客户端</span>
-    <a class="dl" href="dist/tjs-weather-windows.exe" download>Windows .exe</a>
-    <a class="dl" href="dist/tjs-weather-android.apk" download>Android .apk</a>
+    <a class="dl" href="dist/weather-warrior-android.apk" download>Android .apk</a>
   </span>
 </footer>
 
@@ -173,6 +190,136 @@
 </div>
 
 <div id="toast" class="toast" hidden></div>
+
+<!-- 术语对照表：把每个炒股词用天气话讲一遍。
+     保留炒股软件的"长相"是原始需求，但不该要求用户会炒股才能看懂。 -->
+<div class="drawer" id="helpDrawer" hidden>
+  <div class="drawer-panel help-panel">
+    <div class="drawer-head">
+      <strong>这些炒股词，用天气话讲</strong>
+      <button class="mini" id="helpClose">✕</button>
+    </div>
+    <div class="drawer-body help-body">
+      <h4>图表上的词</h4>
+      <dl>
+        <dt>分时</dt><dd>今天的每小时气温，连成一条线。和股票分时图一模一样。</dd>
+        <dt>五日</dt><dd>最近 5 天连起来的每小时气温，方便看几天里的冷热节奏。</dd>
+        <dt>蜡烛 / K 线</dt><dd>一根蜡烛就是一天。<b>粗柱子</b>的上下两端＝当天 0 点和 23 点的气温（0 点高就是红色，0 点低就是绿色）；<b>细线（影线）</b>的两端＝当天最高和最低气温。</dd>
+        <dt>日K / 周K / 月K</dt><dd>一天一根蜡烛 / 一周一根 / 一个月一根。周期越长，噪音越少、趋势越清楚。</dd>
+        <dt>预报K</dt><dd>未来 15 天的预报气温，用同样的蜡烛画法，所以是"还没发生的K线"。</dd>
+        <dt>均线 MA5 / MA10 / MA20 / MA60</dt><dd>最近 5 / 10 / 20 / 60 天的平均气温连成线，用来看大方向。数字越大越平滑。</dd>
+        <dt>温差</dt><dd>下面那排柱子的默认口径：高度＝当天温差（最高减最低），柱子越高说明那天忽冷忽热。</dd>
+        <dt>降水 / 风 / 云量 / 空气</dt><dd>同一排柱子的另外四种口径，也都是未来两天的逐小时预报。</dd>
+        <dt>降水概率</dt><dd>那一小时下雨的可能性（百分比）。柱子＝雨量毫米，黄线＝概率。两者不是一回事：概率高不一定雨大。</dd>
+        <dt>阵风 / 风向</dt><dd>阵风＝短时最大风速（紫色虚线）。箭头指风吹<b>去</b>的方向 —— 气象上的"西南风"指风从西南吹来，所以箭头指向东北。</dd>
+        <dt>云量</dt><dd>天空被云遮住的百分比。低云／中云／高云分开画，白线是总云量。云越厚越可能阴天。</dd>
+        <dt>空气质量 AQI</dt><dd>越小越好：≤50 优、≤100 良、≤150 轻度污染、≤200 中度污染、≤300 重度污染、再高是严重污染。虚线 100 就是"良"的分界。</dd>
+      </dl>
+
+      <h4>顶上那排天气按钮</h4>
+      <dl>
+        <dt>🛰 雷达回波</dt><dd>最近几小时的降水雷达拼图，可以播成动画，看雨团在哪、往哪走。全国／华东两种范围，约每 6 分钟一张。</dd>
+        <dt>☁ 卫星云图</dt><dd>风云卫星拍的大范围云系，约每 30 分钟一张，能回看一天。</dd>
+        <dt>🌧 降水预报</dt><dd>中央气象台画的全国降水量预报图，未来 24 小时雨会下在哪、下多大，每 12 小时出一张。看色块：绿＝小雨、蓝＝中到大雨、紫红＝暴雨以上。</dd>
+        <dt>🌀 台风路径</dt><dd>今年每个台风／热带气旋走过的路线（实线）和中央气象台预报的后续路线（虚线）。点左边列表切换台风，地图可以拖动缩放。</dd>
+        <dt>⚠ 预警信号</dt><dd>全国正在生效的气象预警，按红／橙／黄／蓝排序显示原文。</dd>
+        <dt>📍 我附近</dt><dd>用浏览器定位，在本地城市表里找出离你最近的一个（不上传位置，换算全在本机完成）。</dd>
+      </dl>
+
+      <h4>右侧和顶部的词</h4>
+      <dl>
+        <dt>未来 5 天高低温</dt><dd>就是未来 5 天的最高温和最低温。上半部分从下往上是第 1～5 天的最高温，下半部分从上往下是第 1～5 天的最低温。</dd>
+        <dt>每小时气温流水</dt><dd>最近每个整点的气温和降水量，最新的在最上面。</dd>
+        <dt>今日 0 点 / 昨日 23 点</dt><dd>就是字面意思：今天 0 点的气温、昨天 23 点的气温。用来看这一整天是升了还是降了。</dd>
+        <dt>全天波动</dt><dd>今天最高气温减最低气温，数字越大说明这天忽冷忽热得越厉害。</dd>
+        <dt>同期</dt><dd>往年今天的历史平均最高／最低气温，用来比较"今年是偏热还是偏冷"。</dd>
+        <dt>+2.3 / +13.3%</dt><dd>和昨天同一时刻相比，气温差了 2.3℃，涨幅 13.3%（涨跌幅＝差值 ÷ 昨日同时刻气温）。</dd>
+        <dt>天气指数</dt><dd>顶部那排：把几个代表城市当成"大盘指数"，一眼看清全国在升温还是降温。</dd>
+        <dt>红色 / 绿色</dt><dd>红色＝比昨天高（升温），绿色＝比昨天低（降温）。顶栏可以改成国外习惯的反过来。</dd>
+      </dl>
+
+      <h4>数据从哪来</h4>
+      <dl>
+        <dt>实况</dt><dd>中国气象局（weather.cma.cn）观测站，约每 5 分钟更新。</dd>
+        <dt>蜡烛图</dt><dd>Open-Meteo 的历史逐小时气温（ERA5 再分析），按上面的规则合成每天的蜡烛。</dd>
+        <dt>预报</dt><dd>中国天气网（weather.com.cn）未来 7～15 天；逐小时的降水／风／云量／空气来自 Open-Meteo。</dd>
+        <dt>雷达 / 云图 / 台风 / 预警</dt><dd>中国气象局：雷达拼图与卫星云图来自图片库 image.nmc.cn，台风路径与预警信号来自 typhoon.nmc.cn。</dd>
+      </dl>
+      <p class="help-foot">一句话：<b>把"气温"当成"股价"看</b>。红色＝升温，绿色＝降温，蜡烛＝一天，均线＝平均气温。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 五个天气功能页 ══════════════════════ -->
+
+<!-- 雷达回波 -->
+<div class="drawer wx-drawer" id="wxRadar" hidden>
+  <div class="drawer-panel wx-panel">
+    <div class="drawer-head">
+      <strong>🛰 雷达回波</strong>
+      <span class="wx-sub" id="wxRadarSub"></span>
+      <button class="mini" data-close>✕</button>
+    </div>
+    <div class="drawer-body wx-body" id="wxRadarBody"></div>
+  </div>
+</div>
+
+<!-- 卫星云图 -->
+<div class="drawer wx-drawer" id="wxSat" hidden>
+  <div class="drawer-panel wx-panel">
+    <div class="drawer-head">
+      <strong>☁ 卫星云图</strong>
+      <span class="wx-sub" id="wxSatSub"></span>
+      <button class="mini" data-close>✕</button>
+    </div>
+    <div class="drawer-body wx-body" id="wxSatBody"></div>
+  </div>
+</div>
+
+<!-- 全国降水量预报图 -->
+<div class="drawer wx-drawer" id="wxPrecip" hidden>
+  <div class="drawer-panel wx-panel">
+    <div class="drawer-head">
+      <strong>🌧 全国降水量预报图</strong>
+      <span class="wx-sub" id="wxPrecipSub"></span>
+      <button class="mini" data-close>✕</button>
+    </div>
+    <div class="drawer-body wx-body" id="wxPrecipBody"></div>
+  </div>
+</div>
+
+<!-- 台风路径 -->
+<div class="drawer wx-drawer" id="wxTy" hidden>
+  <div class="drawer-panel wx-panel wx-panel-wide">
+    <div class="drawer-head">
+      <strong>🌀 台风路径</strong>
+      <span class="wx-sub" id="wxTySub"></span>
+      <button class="mini" data-close>✕</button>
+    </div>
+    <div class="drawer-body wx-body wx-body-flat" id="wxTyBody"></div>
+  </div>
+</div>
+
+<!-- 预警信号 -->
+<div class="drawer wx-drawer" id="wxWarn" hidden>
+  <div class="drawer-panel wx-panel">
+    <div class="drawer-head">
+      <strong>⚠ 预警信号</strong>
+      <span class="wx-sub" id="wxWarnSub"></span>
+      <button class="mini" data-close>✕</button>
+    </div>
+    <div class="drawer-body wx-body" id="wxWarnBody"></div>
+  </div>
+</div>
+
+<!-- 手机竖屏底部导航：宽屏下由 CSS 隐藏。
+     竖屏一次只能好好显示一栏，所以把三栏拆成四个可切换的页。 -->
+<nav class="mtabs" id="mtabs" hidden>
+  <button class="mtab active" data-mtab="0"><i>★</i><span>自选</span></button>
+  <button class="mtab" data-mtab="1"><i>📈</i><span>气温</span></button>
+  <button class="mtab" data-mtab="2"><i>🌡</i><span>高低温</span></button>
+  <button class="mtab" data-mtab="3"><i>🕒</i><span>逐时</span></button>
+</nav>
 
 <script>
 /* 运行期错误可视化：出问题直接落到状态栏，方便用户反馈与排查 */
@@ -196,10 +343,15 @@ window.__errs = [];
    - GitHub Pages 上无法直连，只能读预抓好的静态 JSON。
    api.js 会据此决定走 /api/cn/* 还是 data/official/*。
 
+   - APK 的外壳把前端挂在 https://tjs.local/web/ 下，由 Java 拦截器提供
+     /api/cn/*、/api/cma/*、/api/om/*、/api/nmc/* 代理，所以 tjs.local 也算本地。
+     这条不能漏：build_apk.py 特意不打包 data/official/ 那份 2.7 MB 离线快照，
+     一旦这里判成"非本地"，APK 就会去找那份不存在的静态文件，中国天气网的数据全空。
+
    ?local=0 / ?local=1 可以强制覆盖 —— 用来在本地一条命令里复现 GitHub Pages 的取数路径：
      http://127.0.0.1:8765/?local=0&city=101280101&p=day   走静态兜底
    不加这个参数时行为完全不变。 */
-window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)
+window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(location.hostname)
   || location.protocol === 'file:';
 (function () {
   var m = /[?&]local=([01])\b/.exec(location.search);
@@ -211,6 +363,8 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostna
 <script src="js/indicators.js"></script>
 <script src="js/api.js"></script>
 <script src="js/chart.js"></script>
+<script src="js/weather.js"></script>
+<script src="js/wxui.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -39,7 +39,7 @@ UA = "TJS-Weather-Push/1.0"
 # 提交的顶层条目（目录递归，文件直接收）
 PICK = [
     ".github", ".gitignore", "README.md",
-    "web", "server", "desktop", "android", "tools", "docs",
+    "web", "server", "android", "tools", "docs",
 ]
 # android/ 下只提交源码，SDK 与拷贝出来的前端不打进去
 SKIP_DIRS = {
@@ -47,7 +47,7 @@ SKIP_DIRS = {
     ".sdk", "assets", "dist",
 }
 DIST = ["dist"]          # dist 只挑产物文件，不挑目录里其它东西
-DIST_EXT = (".exe", ".apk")
+DIST_EXT = (".apk",)     # Windows EXE 已放弃（见 README「实现上的坑」）
 SKIP_EXT = (".pyc", ".pyo", ".log", ".spec")
 
 
@@ -165,7 +165,7 @@ def main():
     if st == 404:
         st2, repo = req("POST", "/user/repos", a.token, {
             "name": a.repo,
-            "description": "天交所 · 天气行情终端 —— 用看股票的方式看天气（蜡烛图 / 分时 / 日周月K / 五档盘口）",
+            "description": "天气战士 —— 用看股票的方式看天气（蜡烛图 / 分时 / 日周月K / 五档盘口）",
             "private": a.private,
             "has_issues": True, "has_wiki": False, "has_projects": False,
             "auto_init": False,
@@ -235,7 +235,7 @@ def main():
         sys.exit("建 tree 失败 (%s): %s" % (st, newtree))
 
     # 6) 建 commit
-    msg = a.message or "天交所 · 天气行情终端: 同步前端 / 数据集 / 打包产物"
+    msg = a.message or "天气战士: 同步前端 / 数据集 / 打包产物"
     cdata = {"message": msg, "tree": newtree["sha"]}
     if parent:
         cdata["parents"] = [parent]

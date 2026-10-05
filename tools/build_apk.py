@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-天交所 · 打包 Android APK（不依赖 Gradle / Android Studio）
+天气战士 · 打包 Android APK（不依赖 Gradle / Android Studio）
 
 用到的工具全部来自 android/.sdk（已随仓库准备好或由本脚本下载）：
   build-tools/aapt2.exe  资源编译与链接（产出二进制 AndroidManifest + resources.arsc）
@@ -42,7 +42,7 @@ KS_ALIAS = "tjs"
 
 BUILD = os.path.join(ROOT, "build", "apk")
 ASSETS_WEB = os.path.join(ROOT, "android", "assets", "web")
-NAME = "天交所-天气行情终端"
+NAME = "天气战士"
 
 SKIP_ASSET = ("__probe.html", "__net.html", "__net2.html", "cities.full.json")
 

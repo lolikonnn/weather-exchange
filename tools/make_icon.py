@@ -2,7 +2,7 @@
 """
 生成 APK 启动图标（纯标准库写 PNG，不依赖 Pillow）。
 
-图案：深色底 + 三根红绿蜡烛 + 金色基准线 —— 与「天交所」的行情皮肤一致。
+图案：深色底 + 三根红绿蜡烛 + 金色基准线 —— 与「天气战士」的行情皮肤一致。
 用法: python tools\\make_icon.py
 """
 from __future__ import annotations

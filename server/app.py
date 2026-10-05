@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-天交所 · 本地服务 (桌面版内核 / 本地调试)
+天气战士 · 本地服务 (桌面版内核 / 本地调试)
 
 为什么需要它:
   中国天气网 d1.weather.com.cn 的接口强制校验 Referer 必须是 weather.com.cn,
@@ -46,11 +46,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-# 兼容 PyInstaller 打包（--add-data "web;web" 后 web 落在 sys._MEIPASS 下）
-_MEI = getattr(sys, "_MEIPASS", None)
 _WEB_CANDIDATES = [os.path.join(ROOT, "web"), os.path.join(HERE, "web")]
-if _MEI:
-    _WEB_CANDIDATES.append(os.path.join(_MEI, "web"))
 WEB = next((p for p in _WEB_CANDIDATES if os.path.isdir(p)), _WEB_CANDIDATES[0])
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -59,6 +55,11 @@ CWW_REF = "http://www.weather.com.cn/"
 D1 = "http://d1.weather.com.cn"
 OM = "https://api.open-meteo.com"
 OM_A = "https://archive-api.open-meteo.com"
+OM_AIR = "https://air-quality-api.open-meteo.com"
+# 中国气象局台风/预警服务。注意前缀 /weatherservice 不能省，
+# 省掉之后所有 /typhoon/jsons/* 都会 404（这是官方前端 typhoon-datas-inner.js 里写死的）。
+NMC = "https://typhoon.nmc.cn/weatherservice"
+NMC_IMG = "https://image.nmc.cn"
 
 CODE_RE = re.compile(r"^\d{9}$")
 # 气象局站号: 54511 / 59493 / V3006 / P5599 / M1068 ...
@@ -191,15 +192,40 @@ def cn_search(q: str) -> list:
 
 
 # ----------------------------------------------------------------- Open-Meteo 透传
-OM_ALLOW = ("/v1/forecast", "/v1/archive")
+OM_ALLOW = ("/v1/forecast", "/v1/archive", "/v1/air-quality")
 
 
 def om_passthrough(path: str, query: str) -> bytes:
     if path not in OM_ALLOW:
         raise ValueError("path not allowed")
-    host = OM_A if path.endswith("archive") else OM
+    if path.endswith("archive"):
+        host = OM_A
+    elif path.endswith("air-quality"):
+        host = OM_AIR
+    else:
+        host = OM
     url = host + path + ("?" + query if query else "")
     return fetch_cached(url, 900, ref=None, timeout=30)
+
+
+# ----------------------------------------------------------------- 气象局台风/预警透传
+# 白名单：台风列表与路径、预警信号、灾害图层。其余一律拒。
+NMC_RE = re.compile(
+    r"^("
+    r"typhoon/jsons/[A-Za-z0-9_]+"
+    r"|fetch_json/[A-Za-z0-9_/]+"
+    r"|jsons/[A-Za-z0-9_]+"
+    r"|diamond\d+/[A-Za-z0-9_/.-]+"
+    r")$"
+)
+
+
+def nmc_passthrough(sub: str, query: str) -> bytes:
+    sub = sub.lstrip("/")
+    if not NMC_RE.match(sub):
+        raise ValueError("path not allowed: %s" % sub)
+    url = NMC + "/" + sub + ("?" + query if query else "")
+    return fetch_cached(url, 240, ref=None, timeout=25)
 
 
 # ----------------------------------------------------------------- HTTP
@@ -269,7 +295,8 @@ class Handler(BaseHTTPRequestHandler):
         g = lambda k, d="": (q.get(k) or [d])[0]
         code = g("code")
         if p != "/api/health" and not CODE_RE.match(code) and p != "/api/cn/search" \
-                and not p.startswith("/api/cma/") and not p.startswith("/api/om/"):
+                and not p.startswith("/api/cma/") and not p.startswith("/api/om/") \
+                and not p.startswith("/api/nmc/"):
             return self._json({"ok": False, "error": "bad code"}, 400)
 
         if p == "/api/health":
@@ -319,6 +346,12 @@ class Handler(BaseHTTPRequestHandler):
             sub = "/" + p[len("/api/om/"):]
             return self._send(200, om_passthrough(sub, urllib.parse.urlsplit(self.path).query),
                               "application/json; charset=utf-8")
+
+        if p.startswith("/api/nmc/"):
+            # 气象局台风/预警：响应是 JSONP 包裹的，原样透传，由前端剥壳
+            sub = p[len("/api/nmc/"):]
+            body = nmc_passthrough(sub, urllib.parse.urlsplit(self.path).query)
+            return self._send(200, body, "application/javascript; charset=utf-8")
 
         return self._json({"ok": False, "error": "no such api"}, 404)
 
@@ -370,7 +403,7 @@ def serve(port: int = 0, quiet: bool = False) -> tuple[ThreadingHTTPServer, str]
     srv.daemon_threads = True
     url = "http://127.0.0.1:%d/" % port
     if not quiet:
-        print("天交所 · 本地服务已启动")
+        print("天气战士 · 本地服务已启动")
         print("  界面:  %s" % url)
         print("  静态根: %s" % WEB)
         print("  按 Ctrl+C 退出")

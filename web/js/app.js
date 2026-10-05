@@ -18,7 +18,7 @@
   const S = {
     period: 'trend', ind: 'vol', metric: 'range',
     refreshMs: 3000, sortMode: 0,
-    watch: [], cur: null, data: null,
+    watch: [], cur: null, data: null, wx: null,
     quotes: {}, briefs: {}, idxQ: {}, idxB: {}, briefAt: 0,
     loading: false, timer: null, lastQuoteAt: 0, lastFullAt: 0, tick: 0
   };
@@ -125,9 +125,13 @@
     API.Cities.hot.forEach(c => {
       const q = quoteOf(c.id);
       const col = U.trendColor(q.chg);
-      box.appendChild(el('div', {
+      const starred = S.watch.indexOf(c.id) >= 0;
+      const row = el('div', {
         class: 'stock-row' + (S.cur && S.cur.id === c.id ? ' on' : ''),
-        onclick: () => selectCity(c.id)
+        onclick: (e) => {
+          if (e.target.classList.contains('sw-add') || e.target.classList.contains('sw-del')) return;
+          selectCity(c.id);
+        }
       }, [
         el('div', {}, [
           el('div', { class: 'sw-name', text: c.name }),
@@ -135,7 +139,20 @@
         ]),
         el('div', { class: 'sw-price', style: { color: col }, text: q.temp == null ? '--' : fx(q.temp, 1) }),
         el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
-      ]));
+      ]);
+      // 热门列表原来【没有】加自选的入口，导致除了搜索框 Ctrl+Enter 之外
+      // 用户根本没办法把城市加进自选。这里补一个 ＋ / ✕。
+      row.appendChild(el('span', {
+        class: starred ? 'sw-del' : 'sw-add',
+        text: starred ? '✕' : '＋',
+        title: starred ? '从自选移除' : '加入自选',
+        onclick: (e) => {
+          e.stopPropagation();
+          if (starred) removeWatch(c.id); else addWatch(c.id);
+          renderHotlist(); buildDrawer();
+        }
+      }));
+      box.appendChild(row);
     });
   }
 
@@ -189,12 +206,13 @@
     const n = d.now || {};
     const om = d.omDaily[curBar ? curBar.d : ''] || {};
     const items = [
-      ['今开', curBar ? fx(curBar.o, 1) : '--', curBar && base != null ? U.trendColor(curBar.o - base) : null],
-      ['最高', curBar ? fx(curBar.h, 1) : '--', U.upColor()],
-      ['最低', curBar ? fx(curBar.l, 1) : '--', U.downColor()],
-      ['昨收', base == null ? '--' : fx(base, 1), null],
-      ['振幅', curBar ? fx(curBar.h - curBar.l, 1) + ' ℃' : '--', null],
-      ['日内温差', curBar ? fx(curBar.range, 1) + ' ℃' : '--', null],
+      // 标签刻意用天气话写，不用"今开/昨收"这类炒股词 —— 保留炒股软件的"长相"就够了，
+      // 不该要求用户会炒股才能看懂（用户反馈："那些炒股软件术语我不炒股看不懂"）。
+      ['今日 0 点', curBar ? fx(curBar.o, 1) : '--', curBar && base != null ? U.trendColor(curBar.o - base) : null],
+      ['今日最高', curBar ? fx(curBar.h, 1) : '--', U.upColor()],
+      ['今日最低', curBar ? fx(curBar.l, 1) : '--', U.downColor()],
+      ['昨日 23 点', base == null ? '--' : fx(base, 1), null],
+      ['全天波动', curBar ? fx(curBar.h - curBar.l, 1) + ' ℃' : '--', null],
       ['降水量', curBar ? fx(curBar.v, 1) + ' mm' : '--', null],
       ['降水时数', curBar ? (curBar.rainHours || 0) + ' h' : '--', null],
       ['湿度', n.humidity == null ? (curBar && curBar.humAvg != null ? curBar.humAvg + '%' : '--') : n.humidity + '%', null],
@@ -205,8 +223,9 @@
       ['平均风速', curBar && curBar.windAvg != null ? fx(curBar.windAvg, 1) + ' m/s' : '--', null],
       ['日出', om.sunrise ? String(om.sunrise).slice(11, 16) : '--', null],
       ['日落', om.sunset ? String(om.sunset).slice(11, 16) : '--', null],
-      ['历史今日', prevBar ? fx(prevBar.h, 1) + ' / ' + fx(prevBar.l, 1) : '--', null],
-      ['样本数', curBar ? curBar.n + ' 时次' : '--', null]
+      // 标签写短一点：统计格只有 ~107px 宽，"历史今日" + "32.7 / 22.9" 会被省略号截掉
+      ['同期', prevBar ? fx(prevBar.h, 1) + '/' + fx(prevBar.l, 1) : '--', null],
+      ['观测点', curBar ? curBar.n + ' 个' : '--', null]
     ];
     const box = $('#qStats'); box.innerHTML = '';
     items.forEach(([k, v, c2]) => box.appendChild(el('div', { class: 'qs' }, [
@@ -261,22 +280,24 @@
     const cur = q.temp;
     const src = list[0].src;
     box.appendChild(el('div', { class: 'ob-src', text: src === 'cma' ? '中国气象局预报 · 未来 5 日' : 'Open-Meteo 预报 · 未来 5 日（官方源不可用）' }));
-    // 盘口要像股票那样单调：卖五..卖一 由高到低，买一..买五 由低到高
+    // 排布仍照股票盘口的习惯（上高下低、单调排列），但标签换成天气话：
+    // 原来的"卖五/买一"对不炒股的人等于天书。
+    const md = s => String(s || '').slice(5);   // 'YYYY-MM-DD' → 'MM-DD'
     const fut = list.slice(1, 6);
     const asks = fut.slice().sort((a, b) => a.high - b.high);
     const bids = fut.slice().sort((a, b) => a.low - b.low);
     for (let i = asks.length; i >= 1; i--) {
       const f = asks[i - 1];
-      box.appendChild(makeObRow('卖' + '一二三四五'[i - 1], f.high, f, cur, 'ask'));
+      box.appendChild(makeObRow(md(f.date) + ' 最高', f.high, f, cur, 'ask'));
     }
     box.appendChild(el('div', { class: 'ob-mid' }, [
-      el('span', { text: '最新 ' + (cur == null ? '--' : fx(cur, 1)) + '℃' }),
-      el('b', { style: { color: U.trendColor(q.chg) }, text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' }),
-      el('span', { text: '价差 ' + spread(list) })
+      el('span', { text: '现在 ' + (cur == null ? '--' : fx(cur, 1)) + '℃' }),
+      el('b', { style: { color: U.trendColor(q.chg) }, text: q.pct == null ? '--' : '比昨天 ' + sgn(q.pct, 2) + '%' }),
+      el('span', { text: '5 天落差 ' + spread(list) })
     ]));
     for (let i = 1; i <= bids.length; i++) {
       const f = bids[i - 1];
-      box.appendChild(makeObRow('买' + '一二三四五'[i - 1], f.low, f, cur, 'bid'));
+      box.appendChild(makeObRow(md(f.date) + ' 最低', f.low, f, cur, 'bid'));
     }
   }
 
@@ -361,6 +382,36 @@
     };
   }
 
+  /* ═══════════ 天气副图（降水 / 风 / 云量 / 空气） ═══════════ */
+  /** S.ind 是不是天气副图口径 */
+  function isWxInd() {
+    return !!(window.WXUI && window.Weather && Weather.isWeatherSub(S.ind) && S.ind !== 'range');
+  }
+  /** 画天气副图；不是天气口径就返回 false，交回 chart.js 画温差柱 */
+  function renderWxSub() {
+    if (!isWxInd()) return false;
+    const wx = S.wx;
+    return WXUI.drawSub(S.ind, wx, wx && wx.air);
+  }
+  /** 拉当前城市的逐小时预报 + 空气质量，成功后重绘副图 */
+  async function loadWx(cityId) {
+    if (!window.Weather) return;
+    const c = API.Cities.get(cityId); if (!c) return;
+    S.wx = null;
+    if (isWxInd()) renderChart();
+    const hint = $('#wxHint');
+    try {
+      const wx = await Weather.ensure(c);
+      if (!S.cur || S.cur.id !== cityId) return;   // 这期间用户已经切到别的城市
+      S.wx = wx;
+      if (isWxInd()) renderChart();
+      if (hint) hint.textContent = (wx && wx.err) ? ('逐小时数据暂不可用：' + wx.err) : '';
+    } catch (e) {
+      if (isWxInd()) renderChart();
+      if (hint) hint.textContent = '逐小时数据暂不可用';
+    }
+  }
+
   function renderChart() {
     const d = S.data; if (!d) return;
     const p = S.period;
@@ -373,8 +424,9 @@
         hours: pts.map(x => U.sessionLabel(Number(String(x.t).slice(11, 13)))),
         title: (p === 'trend' ? '分时' : '五日分时') + ' · ' + (p === 'trend' ? d.today : '近 5 日')
       });
-      const bars = d.daily.slice(Math.max(0, d.todayIndex - 4), d.todayIndex + 1);
-      Chart.renderSub({ indName: 'vol', bars: d.daily, ind: d.indicators, metric: S.metric, view: 90 });
+      if (!renderWxSub()) {
+        Chart.renderSub({ indName: 'vol', bars: d.daily, ind: d.indicators, metric: S.metric, view: 90 });
+      }
       $('#chartHint').textContent = '昨收 ' + (d.base == null ? '--' : fx(d.base, 1)) + ' ℃　最新 ' + (qp.temp == null ? '--' : fx(qp.temp, 1)) + ' ℃　逐时点 ' + pts.length;
     } else {
       const s = seriesFor(p);
@@ -384,7 +436,9 @@
         metric: S.metric, view: s.view, monthMode: s.monthMode, title: s.title,
         showBoll: S.ind === 'boll'
       });
-      Chart.renderSub({ indName: S.ind, bars: s.bars, ind: s.ind, metric: S.metric, view: s.view });
+      if (!renderWxSub()) {
+        Chart.renderSub({ indName: S.ind, bars: s.bars, ind: s.ind, metric: S.metric, view: s.view });
+      }
       const i = s.bars.length - 1;
       const g = k => (s.ind[k] && s.ind[k][i] != null) ? fx(s.ind[k][i], 1) : '--';
       $('#chartHint').textContent = S.ind === 'boll'
@@ -412,6 +466,7 @@
     S.loading = true;
     S.cur = c;
     S.data = null;
+    S.wx = null;
     storeSet('last', id);
     renderWatchlist(); renderHotlist(); renderIndexes();
     $('#qName').textContent = c.name;
@@ -428,6 +483,7 @@
       renderQuoteHead(); renderOrderbook(); renderTape(); renderChart();
       renderStatus();
       renderWatchlist(); renderIndexes();
+      loadWx(c.id);   // 逐小时/空气是副图才要，异步补上，不挡主流程
       $('#statusLeft').textContent = '已加载 ' + c.name + '（' + d.daily.length + ' 根日K / ' + d.hourly.time.length + ' 个时次）';
       toast('已切换到 ' + c.name + ' ' + c.id);
     } catch (e) {
@@ -514,14 +570,29 @@
     box.innerHTML = '';
     if (!srList.length) { box.appendChild(el('div', { class: 'sr-empty', text: '未找到匹配城市' })); box.hidden = false; return; }
     srList.forEach((c, i) => {
-      box.appendChild(el('div', {
+      const starred = S.watch.indexOf(c.id) >= 0;
+      const row = el('div', {
         class: 'sr-item' + (i === srSel ? ' sel' : ''),
-        onclick: () => { $('#search').value = ''; box.hidden = true; selectCity(c.id); }
+        onclick: (e) => {
+          if (e.target.classList.contains('sr-star')) return;
+          $('#search').value = ''; box.hidden = true; selectCity(c.id);
+        }
       }, [
         el('span', { class: 'sr-name', text: c.name }),
         el('span', { class: 'sr-prov', text: (c.prov || '') + (c.cma ? ' · ' + c.cma : '') }),
         el('span', { class: 'sr-code', text: c.id })
-      ]));
+      ]);
+      row.appendChild(el('span', {
+        class: 'sr-star' + (starred ? ' on' : ''),
+        text: starred ? '★' : '☆',
+        title: starred ? '从自选移除' : '加入自选（也可按 Ctrl+Enter）',
+        onclick: (e) => {
+          e.stopPropagation();
+          if (S.watch.indexOf(c.id) >= 0) removeWatch(c.id); else addWatch(c.id);
+          doSearch(); renderHotlist(); buildDrawer();
+        }
+      }));
+      box.appendChild(row);
     });
     box.hidden = false;
   }, 130);
@@ -565,14 +636,26 @@
           dataset: { id: c.id },
           title: c.id + (c.cma ? ' · ' + c.cma : ''),
           onclick: (e) => {
-            if (e.target.classList.contains('star')) { star ? removeWatch(c.id) : addWatch(c.id); buildDrawer(); return; }
+            // ★/☆ 只负责自选增删；点别处才是切换城市。
+            // 注意：星号必须【永远】渲染出来 —— 以前只在已自选时才画，
+            // 于是没自选的城市根本没有星可点，也就永远加不进自选。
+            if (e.target.classList.contains('star')) {
+              e.stopPropagation();
+              if (S.watch.indexOf(c.id) >= 0) removeWatch(c.id); else addWatch(c.id);
+              buildDrawer(); renderHotlist();
+              return;
+            }
             selectCity(c.id); $('#cityDrawer').hidden = true;
           }
         }, [
-          el('span', { text: c.name + (star ? ' ' : '') }),
-          star ? el('span', { class: 'star', text: '★' }) : null,
+          el('span', { text: c.name }),
+          el('span', {
+            class: 'star' + (star ? ' on' : ''),
+            text: star ? '★' : '☆',
+            title: star ? '从自选移除' : '加入自选'
+          }),
           el('i', { text: c.id.slice(-3) })
-        ].filter(Boolean)));
+        ]));
       });
       body.appendChild(g);
     });
@@ -591,9 +674,11 @@
       U.$$('.tabbar.sub .tab').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
       S.ind = t.dataset.ind;
-      if (S.period === 'trend' || S.period === '5day') S.period = 'day';
+      // 天气口径（降水/风/云量/空气）和主图的K线周期没关系，不要因此把用户踢出分时
+      if (!isWxInd() && (S.period === 'trend' || S.period === '5day')) S.period = 'day';
       U.$$('#periodTabs .tab').forEach(x => x.classList.toggle('active', x.dataset.period === S.period));
       renderChart();
+      if (isWxInd() && !S.wx && S.cur) loadWx(S.cur.id);
     }));
     $('#refreshRate').addEventListener('change', e => {
       S.refreshMs = Number(e.target.value); storeSet('refresh', S.refreshMs);
@@ -623,6 +708,10 @@
     $('#btnAllCities').addEventListener('click', () => { buildDrawer(); $('#cityDrawer').hidden = false; });
     $('#drawerClose').addEventListener('click', () => { $('#cityDrawer').hidden = true; });
     $('#cityDrawer').addEventListener('click', e => { if (e.target.id === 'cityDrawer') $('#cityDrawer').hidden = true; });
+    // 术语对照表：炒股词全都用天气话讲了一遍，不炒股也看得懂
+    $('#btnHelp').addEventListener('click', () => { $('#helpDrawer').hidden = false; });
+    $('#helpClose').addEventListener('click', () => { $('#helpDrawer').hidden = true; });
+    $('#helpDrawer').addEventListener('click', e => { if (e.target.id === 'helpDrawer') $('#helpDrawer').hidden = true; });
     $('#drawerFilter').addEventListener('input', debounce(e => {
       const q = e.target.value.trim().toLowerCase();
       U.$$('#drawerBody .dw-city').forEach(n => {
@@ -649,6 +738,30 @@
   }
 
   /* ═══════════ 启动 ═══════════ */
+  /**
+   * 手机竖屏的页签：宽屏下三栏并排，竖屏一次只放得下一栏，所以拆成
+   * 自选(0) / 行情(1) / 盘口(2) / 明细(3) 四页，由 body[data-mtab] 决定显示哪栏。
+   * 切到行情页时要 resize 图表 —— 隐藏期间 ECharts 量到的是 0 宽。
+   */
+  function setMTab(i) {
+    document.body.dataset.mtab = String(i);
+    U.$$('#mtabs .mtab').forEach(b => b.classList.toggle('active', b.dataset.mtab === String(i)));
+    if (String(i) === '1') setTimeout(() => { try { Chart.resize(); } catch (e) {} }, 60);
+  }
+  function isNarrow() { return window.matchMedia('(max-width:860px)').matches; }
+  function syncMTabs() {
+    const nav = U.$('#mtabs');
+    if (!nav) return;
+    const narrow = isNarrow();
+    nav.hidden = !narrow;
+    if (narrow) {
+      if (!document.body.dataset.mtab) setMTab(1);   // 手机上默认直接看行情
+    } else {
+      delete document.body.dataset.mtab;             // 宽屏恢复三栏并排
+      setTimeout(() => { try { Chart.resize(); } catch (e) {} }, 60);
+    }
+  }
+
   async function boot() {
     tickClock(); setInterval(tickClock, 1000);
     try {
@@ -673,12 +786,24 @@
 
     Chart.init($('#mainChart'), $('#subChart'));
     bind();
+    if (window.WXUI) WXUI.init();
     renderWatchlist(); renderHotlist(); renderIndexes();
     scheduleRefresh();
 
     const lastId = storeGet('last', null);
     const q = urlParams();
     syncTabs();
+    // ?help=1 直接展开术语对照表（可分享的链接，也方便截图自查）
+    if (q.help) $('#helpDrawer').hidden = false;
+    // ?wx=wxRadar|wxSat|wxTy|wxWarn 直接打开某个天气功能页（同样方便截图自查）
+    if (q.wx && window.WXUI) setTimeout(() => WXUI.open(q.wx), 500);
+    // ?mtab=0..3 可深链到手机页签；宽屏下忽略
+    syncMTabs();
+    if (q.mtab != null && isNarrow()) setMTab(q.mtab);
+    let rt;
+    const onViewport = () => { clearTimeout(rt); rt = setTimeout(syncMTabs, 120); };
+    window.addEventListener('resize', onViewport);
+    window.addEventListener('orientationchange', onViewport);
     const first = (q.city && API.Cities.get(q.city)) ? q.city
       : (lastId && API.Cities.get(lastId)) ? lastId : S.watch[0];
     selectCity(first);
@@ -709,9 +834,9 @@
       .catch(() => {});
   }
 
-  /** 支持 ?city=101010100&p=day&ind=macd&color=us&m=precip 深链与分享（也方便无头截图） */
+  /** 支持 ?city=101010100&p=day&ind=wind&color=us&m=precip&wx=wxRadar&help=1 深链与分享（也方便无头截图） */
   const PERIODS = ['trend', '5day', 'day', 'week', 'month', 'fcst'];
-  const INDS = ['vol', 'macd', 'kdj', 'rsi', 'boll', 'wr'];
+  const INDS = ['vol', 'precip', 'wind', 'cloud', 'air'];
 
   function urlParams() {
     const o = {};
