@@ -222,10 +222,24 @@
 
 **搜索框搜得到全部 352 个**，不是只有热门那几个。
 
+在此之上还有一份 **省 / 地级市 / 区县三级地名目录 `web/data/places.json`**（3237 条，
+222 KB，来自阿里 DataV 的行政区划边界数据，每条带中心点经纬度）：**义乌、昆山、敦煌、
+察隅、漠河、浦东新区**这类县级市 / 区在这里才搜得到，`cities.json` 只有地级市所以没有它们。
+
+- 搜到的区县没有气象局站号，但**带经纬度**，直接按坐标走 Open-Meteo 取天气 —— 与
+  「当前所在地」是同一条通路，蜡烛图、副图、叠加线、雷达（挑最近的有站城市）都正常
+- 下拉里区县会标出上级：`义乌市 | 浙江省 · 金华市 | 区县`
+- `tools/build_places.py` 会逐级爬 DataV（1 + 34 + 475 次请求）重新生成它；
+  地级市里已经有站号的会被去重，避免同一城市出现两条
+
 > ⚠️ 这里踩过一个坑：早先为了控制仓库体积，用 `tools/scope_cities.py` 把目录裁到了 45 个城市，
-> 结果**顺手把搜索能力也砍掉了** —— 目录就是搜索的唯一数据源。现在目录保持全量，
-> 体积改由「预抓范围」单独控制：`cities.json` 里的 `prefetch` 字段列出 45 个重点城市
-> （`tools/prefetch_official.py` 默认只抓这些），想全抓加 `--all`。
+> 结果**顺手把搜索能力也砍掉了** —— 目录就是搜索的唯一数据源。现在目录保持全量
+> （352 地级市 + 2903 区县），体积改由「预抓范围」单独控制：`cities.json` 里的 `prefetch`
+> 字段列出 45 个重点城市（`tools/prefetch_official.py` 默认只抓这些），想全抓加 `--all`。
+
+> 浏览器自带的定位、以及第三方地理编码接口都试过，**对中国区县都不可靠**：
+> Open-Meteo 的 geocoding 对「昆山」返回的是福建三明的一个同名村，「敦煌」「察隅」干脆 0 命中。
+> 所以最终没有用联网地理编码，而是把 DataV 的行政区划目录**离线打包进来**，搜索走本地索引。
 
 ### 当前所在地
 
@@ -237,9 +251,18 @@
 天气是**直接按经纬度取的**（Open-Meteo 逐小时 + 历史），不是拿最近城市的天气糊弄你 ——
 所以报价头会标「无官方站号」。反查失败也不影响出天气，名字退化成「近 <最近城市>」。
 
+- **点那一行才要权限**：加载时不会静默调 `getCurrentPosition`，只有浏览器已经授权过才静默刷新
 - 首次访问才会自动切到当前位置；用 `?city=` 或上次打开的城市明确指定过就不劫持
 - 位置记在 `localStorage`，30 分钟内不重复定位
 - 拒绝授权、定位超时都各有文案提示，不会静默失败
+
+> ⚠️ **权限提示一辈子只弹一次。** 早先的实现在页面加载时就调 `getCurrentPosition`，
+> 用户在没预期的情况下把提示点掉（或拉黑），权限就永久变成 `denied` ——
+> **再点也弹不出来了**，表现为"点了没反应"。现在改成：
+> `navigator.permissions.query({name:'geolocation'})` 先看状态，
+> `prompt` 状态下一个字都不问（等用户点），`denied` 时文案改成
+> "已被浏览器禁止 · 点地址栏 🔒 把「位置」改成「允许」后点这里"，
+> 因为 Chrome 确实不会再弹了，只能引导用户自己去改站点权限。
 
 > **坐标换算全在本机做**，只有反查地名那一步会把坐标发给 BigDataCloud；
 > 天气数据本身是按坐标查 Open-Meteo 的，不经过任何中间服务器。
@@ -296,19 +319,30 @@ cd weather-fighter
 
 # 1) 重建城市数据集（联网，会用 tools/.cache3 缓存）
 python tools\resolve_cities.py --workers 8
-python tools\scope_cities.py                 # 裁剪到 45 城
+python tools\build_catalog.py                # 全量 352 城 -> cities.json（含 prefetch 预抓清单）
 
-# 2) 预抓中国天气网官方数据（供 Pages 静态兜底）
+# 1b) 城市级雷达站：探测哪些城市有独立单站（联网，约 350 次请求）
+python tools\radar_slugs.py --workers 10     # -> web/data/radar-cities.json
+
+# 1c) 省/市/区县三级地名目录（联网，约 510 次请求）—— 区县级搜索靠它
+python tools\build_places.py --workers 10    # -> web/data/places.json
+
+# 2) 预抓中国天气网官方数据（供 Pages 静态兜底；默认只抓 prefetch 里的 45 城）
 python tools\prefetch_official.py --workers 8
+#    想全抓 352 城加 --all（体积会明显变大，日历文件每城每月约 24 KB）
 
 # 3) Android APK（无需 Gradle）
 python tools\fetch_android_sdk.py            # 下载 build-tools 34 + platform 35
 python tools\make_icon.py                    # 生成各密度启动图标
-python tools\build_apk.py                    # -> dist\天气战士.apk
+python tools\build_apk.py                    # -> dist\天气战士.apk（约 0.9 MB）
 
 # 4) 冒烟测试 20 个端点
 python tools\smoke.py
 ```
+
+> ⚠️ **不要再用 `tools/scope_cities.py` 裁剪 `cities.json`**：它是搜索的唯一数据源，
+> 裁掉城市就等于砍掉搜索能力。要控制仓库体积请调 `prefetch`（预抓范围），
+> 那是另一回事。
 
 ## 发布到自己的仓库
 
@@ -350,9 +384,15 @@ python tools\push_github.py             # 建仓库 -> 传文件 -> 提交 -> �
 | **本地代理**（APK / 本地调试） | `python server\app.py --port 8765` 然后 `python tools\smoke.py` | 20/20 端点 200 |
 | **GitHub Pages**（无代理、浏览器直连） | 见下方"子路径复现" | 报价头部 / 日K / 未来 5 天高低温 / 逐时气温流水 / 自选全部正常；雷达、云图、降水预报、台风、预警、我附近六个功能页全部出图；`window.__errs` 为空。走**静态预抓**这一级 |
 | **APK 里的 Java 解析器**（本机没有设备也能测） | `python tools\test_apk_parser.py` | 25 项断言全过，见下方"没有手机怎么测 APK" |
+| **区县级搜索 + 无站号城市出天气** | 搜「义乌」→ 点 `义乌市 \| 浙江省 · 金华市 \| 区县` | 报价头 `义乌市 \| p330782 · 浙江省 \| 无官方站号`，**17.3 ℃ -1.5 -7.98%**，体感/风向/气压齐全（Open-Meteo 按坐标补），主副图 canvas 各 1，`__errs = []` |
+| **区县级搜索覆盖面** | 同上搜索框，依次输 15 个词 | 义乌/敦煌/昆山/察隅/朝阳区/浦东新区/漠河/阿里 全部命中且省份正确；苏州 10 条、唐山 15 条（本地城市 + 下属区县） |
 
 `?local=0` / `?local=1` 是专门为上面第二行加的开关 —— 在本地一条命令就能复现 Pages 的取数路径，
 不用真的等部署。
+
+> **联网地理编码试过但没用**：Open-Meteo 的 geocoding 对「昆山」返回福建三明的一个同名村
+> （江苏昆山根本不在返回里）、「敦煌」「察隅」0 命中；Nominatim 在本机直接连不上。
+> 所以区县搜索走的是**离线打包的 DataV 行政区划目录**，不依赖任何联网地理编码服务。
 
 **子路径复现（重要）**：Pages 上线后站点在 `https://<user>.github.io/weather-fighter/`，
 是**带子路径**的，绝对路径 `/js/app.js` 这种写法会直接 404。所以 `web/` 里所有静态资源引用
@@ -403,8 +443,8 @@ weather-fighter/
 │   ├── js/weather.js        雷达/云图/降水预报/台风/预警取数 + 时间网格对齐
 │   ├── js/wxui.js           六个天气功能页的 UI（播放器、台风轨迹、预警列表）
 │   ├── js/app.js            状态机、渲染、轮询、搜索、抽屉
-│   ├── data/cities.json     45 城数据集（代码/坐标/站号/拼音）
-│   ├── data/cities.full.json 未裁剪的 352 城全量（备份）
+│   ├── data/cities.json     352 个地级市（代码/坐标/站号/拼音/预抓清单）
+│   ├── data/places.json     省/市/区县三级地名目录 3237 条，222 KB（搜索兜底，带中心点）
 │   ├── data/china.json      省级底图（指数条 / 台风底图兜底）
 │   ├── data/world.json      亚洲–太平洋裁剪底图，154 KB（台风页专用，首开才加载）
 │   ├── data/official/       Actions 预抓的官方数据
@@ -413,6 +453,9 @@ weather-fighter/
 ├── server/app.py            本地代理 + 静态服务（APK 用同一套解析逻辑）
 ├── android/                 Java 代理 + 清单 + 资源（不走 Gradle）
 ├── tools/                   数据集构建、预抓、打包脚本
+│   ├── build_catalog.py     把 352 城全量目录写回 cities.json（并单独标出预抓范围）
+│   ├── build_places.py      爬阿里 DataV 生成 data/places.json（区县级搜索兜底）
+│   ├── radar_slugs.py      探测 352 城里哪些有单站雷达（拼 {省拼音}/{市拼音}.htm）
 │   ├── slim_world.py        把 echarts world.json 裁成 data/world.json
 │   ├── make_icon.py         从 logo-src.png 生成站标与五种密度的 launcher 图标
 │   ├── logo-src.png         站标源图（**故意不放在 web/ 下**，否则 1.2 MB 会被打进 APK）

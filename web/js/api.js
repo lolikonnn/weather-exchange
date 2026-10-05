@@ -63,7 +63,7 @@
 
   /* ═══════════════ 1. 城市数据集 ═══════════════ */
   const Cities = {
-    all: [], hot: [], byId: {},
+    all: [], hot: [], byId: {}, places: [],
     async load() {
       if (this.all.length) return this;
       const d = await getJSON('data/cities.json?ts=' + Math.floor(Date.now() / 3600000), { ttl: 3600000 });
@@ -81,25 +81,63 @@
       this.hot = (d.hot || []).map(k => this.byId[k] || this.byName[k]).filter(Boolean);
       if (!this.hot.length) this.hot = this.all.slice(0, 20);
       this.updated = d.updated;
+      await this.loadPlaces();          // 拿不到也不影响主目录
       return this;
     },
+    /** 省 / 地级市 / 区县三级地名目录（带中心点经纬度）。
+     *  cities.json 只有 352 个**地级市**（源自气象局站号表），所以义乌、昆山、
+     *  敦煌这类县级市在搜索框里搜不到。这里补齐到区县级：这些地方没有气象局
+     *  站号，但带经纬度，直接走 Open-Meteo 按坐标取天气即可。 */
+    async loadPlaces() {
+      if (this.places.length) return this.places;
+      let d;
+      try {
+        d = await getJSON('data/places.json?ts=' + Math.floor(Date.now() / 86400000), { ttl: 86400000 });
+      } catch (e) { this.places = []; return this.places; }
+      // 地级市里已经有气象局站号的那批，不要再以「无站号」的副本重复出现
+      const bare = s => String(s || '').replace(/(自治州|自治县|地区|林区|特别行政区|市|县|区|盟)$/, '');
+      const known = {};
+      this.all.forEach(c => { known[bare(c.name)] = 1; });
+      const out = [];
+      (d.list || []).forEach(r => {
+        const lev = r[6] || 3;
+        if (lev === 1) return;                       // 省级：搜省名已经能命中省内的市
+        const b = bare(r[1]);
+        if (lev === 2 && (known[b] || known[b + '市'] || known[b + '地区'])) return;
+        const c = {
+          id: 'p' + r[0], name: r[1], lat: r[3], lon: r[2],
+          prov: r[4] || '', city: r[5] || '', lev: lev,
+          cma: '', py: '', place: true, pop: 0,
+          path: [r[4], r[5], r[1]].filter(Boolean).join(', ')
+        };
+        c.search = (c.name + ' ' + c.prov + ' ' + c.city + ' ' + c.id + ' ' + b + ' ' + b.replace(/市$/, '')).toLowerCase();
+        if (!this.byId[c.id]) this.byId[c.id] = c;
+        out.push(c);
+      });
+      this.places = out;
+      return out;
+    },
     get(id) { return this.byId[id]; },
-    /** 模糊搜索：城市名 / 拼音 / 省份 / 9位代码 */
+    /** 模糊搜索：城市名 / 拼音 / 省份 / 9位代码；再叠一层全国省市区县目录 */
     search(q, limit) {
       q = String(q || '').trim().toLowerCase();
       if (!q) return [];
       const out = [];
-      for (const c of this.all) {
-        let score = 0;
-        if (c.id === q) score = 1000;
-        else if (c.name === q) score = 900;
-        else if (c.name.startsWith(q)) score = 700 - c.name.length;
-        else if (c.name.indexOf(q) >= 0) score = 500 - c.name.length;
-        else if (c.py && c.py.startsWith(q)) score = 460;
-        else if (c.py && c.py.indexOf(q) >= 0) score = 380;
-        else if (c.search.indexOf(q) >= 0) score = 260;
-        if (score) { out.push({ c, score: score + Math.min(c.pop || 0, 5000) / 5000 }); }
-      }
+      const scan = (arr, base) => {
+        for (const c of arr) {
+          let score = 0;
+          if (c.id === q) score = 1000;
+          else if (c.name === q) score = 900;
+          else if (c.name.startsWith(q)) score = 700 - c.name.length;
+          else if (c.name.indexOf(q) >= 0) score = 500 - c.name.length;
+          else if (c.py && c.py.startsWith(q)) score = 460;
+          else if (c.py && c.py.indexOf(q) >= 0) score = 380;
+          else if (c.search.indexOf(q) >= 0) score = 260;
+          if (score) out.push({ c, score: score + base + Math.min(c.pop || 0, 5000) / 5000 });
+        }
+      };
+      scan(this.all, 0);
+      scan(this.places, -5);            // 同分时优先有气象局站号的城市
       out.sort((a, b) => b.score - a.score);
       return out.slice(0, limit || 40).map(o => o.c);
     }

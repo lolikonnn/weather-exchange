@@ -267,6 +267,17 @@
     selectCity(id);
   }
 
+  /** 查询浏览器定位权限：granted / prompt / denied / unknown
+   *  这一步很重要 —— getCurrentPosition 的权限提示只会弹一次，
+   *  如果在页面加载时静默调用、用户当时点掉了，之后就再也弹不出来，
+   *  表现为「点了也没反应」。所以加载时先看权限，只有已授权才静默定位。 */
+  function geoPermission() {
+    if (!navigator.permissions || !navigator.permissions.query) return Promise.resolve('unknown');
+    return navigator.permissions.query({ name: 'geolocation' })
+      .then(p => p.state || 'unknown')
+      .catch(() => 'unknown');
+  }
+
   /** 返回 Promise：定位结束（成功或失败）后 resolve 成 geo 对象或 null */
   function locate(silent) {
     if (!navigator.geolocation) {
@@ -287,8 +298,9 @@
         S.geoBusy = false;
         S.geoErr = err && err.code === 1 ? 'denied' : (err && err.code === 3 ? 'timeout' : 'failed');
         renderGeo();
-        if (!silent) toast(S.geoErr === 'denied' ? '位置权限被拒绝，可点 ⌖ 重试'
-          : S.geoErr === 'timeout' ? '定位超时，可点 ⌖ 重试' : '定位失败，可点 ⌖ 重试');
+        if (!silent) toast(S.geoErr === 'denied'
+          ? '浏览器已禁止本站定位 —— 点地址栏左侧的锁图标，把「位置」改成「允许」'
+          : S.geoErr === 'timeout' ? '定位超时，可点这里重试' : '定位失败，可点这里重试');
         resolve(null);
       }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
     });
@@ -300,10 +312,10 @@
     if (S.geoBusy) { box.appendChild(el('div', { class: 'sr-empty', text: '正在定位…' })); return; }
 
     if (!S.geo) {
-      const msg = S.geoErr === 'denied' ? '位置权限被拒绝，点这里重试'
+      const msg = S.geoErr === 'denied' ? '已被浏览器禁止 · 点地址栏 🔒 把「位置」改成「允许」后点这里'
         : S.geoErr === 'unsupported' ? '此环境不支持定位（可在搜索框选城市）'
           : S.geoErr === 'timeout' ? '定位超时，点这里重试'
-            : S.geoErr ? '定位失败，点这里重试' : '点这里用定位获取当前位置';
+            : S.geoErr ? '定位失败，点这里重试' : '点这里获取定位权限并显示当地气温';
       box.appendChild(el('div', {
         class: 'stock-row' + (S.cur && S.cur.id === LOC_ID ? ' on' : ''),
         onclick: () => locate(false)
@@ -355,7 +367,8 @@
     box.appendChild(row);
   }
 
-  /** 启动时恢复上次定位并刷新；没有就静默要一次（和普通天气软件一致）。返回 Promise<geo|null> */
+  /** 启动时恢复上次定位；**不会**在加载时弹权限框（只在已授权时静默刷新）。
+   *  返回 Promise<geo|null> */
   function initGeo(q) {
     const g = storeGet('geo', null);
     if (g && g.lat != null) { S.geo = g; registerGeo(g); }
@@ -364,7 +377,12 @@
       S.geoBusy = true; renderGeo();
       return applyGeo(+q.lat, +q.lon, 0);
     }
-    if (!g) return locate(true);
+    if (!g) {
+      // 关键：不要在加载时静默调 getCurrentPosition。
+      // 权限提示一辈子只弹一次，用户没预期时点掉就再也弹不出来（表现为「点了没反应」）。
+      // 所以只有浏览器已经授权过才静默取，否则等用户点那一行再触发提示。
+      return geoPermission().then(p => (p === 'granted' ? locate(true) : S.geo));
+    }
     if (Date.now() - (g.at || 0) > 1800000) return locate(true);   // 超过 30 分钟静默刷新
     return Promise.resolve(S.geo);
   }
@@ -802,8 +820,15 @@
         }
       }, [
         el('span', { class: 'sr-name', text: c.name }),
-        el('span', { class: 'sr-prov', text: (c.prov || '') + (c.cma ? ' · ' + c.cma : '') }),
-        el('span', { class: 'sr-code', text: c.id })
+        el('span', {
+          class: 'sr-prov',
+          text: c.place ? (c.prov || '') + (c.city ? ' · ' + c.city : '')
+            : (c.prov || '') + (c.cma ? ' · ' + c.cma : '')
+        }),
+        el('span', {
+          class: 'sr-code',
+          text: c.place ? (c.lev === 3 ? '区县' : c.lev === 2 ? '市' : '省') : c.id
+        })
       ]);
       row.appendChild(el('span', {
         class: 'sr-star' + (starred ? ' on' : ''),
