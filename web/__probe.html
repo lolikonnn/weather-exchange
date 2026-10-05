@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>API 自检</title></head>
+<body style="background:#12141a;color:#c9cdd6;font:13px/1.6 Consolas,monospace">
+<pre id="o">running…</pre>
+<script src="js/util.js"></script>
+<script src="js/indicators.js"></script>
+<script src="js/api.js"></script>
+<script>
+(function () {
+  var o = document.getElementById('o');
+  function log(s) { o.textContent += '\n' + s; }
+  function j(x, n) { try { return JSON.stringify(x).slice(0, n || 260); } catch (e) { return String(x); } }
+  o.textContent = 'LOCAL=' + API.LOCAL;
+  (async function () {
+    var t0 = Date.now();
+    try {
+      await API.Cities.load();
+      log('Cities: ' + API.Cities.all.length + ' 城, hot=' + API.Cities.hot.length + ', updated=' + API.Cities.updated);
+      var c = API.Cities.byId['101010100'];
+      log('北京记录: ' + j(c));
+      var c2 = API.Cities.byId['101280601'];
+      log('深圳记录: ' + j(c2));
+
+      var n = await API.Cma.now(c2);
+      log('Cma.now(深圳)  -> ' + j(n));
+      var v = await API.Cma.view(c2);
+      log('Cma.view(深圳) -> ' + (v ? ('daily=' + (v.daily || []).length + ' loc=' + j(v.location, 120)) : 'null'));
+      var f = await API.Cma.forecast(c2);
+      log('Cma.forecast(深圳) -> ' + (f ? ('daily=' + f.daily.length + ' ' + j(f.daily.slice(0, 2))) : 'null'));
+      var nb = await API.Cma.now(c);
+      log('Cma.now(北京,无站号) -> ' + j(nb) + '   ← 期望 null');
+
+      var o1 = await API.Cn.snapshot(c.id);
+      log('Cn.snapshot -> ' + j(o1, 200));
+      var fc = await API.Cn.forecast(c.id);
+      log('Cn.forecast -> ' + j(fc, 200));
+      var cal = await API.Cn.officialDaily(c.id);
+      log('Cn.officialDaily -> n=' + cal.length + ' ' + j(cal.slice(0, 2)));
+      log('  d15 条数=' + cal.filter(function (x) { return x.cla === 'd15'; }).length +
+          ' d40=' + cal.filter(function (x) { return x.cla === 'd40'; }).length +
+          ' obs=' + cal.filter(function (x) { return x.cla === 'obs'; }).length);
+
+      var b = await API.OpenMeteo.brief(c.lat, c.lon);
+      log('brief -> ' + j(b, 200));
+      log('  days=' + (b.days || []).length + ' sparkPts=' + (b.sparkPts || []).length);
+
+      var S = await API.Store.loadCity(c, function (s) { log('  step: ' + s); });
+      log('loadCity: daily=' + S.daily.length + ' week=' + S.week.length + ' month=' + S.month.length +
+          ' intraday=' + S.intraday.length + ' five=' + S.five.length +
+          ' today=' + S.today + ' lastDay=' + S.lastDay + ' ti=' + S.todayIndex + ' base=' + S.base);
+      log('  calDaily=' + S.calDaily.length + ' cnFcst=' + (S.cnFcst ? '有' : '无') +
+          ' official=' + (S.official ? '有' : '无'));
+      log('  daily[ti]=' + j(S.daily[S.todayIndex]));
+      log('OK  ' + (Date.now() - t0) + 'ms');
+    } catch (e) {
+      log('❌ ' + e.message + '\n' + (e.stack || ''));
+    }
+    document.title = 'DONE';
+  })();
+})();
+</script>
+</body></html>

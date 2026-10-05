@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#12141a">
+<title>天交所 · 天气行情终端</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23f0b90b'/><path d='M7 21l5-7 4 4 4-9 5 5' stroke='%23121418' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+
+<!-- ══════════════════════ 顶栏 ══════════════════════ -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">天</span>
+    <span class="brand-text">天交所<em>天气行情终端</em></span>
+  </div>
+
+  <div class="search-wrap">
+    <span class="search-ico">🔍</span>
+    <input id="search" type="text" autocomplete="off" spellcheck="false"
+           placeholder="搜索城市 / 拼音 / 城市代码  如：杭州、hangzhou、101210101">
+    <div id="searchResults" class="search-results" hidden></div>
+  </div>
+
+  <div class="topbar-ctrl">
+    <label class="ctrl">
+      <span>行情刷新</span>
+      <select id="refreshRate">
+        <option value="1000">1 秒（极速）</option>
+        <option value="3000" selected>3 秒（默认）</option>
+        <option value="5000">5 秒</option>
+        <option value="10000">10 秒</option>
+        <option value="30000">30 秒</option>
+        <option value="60000">1 分钟</option>
+        <option value="300000">5 分钟</option>
+        <option value="0">手动刷新</option>
+      </select>
+    </label>
+    <label class="ctrl">
+      <span>涨跌配色</span>
+      <select id="colorMode">
+        <option value="cn" selected>红涨绿跌（A股）</option>
+        <option value="us">绿涨红跌（美股）</option>
+      </select>
+    </label>
+    <label class="ctrl">
+      <span>量能指标</span>
+      <select id="volumeMetric">
+        <option value="range" selected>日内温差</option>
+        <option value="precip">降水量</option>
+        <option value="wind">风速</option>
+        <option value="humid">湿度</option>
+      </select>
+    </label>
+    <button id="btnManual" class="btn" title="立即刷新一次">⟳ 刷新</button>
+    <div class="clock"><span id="clock">--:--:--</span><em id="clockDate">----</em></div>
+  </div>
+</header>
+
+<!-- ══════════════════════ 指数条 ══════════════════════ -->
+<div class="index-strip" id="indexStrip">
+  <div class="strip-title">天气指数</div>
+  <div class="strip-list" id="indexList"><span class="dim">加载中…</span></div>
+</div>
+
+<!-- ══════════════════════ 主体 ══════════════════════ -->
+<main class="layout">
+
+  <!-- ───────── 左：自选 ───────── -->
+  <aside class="pane pane-left">
+    <div class="pane-head">
+      <span>自选城市</span>
+      <span class="pane-head-tools">
+        <button class="mini" id="btnSortWatch" title="切换排序：默认/涨幅/名称">⇅</button>
+      </span>
+    </div>
+    <div class="scroll" id="watchlist"></div>
+
+    <div class="pane-head">
+      <span>热门城市</span>
+      <span class="pane-head-tools"><button class="mini" id="btnAllCities" title="全部城市">＋</button></span>
+    </div>
+    <div class="scroll grow" id="hotlist"></div>
+  </aside>
+
+  <!-- ───────── 中：行情 + 图 ───────── -->
+  <section class="pane pane-center">
+
+    <div class="quote-head" id="quoteHead">
+      <div class="qh-left">
+        <div class="qh-name">
+          <h1 id="qName">—</h1>
+          <span class="qh-code" id="qCode">—</span>
+          <span class="qh-tags" id="qTags"></span>
+        </div>
+        <div class="qh-price">
+          <span class="qh-last" id="qPrice">—</span>
+          <span class="qh-unit">℃</span>
+          <span class="qh-chg" id="qChange">—</span>
+          <span class="qh-pct" id="qPct">—</span>
+        </div>
+      </div>
+      <div class="qh-stats" id="qStats"></div>
+    </div>
+
+    <div class="tabbar" id="periodTabs">
+      <button data-period="trend"  class="tab active">分时</button>
+      <button data-period="5day"   class="tab">五日</button>
+      <button data-period="day"    class="tab">日K</button>
+      <button data-period="week"   class="tab">周K</button>
+      <button data-period="month"  class="tab">月K</button>
+      <button data-period="fcst"   class="tab">预报K</button>
+      <span class="tab-spacer"></span>
+      <span class="chart-hint" id="chartHint"></span>
+      <button class="mini" id="btnZoomReset" title="重置缩放">⤢</button>
+    </div>
+
+    <div class="chart-box">
+      <div id="mainChart" class="chart"></div>
+    </div>
+
+    <div class="tabbar sub">
+      <button data-ind="vol"  class="tab active">成交量</button>
+      <button data-ind="macd" class="tab">MACD</button>
+      <button data-ind="kdj"  class="tab">KDJ</button>
+      <button data-ind="rsi"  class="tab">RSI</button>
+      <button data-ind="boll" class="tab">BOLL</button>
+      <button data-ind="wr"   class="tab">WR</button>
+    </div>
+    <div class="chart-box sub">
+      <div id="subChart" class="chart"></div>
+    </div>
+
+  </section>
+
+  <!-- ───────── 右：盘口 + 明细 ───────── -->
+  <aside class="pane pane-right">
+    <div class="pane-head"><span>五档盘口 <em class="dim">未来 5 日预报</em></span></div>
+    <div class="orderbook" id="orderbook"></div>
+
+    <div class="pane-head"><span>逐时成交 <em class="dim">最近观测</em></span></div>
+    <div class="tape-head"><span>时间</span><span>气温</span><span>量</span></div>
+    <div class="scroll grow" id="tape"></div>
+  </aside>
+
+</main>
+
+<!-- ══════════════════════ 状态栏 ══════════════════════ -->
+<footer class="statusbar">
+  <span id="statusLeft" class="dim">就绪</span>
+  <span class="grow"></span>
+  <span id="statusSrc" class="dim"></span>
+  <span id="statusNext" class="dim"></span>
+  <span class="dl-box" id="dlBox" hidden>
+    <span class="dim">下载客户端</span>
+    <a class="dl" href="dist/tjs-weather-windows.exe" download>Windows .exe</a>
+    <a class="dl" href="dist/tjs-weather-android.apk" download>Android .apk</a>
+  </span>
+</footer>
+
+<!-- 全城市选择抽屉 -->
+<div class="drawer" id="cityDrawer" hidden>
+  <div class="drawer-panel">
+    <div class="drawer-head">
+      <strong>全部城市</strong>
+      <input id="drawerFilter" placeholder="过滤…">
+      <button class="mini" id="drawerClose">✕</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script>
+/* 运行期错误可视化：出问题直接落到状态栏，方便用户反馈与排查 */
+window.__errs = [];
+(function () {
+  function show(m) {
+    window.__errs.push(m);
+    var s = document.getElementById('statusLeft');
+    if (s) { s.textContent = '⚠ ' + m; s.style.color = '#ff9a9b'; }
+  }
+  window.addEventListener('error', function (e) {
+    show((e.message || 'script error') + (e.filename ? ' @' + String(e.filename).split('/').pop() + ':' + e.lineno : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason; show('Promise: ' + ((r && (r.message || r)) || r));
+  });
+})();
+
+/* 本地代理探测：
+   - 桌面版(exe)/本地调试服务 运行在 127.0.0.1/localhost，可直连中国天气网 d1.* (需 Referer，由代理补)。
+   - GitHub Pages 上无法直连，只能读预抓好的静态 JSON。
+   api.js 会据此决定走 /api/cn/* 还是 data/official/*。
+
+   ?local=0 / ?local=1 可以强制覆盖 —— 用来在本地一条命令里复现 GitHub Pages 的取数路径：
+     http://127.0.0.1:8765/?local=0&city=101280101&p=day   走静态兜底
+   不加这个参数时行为完全不变。 */
+window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)
+  || location.protocol === 'file:';
+(function () {
+  var m = /[?&]local=([01])\b/.exec(location.search);
+  if (m) window.__TJS_LOCAL__ = m[1] === '1';
+})();
+</script>
+<script src="vendor/echarts.min.js"></script>
+<script src="js/util.js"></script>
+<script src="js/indicators.js"></script>
+<script src="js/api.js"></script>
+<script src="js/chart.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

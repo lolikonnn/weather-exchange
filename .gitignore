@@ -1,0 +1,33 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ── 构建中间产物 ──
+build/
+*.spec
+
+# ── 工具缓存（体积大、可重建） ──
+tools/.cache/
+tools/.cache2/
+tools/.cache3/
+tools/*.log
+
+# ── Android SDK（几百 MB，由 tools/fetch_android_sdk.py 重新下载） ──
+android/.sdk/
+android/assets/web/
+android/build/
+
+# android/debug.keystore 故意不忽略：它是固定口令（android/tjs）的调试签名，
+# 提交上去才能让任何人重建出签名一致的 APK，覆盖安装不会失败。
+
+# ── 临时文件 ──
+tmp/
+*.tmp
+
+# ── 部署时临时拷进站点的安装包（源在 dist/，由 .github/workflows/deploy.yml 拷贝） ──
+web/dist/
+
+# ── 保留产物：dist/ 里的 exe 与 apk 是要发布给用户下载的，所以不忽略 ──
