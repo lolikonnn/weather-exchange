@@ -235,9 +235,12 @@
 
     const series = [{
       name: 'K线', type: 'candlestick', data: candle, z: 3,
+      // 涨空心、跌实心（A 股习惯）：color 是"实心填充"色，color0 是跌的填充色。
+      // 涨的填充给 transparent 就只剩描边，即空心；影线走 borderColor，所以仍是涨色。
+      // 空心的好处是数目多、K 线密集时不再糊成一片色块，实体边界一眼可辨。
       itemStyle: {
-        color: C.up, color0: C.down,
-        borderColor: C.up, borderColor0: C.down, borderWidth: 1
+        color: 'transparent', color0: C.down,
+        borderColor: C.up, borderColor0: C.down, borderWidth: 1.2
       },
       markLine: S.base != null ? {
         silent: true, symbol: 'none', label: { show: false },
