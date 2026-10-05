@@ -21,6 +21,8 @@
     ma: ['#e9edf4', '#ffd666', '#d16dff', '#2bd6a0', '#4d9bff'],
     maName: ['MA5', 'MA10', 'MA20', 'MA30', 'MA60'],
     up: '#ff4d4f', down: '#00b578',
+    // 平盘（开盘 == 收盘，气温没升没降）。既不算涨也不算跌，用中性灰。
+    flat: '#8b919e',
     boll: ['#ffb74d', '#7f8fa6', '#4fc3f7'],
     dif: '#e9edf4', dea: '#ffd666',
     k: '#e9edf4', d: '#ffd666', j: '#d16dff',
@@ -36,10 +38,23 @@
   function readTheme() {
     const s = getComputedStyle(document.body);
     const up = s.getPropertyValue('--up').trim(), dn = s.getPropertyValue('--down').trim();
+    const fl = s.getPropertyValue('--flat').trim();
     const accent = s.getPropertyValue('--accent').trim();
     if (up) C.up = up;
     if (dn) C.down = dn;
+    if (fl) C.flat = fl;
     if (accent) C.avg = C.dea = C.d = accent;
+  }
+
+  /** 给主题色套一个透明度，用于面积渐变。
+      必须由 C.up 推导，不能写死字面量 —— 否则切到 body.us 时色板翻转，
+      C.up 变成绿的而渐变色还是红的，线绿、底红。 */
+  function withAlpha(col, a) {
+    const c = String(col || '').trim();
+    const h = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+    if (/^#[0-9a-f]{6}$/i.test(c)) return c + h;
+    if (/^#[0-9a-f]{3}$/i.test(c)) return '#' + c[1] + c[1] + c[2] + c[2] + c[3] + c[3] + h;
+    return c;
   }
 
   const axisCommon = {
@@ -228,7 +243,7 @@
           lineStyle: { width: 1.5, color: C.up }, z: 5,
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(255,77,79,.30)' }, { offset: 1, color: 'rgba(255,77,79,.02)' }
+              { offset: 0, color: withAlpha(C.up, .30) }, { offset: 1, color: withAlpha(C.up, .02) }
             ])
           },
           markLine: base != null ? {
@@ -257,7 +272,14 @@
     if (!bars.length) return emptyOpt('暂无K线数据');
     const ind = S.ind, showBoll = S.showBoll;
     const xs = bars.map(b => b.d);
-    const candle = bars.map(b => [b.o, b.c, b.l, b.h]);
+    // 平盘日（开盘 == 收盘，气温一天下来没升没降）既不算涨也不算跌，涂中性灰。
+    // ECharts 内部对"收 == 开"走的是严格 close > open 的 else 分支，会套用
+    // 跌的 color0/borderColor0（实测确认），所以只能给这几根单独挂 itemStyle。
+    // 数组式和 {value, itemStyle} 对象式可以混用；markPoint 的
+    // valueDim('highest'/'lowest') 在对象式数据下实测仍然生效。
+    const candle = bars.map(b => (b.c === b.o
+      ? { value: [b.o, b.c, b.l, b.h], itemStyle: { color: C.flat, color0: C.flat, borderColor: C.flat, borderColor0: C.flat } }
+      : [b.o, b.c, b.l, b.h]));
     const metric = METRICS[S.metric] || METRICS.range;
 
     const view = S.view == null ? 90 : S.view;
@@ -471,7 +493,16 @@
       baseOpt.series = [
         {
           name: metric.label, type: 'bar', data: d.map((v, i) => ({
-            value: v, itemStyle: { color: (bars[i].c >= bars[i].o ? C.up : C.down), opacity: .78 }
+            // 判涨跌必须跟上面蜡烛图用同一个算子。ECharts 的 candlestick 是严格
+            // 的 close > open 才算阳线（平盘归阴线，用 color0/borderColor0），
+            // 这里原先写的是 >=，于是"收盘==开盘"的那天会出现
+            // 「上面一根绿 K 线、下面一根红量柱」——实测 576 天里有 19 天（3.3%）
+            // 是这种平盘日。现在平盘统一走中性灰，跟蜡烛的 itemStyle 保持一致。
+            value: v,
+            itemStyle: {
+              color: (bars[i].c === bars[i].o ? C.flat : (bars[i].c > bars[i].o ? C.up : C.down)),
+              opacity: .78
+            }
           })), barWidth: '62%'
         },
         { name: 'MA5', type: 'line', data: ind.volMa5, showSymbol: false, lineStyle: { width: 1, color: C.ma[1] }, itemStyle: { color: C.ma[1] } },
