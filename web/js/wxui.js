@@ -228,34 +228,88 @@
     /* ── 雷达 / 卫星播放器 ── */
     _play: null,
 
-    async openRadar(region) {
-      // 城市级雷达官方没有单独发布，能拿到的最细粒度就是这八个大区。
-      // 没指定过区域时，按当前城市所在省自动选中（广州→华南、北京→华北…）。
-      if (!region) {
-        const app = window.__APP;
-        region = this._radarReg || W.regionFor(app && app.S && app.S.cur);
+    /* ── 雷达：全国拼图 / 八大区拼图 / 单站（精确到城市）──
+       这三层对应气象局公开的三档雷达产品。选大区看拼图，选到具体城市就看那一站的雷达。
+       45 城里只有 30 个有独立雷达站（映射表由 tools/radar_slugs.py 离线探测生成），
+       其余城市（珠海、佛山、上海、拉萨…）没有单站，只能回落到所在大区。 */
+    _radarReg: null,
+    _radarProv: null,
+    _radarCity: null,
+    _radarFrames: null,   // 已探测到的帧 —— 切省/切市时不想重下十几兆
+    _radarKey: null,      // 上面那批帧对应的目标（区域代号 或 'S:城市id'）
+
+    async openRadar(region, prov, cityId) {
+      const app = window.__APP;
+      const cur = app && app.S && app.S.cur;
+      const stations = await W.radarCities();
+      const all = (window.API && API.Cities && API.Cities.all) || [];
+
+      if (region === undefined || region === null) {
+        // 首次打开：沿用上次选的大区；如果当前城市自己有雷达站，直接定位到它
+        region = this._radarReg || W.regionFor(cur);
+        prov = this._radarProv;
+        cityId = this._radarCity;
+        if (cur && cur.id && stations[cur.id]) { cityId = cur.id; prov = cur.prov; }
       }
-      this._radarReg = region;
-      const rname = (W.RADAR_REGIONS.filter(x => x.k === region)[0] || {}).n || region;
+      if (prov === undefined) prov = this._radarProv;
+      if (cityId === undefined) cityId = this._radarCity;
+
+      // 大区 -> 该区里有雷达站的省；全国就把有站的省全列出来
+      const inReg = c => region === 'ACHN' || W.regionFor(c) === region;
+      const provs = [];
+      all.forEach(c => {
+        if (stations[c.id] && inReg(c) && provs.indexOf(c.prov) < 0) provs.push(c.prov);
+      });
+      if (!prov && provs.length) prov = provs[0];        // 别让城市行空着
+      if (prov && provs.indexOf(prov) < 0) prov = provs[0] || null;
+      const cityBtns = prov
+        ? all.filter(c => c.prov === prov && stations[c.id]).map(c => [c.id, c.name]) : [];
+      if (cityId && cityBtns.every(x => x[0] !== cityId)) cityId = null;
+
+      this._radarReg = region; this._radarProv = prov; this._radarCity = cityId;
+
       const body = $('#wxRadarBody'), sub = $('#wxRadarSub');
       if (!body) return;
-      body.innerHTML = '<div class="wx-load">正在探测最近有货的雷达帧…</div>';
-      // 只有全国 ACHN 有 small/ 档（约 200 KB）；其余七个大区每帧 479–960 KB，
-      // 所以少取几帧，免得一次下十兆。
-      const want = region === 'ACHN' ? 16 : 8;
-      let frames;
-      try {
-        frames = await W.probeRadar(region, want, (got, total) => {
-          if (sub) sub.textContent = '已找到 ' + got + ' 帧';
-        });
-      } catch (e) { body.innerHTML = '<div class="wx-load">雷达数据获取失败：' + esc(e.message) + '</div>'; return; }
+
+      const st = cityId && stations[cityId];
+      const key = st ? 'S:' + cityId : region;
+      const rname = (W.RADAR_REGIONS.filter(x => x.k === region)[0] || {}).n || region;
+      const label = st ? (st.name + ' 单站雷达') : ('雷达回波 · ' + rname);
+
+      let frames = this._radarFrames;
+      if (this._radarKey !== key || !frames || !frames.length) {
+        body.innerHTML = '<div class="wx-load">正在探测最近有货的雷达帧…</div>';
+        // 单站和大区都没有 small/ 档，每帧 500–900 KB，所以只取 8 帧；
+        // 只有全国拼图有 small/（约 200 KB），可以取 16 帧。
+        const want = st ? 8 : (region === 'ACHN' ? 16 : 8);
+        const step = (g, t) => { if (sub) sub.textContent = '已找到 ' + g + ' 帧'; };
+        try {
+          frames = st ? await W.probeStation(st.az, want, step)
+                      : await W.probeRadar(region, want, step);
+        } catch (e) {
+          this._radarFrames = null; this._radarKey = null;
+          body.innerHTML = '<div class="wx-load">雷达数据获取失败：' + esc(e.message) + '</div>';
+          return;
+        }
+        this._radarFrames = frames; this._radarKey = key;
+      }
       if (!frames.length) {
+        this._radarFrames = null; this._radarKey = null;
         body.innerHTML = '<div class="wx-load">暂时取不到雷达回波（中国气象局该时段没有发布，或本机网络不通）</div>';
         return;
       }
-      renderPlayer(body, sub, frames, '雷达回波 · ' + rname, {
-        regions: W.RADAR_REGIONS.map(r => [r.k, r.n]), region: region,
-        onRegion: r => WXUI.openRadar(r)
+
+      renderPlayer(body, sub, frames, label, {
+        segs: [
+          { regions: W.RADAR_REGIONS.map(r => [r.k, r.n]), region: region, act: 'reg' },
+          { regions: provs.map(p => [p, p.replace(/省|市|自治区|回族|维吾尔|壮族|特别行政区/g, '')]), region: prov, act: 'prov' },
+          { regions: cityBtns, region: cityId, act: 'city' }
+        ],
+        onSeg: (act, k) => {
+          if (act === 'reg') WXUI.openRadar(k, null, null);
+          else if (act === 'prov') WXUI.openRadar(region, k, null);
+          else WXUI.openRadar(region, prov, k);
+        }
       });
     },
 
@@ -349,7 +403,11 @@
     open(id) {
       const el = document.getElementById(id);
       if (el) el.hidden = false;
-      if (id === 'wxRadar') this.openRadar(this._radarReg);
+      // 不传参：让 openRadar 自己决定（沿用上次的区域，或按当前城市自动定位到单站）。
+      // ⚠ 不要写成 this.openRadar(this._radarReg) —— 首次打开时它是 null，
+      // 而 null 不等于 undefined，会把"按城市自动选区"那段整个跳过，
+      // 结果拿 region=null 去拼 URL，每一帧都是 ..._ECREF_null_... 全 404。
+      if (id === 'wxRadar') this.openRadar();
       if (id === 'wxSat') this.openSat(this._satKind);
       if (id === 'wxPrecip') this.openPrecip(this._precipKind);
       if (id === 'wxTy') this.openTyphoon();
@@ -434,17 +492,23 @@
     return '#7f8c9a';
   }
 
-  /* 图片播放器：雷达 / 卫星共用 */
+  /* 图片播放器：雷达 / 卫星 / 降水共用。
+     opt.segs 可以给多行分段控件（雷达用三行：大区 → 省 → 市）；
+     opt.regions 是单行的简写，两者等价。 */
   function renderPlayer(body, sub, frames, title, opt) {
     opt = opt || {};
     let i = 0;
-    const seg = (opt.regions || []).map(r =>
-      '<button class="wx-segbtn' + (r[0] === opt.region ? ' on' : '') + '" data-reg="' + r[0] + '">' + r[1] + '</button>'
+    const rows = opt.segs || (opt.regions ? [{ regions: opt.regions, region: opt.region, act: '' }] : []);
+    const segRows = rows.filter(s => s && (s.regions || []).length).map(s =>
+      '<div class="wx-seg">' + s.regions.map(r =>
+        '<button class="wx-segbtn' + (r[0] === s.region ? ' on' : '') +
+        '" data-seg="' + (s.act || '') + '" data-reg="' + esc(r[0]) + '">' + esc(r[1]) + '</button>'
+      ).join('') + '</div>'
     ).join('');
     body.innerHTML =
       '<div class="wx-player">' +
         '<div class="wx-pbar">' +
-          (seg ? '<div class="wx-seg">' + seg + '</div>' : '') +
+          (segRows ? '<div class="wx-segs">' + segRows + '</div>' : '') +
           '<span class="wx-pt"></span>' +
           '<button class="wx-btn" data-act="play">▶ 播放</button>' +
         '</div>' +
@@ -487,6 +551,8 @@
     });
     body.querySelectorAll('.wx-segbtn').forEach(b => b.addEventListener('click', () => {
       if (timer) { clearInterval(timer); timer = null; }
+      const act = b.dataset.seg;
+      if (act != null && act !== '' && opt.onSeg) { opt.onSeg(act, b.dataset.reg); return; }
       WXUI._radarReg = b.dataset.reg;
       if (opt.onRegion) opt.onRegion(b.dataset.reg);
     }));

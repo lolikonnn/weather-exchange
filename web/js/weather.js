@@ -219,6 +219,54 @@
         'SEVP_AOC_RDCP_SLDAS3_ECREF_' + region + '_L88_PI_' + ts + '.PNG';
     },
 
+    /* ---- 单站雷达：比大区再细一层，能精确到城市 ----------------------------
+       中国气象局的雷达产品分三层：全国拼图(ACHN) / 八个大区拼图 / 单站雷达(AZ####)。
+       第三层没有任何入口页 —— chinaall.html 里只链了全国、八个大区，外加北京大兴
+       一个样例；其它城市的页面只能靠拼 slug 猜（/publish/radar/{省拼音}/{市拼音}.htm）。
+       映射表由 tools/radar_slugs.py 离线探测生成（45 城命中 30），前端只读结果。
+
+       代价：单站和大区一样**没有 small/ 档**，每帧 500–900 KB，所以只取 8 帧。 */
+
+    RADAR_CITIES: null,
+    async radarCities() {
+      if (this.RADAR_CITIES) return this.RADAR_CITIES;
+      try {
+        const d = await jget('data/radar-cities.json', 86400000, 'radarcity');
+        this.RADAR_CITIES = (d && d.stations) || {};
+      } catch (e) {
+        this.RADAR_CITIES = {};                       // 拿不到就当作"没有单站"，UI 只剩大区
+      }
+      return this.RADAR_CITIES;
+    },
+
+    /** 某个 6 分钟整点的单站雷达图。az 形如 AZ9200 */
+    stationUrl(az, dt) {
+      const y = dt.getUTCFullYear(), mo = pad2(dt.getUTCMonth() + 1), da = pad2(dt.getUTCDate());
+      const ts = '' + y + mo + da + pad2(dt.getUTCHours()) + pad2(dt.getUTCMinutes()) + '00000';
+      return IMG + '/product/' + y + '/' + mo + '/' + da + '/RDCP/' +
+        'SEVP_AOC_RDCP_SLDAS3_ECREF_' + az + '_L88_PI_' + ts + '.PNG';
+    },
+
+    /** 单站雷达的逐帧探测，规则与 probeRadar 相同（UTC 网格、每 6 分钟、容忍断档） */
+    async probeStation(az, n, onStep) {
+      n = n || 8;
+      const base = new Date();
+      base.setUTCMinutes(Math.floor(base.getUTCMinutes() / 6) * 6, 0, 0);
+      const out = [];
+      let miss = 0;
+      for (let k = 0; k < n * 8 && out.length < n && miss < 30; k++) {
+        const dt = new Date(base.getTime() - (k + 1) * 360000);
+        const url = this.stationUrl(az, dt);
+        /* eslint-disable no-await-in-loop */
+        const ok = await this._tryImg(url);
+        if (ok) { out.push({ url: url, t: dt, f: true }); miss = 0; }
+        else miss++;
+        if (onStep) onStep(out.length, n);
+      }
+      out.reverse();
+      return out;
+    },
+
     /** FY-4B 真彩云图（比红外 WXCL 好看，用于"卫星云图"页的第二个产品）。 */
     satColorUrl(dt) {
       const y = dt.getUTCFullYear(), m = pad2(dt.getUTCMonth() + 1), d = pad2(dt.getUTCDate());

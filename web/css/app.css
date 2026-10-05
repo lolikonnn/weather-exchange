@@ -516,7 +516,9 @@ body{
   border-bottom:1px solid var(--line);background:var(--panel2);
 }
 /* .wx-seg 可横向滚动：窄屏上八个雷达大区按钮放不下，
-   按钮必须 flex:none + nowrap，否则会被压得把"华南"断成两行。 */
+   按钮必须 flex:none + nowrap，否则会被压得把"华南"断成两行。
+   雷达页有三行（大区 → 省 → 市），用 .wx-segs 竖着摞起来。 */
+.wx-segs{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto}
 .wx-seg{display:flex;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:none}
 .wx-seg::-webkit-scrollbar{display:none}
 .wx-segbtn{

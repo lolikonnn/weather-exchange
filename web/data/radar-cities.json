@@ -1,0 +1,187 @@
+{
+ "count": 30,
+ "note": "只有这些城市有独立雷达站；其余城市请回落到所在大区的拼图。",
+ "source": "中国气象局 · nmc.cn 单站雷达",
+ "stations": {
+  "101010100": {
+   "az": "AZ9010",
+   "name": "北京",
+   "prov": "北京市",
+   "slug": "bei-jing/da-xing"
+  },
+  "101030100": {
+   "az": "AZ9220",
+   "name": "天津",
+   "prov": "天津市",
+   "slug": "tian-jin/tian-jin"
+  },
+  "101040100": {
+   "az": "AZ9230",
+   "name": "重庆",
+   "prov": "重庆市",
+   "slug": "chong-qing/chong-qing"
+  },
+  "101050101": {
+   "az": "AZ9451",
+   "name": "哈尔滨",
+   "prov": "黑龙江省",
+   "slug": "hei-long-jiang/ha-er-bin"
+  },
+  "101060101": {
+   "az": "AZ9431",
+   "name": "长春",
+   "prov": "吉林省",
+   "slug": "ji-lin/chang-chun"
+  },
+  "101070101": {
+   "az": "AZ9240",
+   "name": "沈阳",
+   "prov": "辽宁省",
+   "slug": "liao-ning/shen-yang"
+  },
+  "101090101": {
+   "az": "AZ9311",
+   "name": "石家庄",
+   "prov": "河北省",
+   "slug": "he-bei/shi-jia-zhuang"
+  },
+  "101100101": {
+   "az": "AZ9351",
+   "name": "太原",
+   "prov": "山西省",
+   "slug": "shan-xi/tai-yuan"
+  },
+  "101110101": {
+   "az": "AZ9290",
+   "name": "西安",
+   "prov": "陕西省",
+   "slug": "shan-xi/xi-an"
+  },
+  "101120101": {
+   "az": "AZ9531",
+   "name": "济南",
+   "prov": "山东省",
+   "slug": "shan-dong/ji-nan"
+  },
+  "101130101": {
+   "az": "AZ9991",
+   "name": "乌鲁木齐",
+   "prov": "新疆维吾尔自治区",
+   "slug": "xin-jiang/wu-lu-mu-qi"
+  },
+  "101150101": {
+   "az": "AZ9971",
+   "name": "西宁",
+   "prov": "青海省",
+   "slug": "qing-hai/xi-ning"
+  },
+  "101160101": {
+   "az": "AZ9931",
+   "name": "兰州",
+   "prov": "甘肃省",
+   "slug": "gan-su/lan-zhou"
+  },
+  "101170101": {
+   "az": "AZ9951",
+   "name": "银川",
+   "prov": "宁夏回族自治区",
+   "slug": "ning-xia/yin-chuan"
+  },
+  "101180101": {
+   "az": "AZ9371",
+   "name": "郑州",
+   "prov": "河南省",
+   "slug": "he-nan/zheng-zhou"
+  },
+  "101190101": {
+   "az": "AZ9250",
+   "name": "南京",
+   "prov": "江苏省",
+   "slug": "jiang-su/nan-jing"
+  },
+  "101200101": {
+   "az": "AZ9270",
+   "name": "武汉",
+   "prov": "湖北省",
+   "slug": "hu-bei/wu-han"
+  },
+  "101210101": {
+   "az": "AZ9571",
+   "name": "杭州",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/hang-zhou"
+  },
+  "101220101": {
+   "az": "AZ9551",
+   "name": "合肥",
+   "prov": "安徽省",
+   "slug": "an-hui/he-fei"
+  },
+  "101230101": {
+   "az": "AZ9591",
+   "name": "福州",
+   "prov": "福建省",
+   "slug": "fu-jian/fu-zhou"
+  },
+  "101240101": {
+   "az": "AZ9791",
+   "name": "南昌",
+   "prov": "江西省",
+   "slug": "jiang-xi/nan-chang"
+  },
+  "101250101": {
+   "az": "AZ9731",
+   "name": "长沙",
+   "prov": "湖南省",
+   "slug": "hu-nan/chang-sha"
+  },
+  "101260101": {
+   "az": "AZ9851",
+   "name": "贵阳",
+   "prov": "贵州省",
+   "slug": "gui-zhou/gui-yang"
+  },
+  "101270101": {
+   "az": "AZ9280",
+   "name": "成都",
+   "prov": "四川省",
+   "slug": "si-chuan/cheng-du"
+  },
+  "101280101": {
+   "az": "AZ9200",
+   "name": "广州",
+   "prov": "广东省",
+   "slug": "guang-dong/guang-zhou"
+  },
+  "101280601": {
+   "az": "AZ9755",
+   "name": "深圳",
+   "prov": "广东省",
+   "slug": "guang-dong/shen-zhen"
+  },
+  "101280901": {
+   "az": "AZ9758",
+   "name": "肇庆",
+   "prov": "广东省",
+   "slug": "guang-dong/zhao-qing"
+  },
+  "101290101": {
+   "az": "AZ9871",
+   "name": "昆明",
+   "prov": "云南省",
+   "slug": "yun-nan/kun-ming"
+  },
+  "101300101": {
+   "az": "AZ9771",
+   "name": "南宁",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/nan-ning"
+  },
+  "101310101": {
+   "az": "AZ9898",
+   "name": "海口",
+   "prov": "海南省",
+   "slug": "hai-nan/hai-kou"
+  }
+ }
+}
