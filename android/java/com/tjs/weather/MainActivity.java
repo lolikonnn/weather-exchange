@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.WebChromeClient;
@@ -114,6 +115,8 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(Color.parseColor("#0e1015"));
         root.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // 见 InsetPadder 的说明：不这么做的话，Android 15 上顶栏会被状态栏压掉一截。
+        root.setOnApplyWindowInsetsListener(new InsetPadder(root));
 
         web = new WebView(this);
         WebSettings s = web.getSettings();
@@ -154,6 +157,61 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (web != null && web.canGoBack()) web.goBack();
         else super.onBackPressed();
+    }
+
+    /* ───────────────────────── 系统栏避让 ───────────────────────── */
+
+    /**
+     * 把系统栏占的高度变成根布局的 padding。
+     *
+     * 为什么需要它：APK 的 targetSdkVersion 是 35，而 **Android 15 起对 targetSdk 35 的应用
+     * 强制 edge-to-edge** —— 窗口铺满整屏，状态栏 / 手势条浮在页面之上。此时传统的
+     * `FLAG_FULLSCREEN` 已经失效（状态栏不再被隐藏），WebView 就从屏幕最顶端开始布局，
+     * 于是页面第一行（品牌栏 + 搜索框）被状态栏压掉一截。用户反馈的
+     * 「安卓 app 顶端被吞掉一些内容」就是这个。
+     *
+     * 为什么不用 CSS 的 `env(safe-area-inset-top)`：`web/index.html` 已经有
+     * `viewport-fit=cover`，但 **Android WebView 里这些 env 变量恒为 0**（只有 Chrome 浏览器
+     * 自己会填），所以页面侧根本没拿到状态栏高度。`app.css` 里 `.mtabs` 那句
+     * `padding-bottom:env(safe-area-inset-bottom,0)` 同理是空转 —— 底部之所以看起来没问题，
+     * 是因为页面底部本来就是一片纯色背景，手势条压上去也看不出来。
+     *
+     * 为什么这么写是安全的：用的是**实际收到的 inset**，不是写死的高度。
+     * 不处于 edge-to-edge 时（低版本 Android，或 `FLAG_FULLSCREEN` 生效时状态栏被隐藏）
+     * inset 本来就是 0，等于不加 padding，观感与以前完全一致。
+     *
+     * 必须是 static 嵌套类（d8 的硬性要求，见 LocalClient 上的说明）。
+     */
+    private static class InsetPadder implements View.OnApplyWindowInsetsListener {
+        private final View target;
+        private int lastTop = -1;
+        private int lastBottom = -1;
+
+        InsetPadder(View v) { target = v; }
+
+        @Override
+        public WindowInsets onApplyWindowInsets(View v, WindowInsets in) {
+            int top, bottom;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = in.getInsets(WindowInsets.Type.systemBars());
+                android.graphics.Insets ime = in.getInsets(WindowInsets.Type.ime());
+                top = bars.top;
+                // 键盘弹出时用键盘高度（adjustResize 在 edge-to-edge 下不再改变窗口大小，
+                // 只能靠 padding 把输入框顶上来）；不然就退回到导航栏高度。
+                bottom = Math.max(bars.bottom, ime.bottom);
+            } else {
+                top = in.getSystemWindowInsetTop();
+                bottom = in.getSystemWindowInsetBottom();
+            }
+            if (top != lastTop || bottom != lastBottom) {
+                lastTop = top;
+                lastBottom = bottom;
+                target.setPadding(0, top, 0, bottom);
+            }
+            // 已经换算成 padding 了，不要再往子 View 传 —— 否则 WebView 有可能自己
+            // 再按 safe-area 处理一遍，那就变成双倍留白。
+            return WindowInsets.CONSUMED;
+        }
     }
 
     /* ───────────────────────── 请求拦截 ───────────────────────── */

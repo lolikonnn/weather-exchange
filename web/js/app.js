@@ -966,6 +966,13 @@
       if (!b) return;
       setMTab(b.dataset.mtab);
     });
+    // 免责声明：底端那一条点了重看完整版；弹窗里「我知道啦」关掉它。
+    // 点遮罩空白处也关（位置得正好落在遮罩本身，点卡片内部不关）。
+    if ($('#disclaimer')) $('#disclaimer').addEventListener('click', showDisclaimer);
+    if ($('#welcomeOk')) $('#welcomeOk').addEventListener('click', hideDisclaimer);
+    if ($('#welcome')) $('#welcome').addEventListener('click', e => {
+      if (e.target === $('#welcome')) hideDisclaimer();
+    });
     $('#btnGeo').addEventListener('click', () => locate(false));
     $('#search').addEventListener('input', doSearch);
     $('#search').addEventListener('keydown', searchKey);
@@ -1029,6 +1036,23 @@
     if (b) { b.classList.toggle('active', on); b.title = on ? '退出全屏（Esc）' : '全屏看主图'; }
     setTimeout(() => { try { Chart.resize(); } catch (e) {} }, 60);
     toast(on ? '已全屏，再点一次或按 Esc 退出' : '已退出全屏');
+  }
+
+  /* ═══════════ 免责声明 ═══════════
+     私自开展天气预报业务是违法的，本站只是搬运 + 展示，所以这条声明要
+     ① 常驻网页底端（不能只藏在弹窗里，弹窗一关就再也找不到）
+     ② 第一次打开时主动弹一次说清楚
+     点底端那一条可以随时把完整版再弹出来。 */
+  function showDisclaimer() {
+    const m = $('#welcome');
+    if (!m) return;
+    m.hidden = false;
+    storeSet('welcomed', 1);          // 弹过就记住，不再自动弹
+  }
+
+  function hideDisclaimer() {
+    const m = $('#welcome');
+    if (m) m.hidden = true;
   }
 
   function setMTab(i) {
@@ -1110,6 +1134,9 @@
     warmIndexes();
     warmQuotes();
     checkDownloads();
+    // 第一次打开（本机没记过 welcomed）弹一次免责声明；?welcome=1 可以强制弹出来
+    // （方便截图自查，也方便把这个链接发给别人看声明）。
+    if (q.welcome || !storeGet('welcomed', 0)) showDisclaimer();
     const h = await API.Cn.health();
     if (h && h.local) $('#statusSrc').textContent = '中国天气网本地代理 ' + (h.version || '');
   }

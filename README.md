@@ -505,6 +505,23 @@ weather-fighter/
   且带合成 `this$0` 字段的嵌套类"时抛 `NullPointerException: Cannot invoke "String.length()"`。
   必须把 `WebViewClient` 子类写成 `private static class` 并持有外部引用。javac 也要用 `--release 8`
   （Java 9+ 的 `invokedynamic` 字符串拼接 R8 处理不了）。
+- **Android 15 强制 edge-to-edge，会把页面顶端压到状态栏底下**：APK 的
+  `targetSdkVersion="35"`，从 Android 15 起系统对这类应用**强制 edge-to-edge** ——
+  窗口铺满整屏、状态栏浮在页面之上。于是 `getWindow().setFlags(FLAG_FULLSCREEN, 0)`
+  变成 no-op（状态栏不再被隐藏），WebView 从屏幕最顶端开始布局，第一行被状态栏盖掉一截
+  （用户反馈的"安卓 app 顶端被吞掉一些内容"）。
+  **不能用 CSS 修**：`index.html` 虽然写了 `viewport-fit=cover`，但
+  **Android WebView 里 `env(safe-area-inset-*)` 恒为 0**（只有 Chrome 浏览器自己会填），
+  页面侧拿不到状态栏高度。正确做法是让原生侧把系统栏高度变成根布局的 padding：
+  `MainActivity` 里给根 `FrameLayout` 挂一个 `static` 嵌套类
+  `InsetPadder implements View.OnApplyWindowInsetsListener`，用
+  `in.getInsets(WindowInsets.Type.systemBars())` 取 top/bottom，
+  bottom 还要与 `Type.ime()` 取 `max`（edge-to-edge 下 `adjustResize` 不再改变窗口大小，
+  键盘只能靠 padding 让位），值变化时 `setPadding(0, top, 0, bottom)`，
+  最后 `return WindowInsets.CONSUMED`（已换算成 padding，再往下传会让 WebView
+  自己又按 safe-area 处理一遍 → 双倍留白）。
+  用**实际收到的 inset** 而不是写死高度，所以低版本 Android 或状态栏真被隐藏时 inset 为 0，
+  等于不加 padding，观感与以前一致。
 - **`aapt2 link` 的资源包必须用位置参数**：写成 `-R res.zip` 会被当成 overlay，报
   `resource string/app_name does not override an existing resource`。
 - **不再做 Windows EXE**：PyInstaller 单文件版每次启动都要往 `%TEMP%` 解压，在锁住临时目录的机器上直接起不来（`Could not create temporary directory!`）。相关产物与 `tools/build_exe.py`、`desktop/` 已删除，历史版本见 git 提交 `d6418f71dc`。
@@ -559,3 +576,19 @@ weather-fighter/
 本项目仅用于学习与技术演示。天气数据来自中国气象局 / 中国天气网与 Open-Meteo，
 版权归各自所有；本项目不保证数据准确性，**请勿用于任何生产或安全决策**。
 "K 线""涨跌"等只是可视化隐喻，气温不是证券。
+
+**私自开展天气预报业务是违法的**，所以本站只做「搬运 + 展示」，不生产任何预报。
+这条声明在界面上有两处落地，缺一不可：
+
+1. **常驻网页底端**（`.disclaimer`，独立占一行网格）：`index.html` 里
+   `</footer>` 之后、`nav.mtabs` 之前。点它可以随时把完整版弹回来。
+2. **第一次打开时自动弹一次**（`#welcome`）。用 `localStorage` 的 `welcomed`
+   记「弹过了」，所以只弹一次；`?welcome=1` 可以强制弹（方便截图自查，
+   也方便把链接发给别人看声明）。语气刻意做得像《FX 战士久留美》那味，
+   但把「不是官方服务」「违法」「以官方发布为准」三件事都说死了。
+
+布局上要注意：`body` 是 grid，加这一行**必须同步改三处
+`grid-template-rows`**（桌面 `/`、`@media (max-width:860px)` 竖屏、
+`and (orientation:landscape)` 横屏），否则最后一行会被挤出视口。
+手机端这一行放在 `nav.mtabs` **之前**（免责声明在页签上方），
+因为底部页签是该吸底的导航，声明压它下面会显得像错位。

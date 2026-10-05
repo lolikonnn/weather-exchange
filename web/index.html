@@ -187,6 +187,11 @@
   </span>
 </footer>
 
+<!-- ══════════════════════ 免责声明（常驻网页底端，点一下看完整版） ══════════════════════ -->
+<div class="disclaimer" id="disclaimer" title="点这里重新查看完整免责声明">
+  ⚠️ 本站不是官方气象服务：所有数据均搬运自中国气象局（weather.cma.cn / nmc.cn）与 Open-Meteo，本站只做展示，本质是个套皮软件 · 点此看完整声明
+</div>
+
 <!-- 全城市选择抽屉 -->
 <div class="drawer" id="cityDrawer" hidden>
   <div class="drawer-panel">
@@ -200,6 +205,31 @@
 </div>
 
 <div id="toast" class="toast" hidden></div>
+
+<!-- ══════════════════════ 首次访问的免责弹窗 ══════════════════════ -->
+<div class="modal-mask" id="welcome" hidden>
+  <div class="modal-card">
+    <div class="wm-head">(｡•́︿•̀｡) 那个……第一次来，有件事得先说清楚</div>
+    <div class="wm-body">
+      <p><b>本站不是气象局开的哦！</b>所有数据都是从
+        <b>中国气象局</b>（weather.cma.cn / nmc.cn）和 <b>Open-Meteo</b> 那儿搬过来的……
+        说白了就是个给天气预报套了层炒股软件皮的<u>套皮小玩具</u> (๑•́ ₃ •̀๑)</p>
+
+      <p>私自开展天气预报业务是<u>违法</u>的嘛，所以这里只做
+        <b>展示与搬运</b>，一切预报请以官方发布为准 (｀・ω・´)</p>
+
+      <p class="wm-note">⚠️ 数据可能有延迟、缺失或算错；拿它做任何重要决定都请先看一眼
+        <a href="https://weather.cma.cn" target="_blank" rel="noopener">中国气象局官网</a>。
+        本站不承担由此产生的任何后果 (｡•́︿•̀｡)</p>
+
+      <p class="wm-cute">老实看天气预报，很枯燥吧？<br>
+        所以才做成这副样子的嘛 (๑&gt;؂&lt;๑)</p>
+    </div>
+    <div class="wm-foot">
+      <button class="btn-wm" id="welcomeOk">我知道啦 (๑•̀ㅂ•́)و✧</button>
+    </div>
+  </div>
+</div>
 
 <!-- 术语对照表：把每个炒股词用天气话讲一遍。
      保留炒股软件的"长相"是原始需求，但不该要求用户会炒股才能看懂。 -->
