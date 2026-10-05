@@ -226,6 +226,31 @@ def main():
         if done % 20 == 0 or done == len(files):
             print("  已上传 %d/%d" % (done, len(files)))
 
+    # 4.5) 删掉仓库里已经不该存在的文件
+    #      用 base_tree 建树是"在旧树上打补丁"，本地删掉的文件不会跟着从仓库消失。
+    #      真实踩到的坑：改名前的 天交所-天气行情终端.exe（9.25 MB）一直留在 dist/，
+    #      而且它旁边还有旧名的 .apk，导致 CI 里 `cp -f dist/*.apk ...` 的 glob 一次
+    #      匹配到两个 apk，cp 直接报错、又被 `|| echo` 吞掉 —— Pages 上的下载链接 404。
+    #      Git Data API 里 sha=None 就是"删这个路径"，所以这里把「仓库有、本地没有」
+    #      的全部删掉，让仓库严格等于本地要发布的文件集合。
+    if base_tree:
+        st, tinfo = req("GET", "/repos/%s/%s/git/trees/%s?recursive=1"
+                        % (owner, a.repo, base_tree), a.token)
+        if st == 200:
+            remote = set(i["path"] for i in tinfo.get("tree", [])
+                         if i.get("type") == "blob")
+            stale = sorted(remote - set(files))
+            for rel in stale:
+                tree.append({"path": rel, "mode": "100644", "type": "blob", "sha": None})
+            if stale:
+                print("  删除仓库里多余的 %d 个文件" % len(stale))
+                for rel in stale[:12]:
+                    print("    - %s" % rel)
+                if len(stale) > 12:
+                    print("    … 以及另外 %d 个" % (len(stale) - 12))
+        else:
+            print("  ! 读取远端文件列表失败 (%s)，跳过清理" % st)
+
     # 5) 建 tree
     payload = {"tree": tree}
     if base_tree:
