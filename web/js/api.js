@@ -451,6 +451,61 @@
       return out;
     },
 
+    /**
+     * 气象局版的「昨收 + 迷你走势」—— 二级源（Open-Meteo）整个挂掉时的兜底。
+     *
+     * ★ 昨收的定义和 OpenMeteo.brief 不完全一样，这是数据源的粒度决定的，不是 bug：
+     *     OpenMeteo.brief.prevClose = 昨天最后一个整点的气温（真正的"收盘价"）
+     *     Cn.brief.prevClose        = 昨天实测日均温 = (maxobs + minobs) / 2
+     *   一个来自逐小时、一个来自逐日，所以同一个城市两边算出来的涨跌幅会有出入。
+     *   日历年月表里只有 cla='obs' 的日子带 maxobs/minobs，所以只认这些日子。
+     *
+     * 成本：按城市一份月度日历（Cn.calendar 自己缓存 30 分钟），不是按小时放大。
+     * 覆盖：桌面版/APK 走本地代理，是全部 352 城；GitHub Pages 是静态站，
+     *       只有预抓过的 45 城有 cal 文件（热门 22 城全在里面），其余城市这里返回 null。
+     */
+    async brief(city) {
+      if (!city || !city.id) return null;
+      const today = todayStr();
+
+      // 只保留"今天以前 + 带实测高低温"的日子，日均温当作那天的收盘价
+      const collect = function (arr) {
+        const out = [];
+        for (const it of (arr || [])) {
+          const d = String(it.date || '');
+          if (!/^\d{8}$/.test(d)) continue;
+          const ds = d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8);
+          if (ds >= today) continue;
+          const hi = num(it.maxobs), lo = num(it.minobs);
+          if (hi == null || lo == null) continue;
+          out.push({ d: ds, c: (hi + lo) / 2 });
+        }
+        return out;
+      };
+      const ymOf = function (m) {
+        const t = new Date(today + 'T00:00:00');
+        t.setDate(1); t.setMonth(t.getMonth() + m);
+        return U.fmtDate(t).slice(0, 7).replace('-', '');
+      };
+
+      // 当月文件通常还带着上月末尾几天；万一没有（比如月初抓的当月文件从 1 号起），
+      // 再补一份上月 —— 只在这条罕见分支上多花一次请求。
+      let days = collect(await Cn.calendar(city.id, ymOf(0)));
+      if (!days.length) days = collect(await Cn.calendar(city.id, ymOf(-1)));
+      if (!days.length) return null;
+
+      days.sort(function (p, q) { return p.d < q.d ? -1 : 1; });
+      const prev = days[days.length - 1];
+      return {
+        today: today, src: 'cma',
+        prevClose: prev.c, prevDay: prev.d,
+        open: null, high: null, low: null, now: null,
+        wcode: null, precip: null,
+        spark: days.slice(-24).map(function (x) { return x.c; }),
+        sparkPts: [], days: days
+      };
+    },
+
     async health() {
       if (!LOCAL) return { local: false };
       try { return await getJSON('/api/health', { ttl: 60000 }); }

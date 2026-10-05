@@ -732,7 +732,8 @@
       S.data = d;
       S.lastFullAt = Date.now();
       if (!S.briefs[id] || !S.briefs[id].prevClose) {
-        try { S.briefs[id] = await API.OpenMeteo.brief(c.lat, c.lon, 600000); } catch (e) { }
+        const b = await briefOf(c, 600000);
+        if (b) S.briefs[id] = b;
       }
       Chart.hideLoading();
       renderQuoteHead(); renderOrderbook(); renderTape(); renderChart();
@@ -776,6 +777,26 @@
   const BRIEF_MS = 1800000;   // 30 分钟一轮
   const BRIEF_MAX = 40;       // 一轮最多补多少个城市（自选 + 热门前 16 + 当前所在地）
 
+  /**
+   * 取一个城市的「昨收 + 迷你走势」，带兜底：
+   *   ① Open-Meteo brief（首选：逐小时的"收盘价"，还有开高低/天气码/降水量）
+   *   ② 气象局日历的昨日实测日均温（API.Cn.brief，见那边的注释）
+   * 两个源的 prevClose 定义不同（逐小时收盘 vs 逐日日均），所以
+   *   同一城市在①和②下算出来的涨跌幅会有出入 —— 但总好过整列 "--"。
+   * 只有①真的拿不到东西时才走②，正常情况下一次多余的请求都不会发。
+   */
+  async function briefOf(city, ttl) {
+    const t = ttl || BRIEF_MS;
+    let b = null;
+    try { b = await API.OpenMeteo.brief(city.lat, city.lon, t); } catch (e) { }
+    if (b && b.prevClose != null) return b;
+    try {
+      const c = await API.Cn.brief(city);
+      if (c && c.prevClose != null) return c;
+    } catch (e) { }
+    return b;
+  }
+
   async function warmQuotes() {
     const ids = watchHotIds();
     const ttl = Math.max(S.refreshMs, 30000);
@@ -794,7 +815,7 @@
       let got = 0;
       await runLimited(need, 4, async i => {
         const c = API.Cities.get(i);
-        try { const b = await API.OpenMeteo.brief(c.lat, c.lon, BRIEF_MS); if (b) { S.briefs[i] = b; got++; } } catch (e) { }
+        try { const b = await briefOf(c, BRIEF_MS); if (b) { S.briefs[i] = b; got++; } } catch (e) { }
       });
       S.briefAt = Date.now() + (got ? BRIEF_MS : 120000);
     }
@@ -1227,5 +1248,5 @@
   }
 
   document.addEventListener('DOMContentLoaded', boot);
-  window.__APP = { S, selectCity, addWatch, removeWatch, renderChart, locate, renderGeo, applyGeo, LOC_ID, haversine, nearestCity };
+  window.__APP = { S, selectCity, addWatch, removeWatch, renderChart, locate, renderGeo, applyGeo, LOC_ID, haversine, nearestCity, warmQuotes, briefOf };
 })();
