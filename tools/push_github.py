@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-用 GitHub REST API 把 weather-exchange 推上去。
+用 GitHub REST API 把 weather-fighter 推上去。
 
 为什么不用 git：本机没有装 git，也没有 gh CLI，而 GitHub 从 2021-08-13 起
 不再接受用账号密码做 git push / API 调用，必须用 Personal Access Token。
@@ -13,7 +13,7 @@ Token 需要的权限（fine-grained）或 scope（classic）：
 用法:
     set GH_TOKEN=ghp_xxx            &  python tools\\push_github.py
     python tools\\push_github.py --token ghp_xxx
-    python tools\\push_github.py --token ghp_xxx --repo weather-exchange --message "update"
+    python tools\\push_github.py --token ghp_xxx --repo weather-fighter --message "update"
 
 文件选择规则见 PICK / SKIP —— 与 .gitignore 保持一致，另外把 dist/ 里的
 exe 与 apk 一并提交，方便直接从网页下载。
@@ -125,7 +125,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--token", default=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
     ap.add_argument("--owner", default="lolikonnn")
-    ap.add_argument("--repo", default="weather-exchange")
+    ap.add_argument("--repo", default="weather-fighter")
     ap.add_argument("--branch", default="main")
     ap.add_argument("--message", default="")
     ap.add_argument("--private", action="store_true")

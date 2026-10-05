@@ -225,6 +225,39 @@
       return true;
     },
 
+    /** 主图叠加用的取数：把当前副图口径变成「按时间键索引」的查表，交给 chart.js 画到主图上。
+        为什么不直接按下标对：
+          - 分时/五日的横轴是"今天 24 小时 / 昨天→未来三天"，而 series('trend') 给的是
+            "从现在往前 2 小时起 24 小时"，两边窗口不一样，按下标对会整体错位；
+          - K 线周期的横轴是 K 线柱子，只有按分桶键对才准 —— 而 series() 的分桶键和
+            IND.aggregate 的完全一致（周一 / YYYY-MM / YYYY-MM-DD），所以那边反过来必须按键对。
+        统一成"按键查表"两种情况都对：查不到的填 null，线自然断在数据边界上。 */
+    overlayOf(name, wx, air, period) {
+      const M = {
+        precip: { label: '降水量', unit: 'mm', color: '#4fc3f7', raw: 'precip', agg: 'precip' },
+        wind:   { label: '风速',   unit: 'm/s', color: '#2bd6a0', raw: 'wind',   agg: 'wind' },
+        cloud:  { label: '云量',   unit: '%',   color: '#9fb3c8', raw: 'cloud',  agg: 'cloud' },
+        air:    { label: 'PM2.5',  unit: 'µg/m³', color: '#d16dff', raw: 'pm25', agg: 'pm25' }
+      }[name];
+      if (!M) return null;
+
+      const src = (name === 'air' ? air : (wx && wx.hourly)) || null;
+      if (!src || !src.time || !src.time.length) return null;
+
+      const byKey = {};
+      if (period === 'trend' || period === '5day' || !period) {
+        // 逐小时：直接拿原始时次当键，主图显示哪几个小时就有哪几个小时
+        const a = src[M.raw] || [];
+        for (let i = 0; i < src.time.length; i++) byKey[src.time[i]] = a[i];
+      } else {
+        const s = W.series(wx && wx.hourly, air, name, period);
+        if (!s || !s.key) return null;
+        const a = s[M.agg] || [];
+        for (let i = 0; i < s.key.length; i++) byKey[s.key[i]] = a[i];
+      }
+      return { name: M.label, unit: M.unit, color: M.color, byKey: byKey };
+    },
+
     /* ── 雷达 / 卫星播放器 ── */
     _play: null,
 
@@ -313,10 +346,10 @@
       });
     },
 
-    /** 卫星云图：红外（WXCL）/ FY-4B 真彩（WXBL）两种产品可切 */
-    _satKind: 'ir',
+    /** 卫星云图：FY-4B 真彩（WXBL）/ 风云二号红外（WXCL）两种产品可切。默认真彩 —— 更好看也更好认 */
+    _satKind: 'rgb',
     async openSat(kind) {
-      kind = kind || this._satKind || 'ir';
+      kind = kind || this._satKind || 'rgb';
       this._satKind = kind;
       const body = $('#wxSatBody'), sub = $('#wxSatSub');
       if (!body) return;
@@ -327,15 +360,15 @@
       } catch (e) { body.innerHTML = '<div class="wx-load">云图获取失败：' + esc(e.message) + '</div>'; return; }
       if (!frames.length) { body.innerHTML = '<div class="wx-load">暂时取不到卫星云图</div>'; return; }
       renderPlayer(body, sub, frames, kind === 'rgb' ? '卫星云图 · FY-4B 真彩' : '卫星云图 · 风云二号红外', {
-        regions: [['ir', '红外云图'], ['rgb', '真彩云图']], region: kind,
+        regions: [['rgb', '真彩云图'], ['ir', '红外云图']], region: kind,
         onRegion: k => WXUI.openSat(k)
       });
     },
 
-    /* ── 降水：中央气象台未来 24 小时预报图 / 最近 1 小时实况 ── */
-    _precipKind: 'fcst',
+    /* ── 降水：最近 1 小时实况 / 中央气象台未来 24 小时预报图。默认实况 —— 更新更勤 */
+    _precipKind: 'now',
     async openPrecip(kind) {
-      kind = kind || this._precipKind || 'fcst';
+      kind = kind || this._precipKind || 'now';
       this._precipKind = kind;
       const body = $('#wxPrecipBody'), sub = $('#wxPrecipSub');
       if (!body) return;
@@ -348,7 +381,7 @@
       } catch (e) { body.innerHTML = '<div class="wx-load">降水数据获取失败：' + esc(e.message) + '</div>'; return; }
       if (!frames.length) { body.innerHTML = '<div class="wx-load">暂时取不到降水图</div>'; return; }
       renderPlayer(body, sub, frames, nowKind ? '全国 1 小时降水实况' : '全国降水量预报图（未来 24 小时）', {
-        regions: [['fcst', '未来 24 小时预报'], ['now', '最近 1 小时实况']], region: kind,
+        regions: [['now', '最近 1 小时实况'], ['fcst', '未来 24 小时预报']], region: kind,
         onRegion: k => WXUI.openPrecip(k)
       });
     },

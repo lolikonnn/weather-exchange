@@ -65,7 +65,7 @@ jobs:
         run: |
           mkdir -p web/dist
           # 这里必须「先挑出唯一一个 apk，再拷」。原来的写法是
-          #   cp -f dist/*.apk web/dist/weather-warrior-android.apk 2>/dev/null || echo ...
+          #   cp -f dist/*.apk web/dist/weather-fighter-android.apk 2>/dev/null || echo ...
           # dist/ 里一旦有两个 .apk（改名前的旧包没从仓库清掉时就会这样），glob 会展开成
           # 多个参数，cp 认为最后一个参数不是目录而直接报错，错误又被 2>/dev/null || echo
           # 吞掉 —— 步骤显示 success，站点上却根本没有下载文件（真实踩过这个坑）。
@@ -79,7 +79,7 @@ jobs:
             echo "dist/ 下没有 .apk，跳过（站点底部的下载按钮会 404）"
           else
             echo "选中安装包: $apk"
-            cp -f "$apk" web/dist/weather-warrior-android.apk
+            cp -f "$apk" web/dist/weather-fighter-android.apk
           fi
           ls -lh web/dist
 

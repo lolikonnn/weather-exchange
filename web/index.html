@@ -142,6 +142,7 @@
       <button data-ind="wind"   class="tab" title="风速（柱子）、阵风（紫虚线）和风向（箭头，指风吹去的方向）。跟着周期走：日K取当天最大风，周K取当周最大风">风</button>
       <button data-ind="cloud"  class="tab" title="低云／中云／高云的占比，白线是总云量。跟着周期走，按窗口取平均">云量</button>
       <button data-ind="air"    class="tab" title="PM2.5（柱子）和空气质量指数 AQI（黄线），虚线是「良」的分界 100。跟着周期走，按窗口取平均">空气</button>
+      <button id="btnOverlay" class="tab ovtab" title="把当前副图这条线同时画到上面的气温图上，用右边最外侧那根刻度。一眼看出气温和降水/空气的关系">📈 叠到主图</button>
     </div>
     <div class="chart-box sub">
       <div id="subChart" class="chart"></div>
@@ -173,7 +174,7 @@
   <span id="statusNext" class="dim"></span>
   <span class="dl-box" id="dlBox" hidden>
     <span class="dim">下载客户端</span>
-    <a class="dl" href="dist/weather-warrior-android.apk" download>Android .apk</a>
+    <a class="dl" href="dist/weather-fighter-android.apk" download>Android .apk</a>
   </span>
 </footer>
 

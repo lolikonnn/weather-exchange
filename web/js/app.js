@@ -20,8 +20,12 @@
     refreshMs: 3000, sortMode: 0,
     watch: [], cur: null, data: null, wx: null,
     quotes: {}, briefs: {}, idxQ: {}, idxB: {}, briefAt: 0,
+    overlay: false,
     loading: false, timer: null, lastQuoteAt: 0, lastFullAt: 0, tick: 0
   };
+
+  /** 副图口径的中文名（给提示语和叠加按钮的 tooltip 用） */
+  const IND_CN = { vol: '温差', precip: '降水', wind: '风', cloud: '云量', air: '空气' };
 
   /* ═══════════ 行情计算 ═══════════ */
   function quoteOf(id) {
@@ -417,11 +421,15 @@
   function renderChart() {
     const d = S.data; if (!d) return;
     const p = S.period;
+    // 叠加线：只有当前副图是天气口径、并且用户按下了「叠到主图」时才给主图塞数据。
+    // 副图切回温差（vol）就自动取消 —— 温差本来就是主图自己的东西，再叠一条没意义。
+    const ov = (S.overlay && isWxInd() && window.WXUI)
+      ? WXUI.overlayOf(S.ind, S.wx, S.wx && S.wx.air, p) : null;
     if (p === 'trend' || p === '5day') {
       const pts = p === 'trend' ? d.intraday : d.five;
       const qp = quoteOf(S.cur.id);
       Chart.renderMain({
-        mode: p, points: pts, base: d.base,
+        mode: p, points: pts, base: d.base, ov: ov,
         precips: pts.map(x => x.v),
         hours: pts.map(x => U.sessionLabel(Number(String(x.t).slice(11, 13)))),
         title: (p === 'trend' ? '分时' : '五日分时') + ' · ' + (p === 'trend' ? d.today : '近 5 日')
@@ -434,7 +442,7 @@
       const s = seriesFor(p);
       if (!s) { Chart.renderEmpty('暂无K线数据'); return; }
       Chart.renderMain({
-        mode: 'kline', bars: s.bars, ind: s.ind, base: s.base, today: s.today,
+        mode: 'kline', bars: s.bars, ind: s.ind, base: s.base, today: s.today, ov: ov,
         metric: S.metric, view: s.view, monthMode: s.monthMode, title: s.title,
         showBoll: S.ind === 'boll'
       });
@@ -447,6 +455,19 @@
         ? 'BOLL ' + g('lower') + ' / ' + g('mid') + ' / ' + g('upper')
         : 'MA5 ' + g('ma5') + '　MA10 ' + g('ma10') + '　MA20 ' + g('ma20') + '　MA60 ' + g('ma60');
     }
+    syncOverlayBtn();
+  }
+
+  /** 「叠到主图」按钮的状态：副图切回温差（vol）时没有任何可叠的天气量，按钮置灰 */
+  function syncOverlayBtn() {
+    const b = $('#btnOverlay'); if (!b) return;
+    const ok = isWxInd();
+    b.disabled = !ok;
+    b.classList.toggle('disabled', !ok);
+    b.classList.toggle('active', !!(ok && S.overlay));
+    b.title = ok
+      ? '把「' + (IND_CN[S.ind] || S.ind) + '」这条线同时画到上面的气温图上，用右边最外侧那根刻度'
+      : '先把副图切到降水 / 风 / 云量 / 空气，才能叠到主图';
   }
 
   /* ═══════════ 状态栏 ═══════════ */
@@ -672,8 +693,10 @@
       S.period = t.dataset.period;
       renderChart();
     });
-    U.$$('.tabbar.sub .tab').forEach(t => t.addEventListener('click', () => {
-      U.$$('.tabbar.sub .tab').forEach(x => x.classList.remove('active'));
+    // 注意 [data-ind]：这一行里还有一个 #btnOverlay（叠加开关），它没有 data-ind，
+    // 不加限定就会把 S.ind 设成 undefined 并把所有页签的 active 清掉。
+    U.$$('.tabbar.sub .tab[data-ind]').forEach(t => t.addEventListener('click', () => {
+      U.$$('.tabbar.sub .tab[data-ind]').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
       S.ind = t.dataset.ind;
       // 副图现在跟着主图周期走（分时/五日/日K/周K/月K/预报K 各有对应粒度），
@@ -682,6 +705,14 @@
       renderChart();
       if (isWxInd() && !S.wx && S.cur) loadWx(S.cur.id);
     }));
+    // 叠加开关：不参与页签互斥，只切 S.overlay 再重画主图
+    if ($('#btnOverlay')) $('#btnOverlay').addEventListener('click', () => {
+      if (!isWxInd()) { toast('先把副图切到 降水 / 风 / 云量 / 空气，才能叠到主图'); return; }
+      S.overlay = !S.overlay;
+      storeSet('overlay', S.overlay ? 1 : 0);
+      renderChart();
+      toast(S.overlay ? '已把「' + IND_CN[S.ind] + '」叠到主图' : '已取消主图叠加');
+    });
     $('#refreshRate').addEventListener('change', e => {
       S.refreshMs = Number(e.target.value); storeSet('refresh', S.refreshMs);
       scheduleRefresh(); toast('行情刷新频率：' + (S.refreshMs ? (S.refreshMs / 1000) + ' 秒' : '手动'));
@@ -780,6 +811,7 @@
     if (!S.watch.length) S.watch = DEFAULT_WATCH.slice();
     S.refreshMs = storeGet('refresh', 3000);
     S.metric = storeGet('metric', 'range');
+    S.overlay = !!storeGet('overlay', 0);
     const cm = storeGet('color', 'cn');
     document.body.classList.toggle('us', cm === 'us');
     $('#refreshRate').value = String(S.refreshMs);
@@ -852,6 +884,7 @@
     });
     if (o.p && PERIODS.indexOf(o.p) >= 0) S.period = o.p;
     if (o.ind && INDS.indexOf(o.ind) >= 0) S.ind = o.ind;
+    if (o.ov != null && o.ov !== '') S.overlay = (o.ov !== '0' && o.ov !== 'false');
     if (o.m && Chart.METRICS[o.m]) S.metric = o.m;
     if (o.color === 'us' || o.color === 'cn') {
       document.body.classList.toggle('us', o.color === 'us');

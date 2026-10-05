@@ -114,7 +114,7 @@
 
 | 形态 | 说明 | 需要什么 |
 | --- | --- | --- |
-| **网页版** | [lolikonnn.github.io/weather-exchange](https://lolikonnn.github.io/weather-exchange/) | 一个现代浏览器 |
+| **网页版** | [lolikonnn.github.io/weather-fighter](https://lolikonnn.github.io/weather-fighter/) | 一个现代浏览器 |
 | **Android APK** | `dist\天气战士.apk`，`minSdk 21` | Android 5.0+ |
 
 两个版本界面**完全相同**，区别只在数据怎么取（见下）。
@@ -129,7 +129,7 @@
 
 | 平台 | 直链 |
 | --- | --- |
-| Android | <https://lolikonnn.github.io/weather-exchange/dist/weather-warrior-android.apk> |
+| Android | <https://lolikonnn.github.io/weather-fighter/dist/weather-fighter-android.apk> |
 
 > `web/dist/` 不提交进仓库。部署时 `.github/workflows/deploy.yml` 会把 `dist/` 里的安装包
 > 拷成上面这个 **纯 ASCII 文件名**再发布 —— 中文文件名在 CDN 和各浏览器里的百分号编码
@@ -174,12 +174,12 @@
 
 ### 网页版
 
-直接打开 <https://lolikonnn.github.io/weather-exchange/>。
+直接打开 <https://lolikonnn.github.io/weather-fighter/>。
 
 本地跑：因为前端用 `fetch` 读 `data/cities.json`，**不能直接双击 `index.html`**（`file://` 会被同源策略拦），要起个静态服务：
 
 ```bash
-cd weather-exchange
+cd weather-fighter
 python server/app.py            # 打开 http://127.0.0.1:8765/
 ```
 
@@ -205,7 +205,7 @@ dist\天气战士.apk
 环境要求：**Python 3.10+**；打 APK 额外需要 **JDK 11+**（本项目用 `D:\Java`，JDK 23）。
 
 ```bash
-cd weather-exchange
+cd weather-fighter
 
 # 1) 重建城市数据集（联网，会用 tools/.cache3 缓存）
 python tools\resolve_cities.py --workers 8
@@ -239,7 +239,7 @@ python tools\push_github.py             # 建仓库 -> 传文件 -> 提交 -> �
 ```
 
 推送完 Pages 会自动开始构建（`.github/workflows/deploy.yml` 首次由 `push` 事件触发）。
-大约 1~2 分钟后站点在 `https://<你的用户名>.github.io/weather-exchange/`。
+大约 1~2 分钟后站点在 `https://<你的用户名>.github.io/weather-fighter/`。
 
 > **仓库必须是 public**：免费账号的 Pages 不支持私有仓库（私有仓库开 Pages 需要 GitHub Pro）。
 
@@ -267,19 +267,22 @@ python tools\push_github.py             # 建仓库 -> 传文件 -> 提交 -> �
 `?local=0` / `?local=1` 是专门为上面第二行加的开关 —— 在本地一条命令就能复现 Pages 的取数路径，
 不用真的等部署。
 
-**子路径复现（重要）**：Pages 上线后站点在 `https://<user>.github.io/weather-exchange/`，
+**子路径复现（重要）**：Pages 上线后站点在 `https://<user>.github.io/weather-fighter/`，
 是**带子路径**的，绝对路径 `/js/app.js` 这种写法会直接 404。所以 `web/` 里所有静态资源引用
-（`data/cities.json`、`data/official/**`、`vendor/echarts.min.js`、`dist/weather-warrior-*.apk`）
+（`data/cities.json`、`data/official/**`、`vendor/echarts.min.js`、`dist/weather-fighter-*.apk`）
 **都是相对路径**，只有 `/api/*` 是绝对路径（那是本地代理专用，在 Pages 上注定 404 并被 catch 掉）。
 
-这一条也实测过 —— 用目录联接把站点挂到 `/weather-exchange/` 下再跑无头浏览器：
+这一条也实测过 —— 用目录联接把站点挂到 `/weather-fighter/` 下再跑无头浏览器：
 
 ```powershell
-$root = "weather-exchange\tmp\pages-root"
-New-Item -ItemType Junction -Path "$root\weather-exchange" -Target "weather-exchange\web"
-python -m http.server 8767 --directory $root
-# 浏览器打开 http://127.0.0.1:8767/weather-exchange/?local=0&city=101280101&p=day&ind=macd
+$root = "$PWD\tmp\pages-root"          # 用绝对路径：New-Item -ItemType Junction 会静默失败，必须用 mklink /J
+cmd /c mklink /J "$root\weather-fighter" "$PWD\web"
+python -m http.server 8767 --bind 127.0.0.1 --directory $root
+# 浏览器打开 http://127.0.0.1:8767/weather-fighter/?local=0&city=101280101&p=day&ind=macd
 ```
+
+> **坑**：目录联接只能用 `cmd /c mklink /J` 建 —— `New-Item -ItemType Junction` 在 PowerShell 5.1 下
+> 对含中文/长路径的目标会**返回成功但什么都不建**，之后 `http.server` 就一直 404。
 
 结果：`#qPrice 24.1`、`#qChange +1.2`、`#qPct +5.24%`、`#chartHint "MA5 21.9 …"`、
 28 行预报、8 个 canvas、`window.__errs` 为 `[]`。
@@ -302,7 +305,7 @@ python -m http.server 8767 --directory $root
 ## 目录结构
 
 ```
-weather-exchange/
+weather-fighter/
 ├── web/                     前端（纯静态，无构建步骤）
 │   ├── index.html           同花顺风格的行情终端
 │   ├── css/app.css          深色皮肤、配色令牌（body.us 一键翻转红绿）

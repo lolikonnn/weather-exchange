@@ -26,7 +26,11 @@
     k: '#e9edf4', d: '#ffd666', j: '#d16dff',
     wr: ['#e9edf4', '#ffd666'],
     avg: '#ffd666',
-    base: '#6b7280'
+    base: '#6b7280',
+    // 多日分时图的"日界"明暗带：第 1/3/5 天亮、第 2/4 天暗。
+    // 原来的 .022 白几乎看不见，等于没画；这里拉到肉眼可辨的程度。
+    bandLight: 'rgba(148,178,232,.075)',
+    bandDark: 'rgba(0,0,0,.28)'
   };
 
   function readTheme() {
@@ -93,6 +97,7 @@
     const avg = []; let acc = 0;
     for (let i = 0; i < ys.length; i++) { acc += ys[i]; avg.push(+(acc / (i + 1)).toFixed(2)); }
 
+    // 自然日分界：算出每天第一根柱子的小标，用来给多日分时图铺"明暗相间"的底色带。
     const dayBoundary = [];
     let prevDay = null;
     xs.forEach((t, i) => {
@@ -100,6 +105,31 @@
       if (prevDay && d !== prevDay) dayBoundary.push({ xAxis: i });
       prevDay = d;
     });
+
+    // 明暗带：从第 1 天开始交替（第 1/3/5 天亮、第 2/4 天暗 —— 五日就是"三明两暗"）。
+    // 第一天也要参与，所以起始边界是 0；单日分时没有分界，就不铺带子。
+    const bands = [];
+    if (dayBoundary.length) {
+      const bounds = [0].concat(dayBoundary.map(b => b.xAxis)).concat([xs.length]);
+      for (let i = 0; i + 1 < bounds.length; i++) {
+        bands.push([
+          { xAxis: bounds[i] - 0.5, itemStyle: { color: i % 2 ? C.bandDark : C.bandLight } },
+          { xAxis: bounds[i + 1] - 0.5 }
+        ]);
+      }
+    }
+
+    // 主图叠加：把当前副图的口径画成一条线贴在主图上（"单独给降水空气这些拉一条线"）。
+    // ov.byKey 是「时间键 -> 数值」，这里按横轴的时间戳逐个查表，查不到留 null，线自然断开。
+    const ov = S.ov;
+    const od = ov && ov.byKey ? xs.map(k => (ov.byKey[k] == null ? null : ov.byKey[k])) : null;
+    const ovOk = !!(od && od.some(v => v != null));
+    const ovAxis = ovOk ? {
+      type: 'value', position: 'right', offset: 44, scale: true,
+      axisLine: { show: false }, axisTick: { show: false },
+      axisLabel: Object.assign({}, axisCommon.axisLabel, { color: ov.color, fontSize: 10 }),
+      splitLine: splitNone
+    } : null;
 
     const labelFmt = (v) => String(v).slice(11, 16);
     const axisLbl = S.five ? (v) => {
@@ -122,6 +152,7 @@
           if (base != null) html += row('较昨收', sgn(chg, 1) + ' ℃  ' + sgn(pct, 2) + '%', U.trendColor(chg));
           html += row('均价', fx(avg[i], 1) + ' ℃', C.avg);
           if (S.precips) html += row('降水', fx(S.precips[i], 1) + ' mm', '#4fc3f7');
+          if (ovOk) html += row(ov.name, (od[i] == null ? '—' : fx(od[i], ov.unit === '%' ? 0 : 1) + ' ' + ov.unit), ov.color);
           return html;
         }
       }),
@@ -147,8 +178,19 @@
           }),
           splitLine: splitNone
         }
-      ],
+      ].concat(ovOk ? [ovAxis] : []),
       series: [
+        // 日界背景带单独挂在一个不画线的系列上：z 最低，保证明暗带在气温/均价下面，
+        // 顺便在每条分界线上画一根竖虚线，即使被面积渐变盖住也还能看出"一天到这儿结束"。
+        bands.length ? {
+          name: '_days', type: 'line', data: [], silent: true, z: 1, showSymbol: false,
+          markArea: { silent: true, data: bands },
+          markLine: {
+            silent: true, symbol: 'none', label: { show: false }, animation: false,
+            lineStyle: { color: 'rgba(255,255,255,.16)', type: 'dashed', width: 1 },
+            data: dayBoundary.map(b => ({ xAxis: b.xAxis - 0.5 }))
+          }
+        } : null,
         {
           name: '气温', type: 'line', data: ys, showSymbol: false, symbol: 'circle', symbolSize: 5,
           lineStyle: { width: 1.5, color: C.up }, z: 5,
@@ -161,20 +203,19 @@
             silent: true, symbol: 'none', label: { show: false },
             lineStyle: { color: C.base, type: 'dashed', width: 1 },
             data: [{ yAxis: +base.toFixed(1) }]
-          } : undefined,
-          markArea: dayBoundary.length ? {
-            silent: true,
-            data: dayBoundary.map((b, i) => ([
-              { xAxis: b.xAxis - 0.5, itemStyle: { color: i % 2 ? 'rgba(255,255,255,.022)' : 'transparent' } },
-              { xAxis: (dayBoundary[i + 1] ? dayBoundary[i + 1].xAxis : xs.length) - 0.5 }
-            ]))
           } : undefined
         },
         {
           name: '均价', type: 'line', data: avg, showSymbol: false,
           lineStyle: { width: 1, color: C.avg }, z: 4
-        }
-      ]
+        },
+        // 叠加线：挂在第 3 根 Y 轴上（右轴再往外 offset 44px），不跟百分比轴抢刻度
+        ovOk ? {
+          name: ov.name, type: 'line', yAxisIndex: 2, data: od, showSymbol: false,
+          connectNulls: false, z: 6,
+          lineStyle: { width: 1.3, color: ov.color }, itemStyle: { color: ov.color }
+        } : null
+      ].filter(Boolean)
     };
   }
 
@@ -236,6 +277,25 @@
       data: [[{ xAxis: futureIdx - 0.5 }, { xAxis: xs.length - 0.5 }]]
     } : undefined;
 
+    // 主图叠加：K 线的横轴就是分桶键（日 'YYYY-MM-DD' / 周 周一 / 月 'YYYY-MM'），
+    // 和 Weather.series() 的分桶键完全一致，所以按键查表一定对得上。
+    const ov = S.ov;
+    const od = ov && ov.byKey ? xs.map(k => (ov.byKey[k] == null ? null : ov.byKey[k])) : null;
+    const ovOk = !!(od && od.some(v => v != null));
+    const ovAxis = ovOk ? {
+      type: 'value', scale: true, position: 'right', offset: 44,
+      axisLine: { show: false }, axisTick: { show: false },
+      axisLabel: Object.assign({}, axisCommon.axisLabel, { color: ov.color, fontSize: 10 }),
+      splitLine: splitNone
+    } : null;
+    if (ovOk) {
+      series.push({
+        name: ov.name, type: 'line', yAxisIndex: 2, data: od, showSymbol: false,
+        connectNulls: false, z: 6,
+        lineStyle: { width: 1.3, color: ov.color }, itemStyle: { color: ov.color }
+      });
+    }
+
     return {
       animation: false,
       backgroundColor: C.bg,
@@ -263,7 +323,7 @@
           }),
           splitLine: splitNone
         }
-      ],
+      ].concat(ovOk ? [ovAxis] : []),
       dataZoom: [
         { type: 'inside', xAxisIndex: [0], start: start, end: 100, zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
         {
@@ -301,6 +361,10 @@
       h += row('涨跌', sgn(chg, 1) + ' ℃ ' + sgn(pct, 2) + '%', U.trendColor(chg));
       h += row('振幅', fx(b.h - b.l, 1) + ' ℃', C.labelHi);
       h += row(metric.label, fx(metric.get(b), metric.unit === '%' ? 0 : 1) + metric.unit, '#4fc3f7');
+      if (S.ov && S.ov.byKey) {
+        const v = S.ov.byKey[b.d];
+        h += row(S.ov.name, (v == null ? '—' : fx(v, S.ov.unit === '%' ? 0 : 1) + ' ' + S.ov.unit), S.ov.color);
+      }
       if (S.showBoll) {
         const g = k => (S.ind[k] && S.ind[k][i] != null) ? fx(S.ind[k][i], 1) : '--';
         h += row('BOLL', g('lower') + ' / ' + g('mid') + ' / ' + g('upper'), C.boll[0]);

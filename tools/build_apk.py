@@ -13,7 +13,7 @@
 中国天气网 / 中国气象局的跨域请求由 MainActivity 的 shouldInterceptRequest 代理，
 详见 android/java/com/tjs/weather/MainActivity.java 顶部注释。
 
-用法（在 weather-exchange 目录下）:
+用法（在 weather-fighter 目录下）:
     python tools\\build_apk.py
     python tools\\build_apk.py --skip-assets     # 只改 Java 时跳过资源复制
 """

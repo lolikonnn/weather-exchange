@@ -506,6 +506,9 @@
       const e = i0 + hours;
       const cut = a => (a || []).slice(i0, e);
       return {
+        // key 是原始时间戳（series() 里同名数组也一样），主图叠加时靠它精确对齐，
+        // 不要用 label —— label 是给人看的，已经截断过。
+        key: cut(wx.time),
         label: cut(wx.time).map(s => s.slice(5, 16).replace('T', ' ')),
         temp: cut(wx.temp), precip: cut(wx.precip), prob: cut(wx.prob),
         wind: cut(wx.wind), windDir: cut(wx.windDir), gust: cut(wx.gust),
@@ -593,12 +596,13 @@
         const k = keyOf ? keyOf(T[i]) : null;
         let b;
         if (k == null) {
-          b = { label: T[i].slice(5, 16).replace('T', ' ').replace('-', '/'), rows: [] };
+          b = { key: T[i], label: T[i].slice(5, 16).replace('T', ' ').replace('-', '/'), rows: [] };
           buckets.push(b);
         } else {
           b = byKey[k];
           if (!b) {
             b = byKey[k] = {
+              key: k,
               label: (mode === 'month' ? k.replace('-', '/') : k.slice(5).replace('-', '/')),
               rows: []
             };
@@ -630,11 +634,12 @@
       };
 
       const out = {
-        mode: mode, span: span, label: [], temp: [], precip: [], prob: [],
+        mode: mode, span: span, key: [], label: [], temp: [], precip: [], prob: [],
         wind: [], gust: [], windDir: [], cloud: [], cloudLow: [], cloudMid: [],
         cloudHigh: [], pm25: [], aqi: []
       };
       buckets.forEach(b => {
+        out.key.push(b.key);
         out.label.push(b.label);
         out.temp.push(agg(b.rows, 'temp', 'mean'));
         out.precip.push(agg(b.rows, 'precip', 'sum'));
