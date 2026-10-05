@@ -27,7 +27,7 @@
 
   const S = {
     period: 'trend', ind: 'vol', metric: 'range',
-    refreshMs: 3000, sortMode: 0,
+    refreshMs: 10000, sortMode: 0,
     watch: [], cur: null, data: null, wx: null,
     quotes: {}, briefs: {}, briefAt: 0,
     overlay: false,
@@ -581,6 +581,12 @@
     return dateStr;
   }
 
+  /** 主图每个周期默认显示多少根。K 线主图和天气副图都要拿它算 dataZoom，
+      两处必须同源 —— 各写一份迟早会漂移，然后上下两块图显示的就是不同区间。 */
+  function viewOf(period) {
+    return (period === 'day' || period === 'fcst') ? 90 : period === 'week' ? 80 : period === 'month' ? 60 : 0;
+  }
+
   function seriesFor(period) {
     const d = S.data; if (!d) return null;
     const today = d.today;
@@ -597,7 +603,7 @@
     let ti = -1;
     for (let i = 0; i < bars.length; i++) if (bars[i].d <= tk) ti = i;
     const base = ti > 0 ? bars[ti - 1].c : null;
-    const view = period === 'day' || period === 'fcst' ? 90 : period === 'week' ? 80 : 60;
+    const view = viewOf(period);
     return {
       bars, ind, mode, base, today: tk, view,
       monthMode: mode === 'month',
@@ -614,9 +620,12 @@
   function renderWxSub() {
     if (!isWxInd()) return false;
     const wx = S.wx;
-    // 把主图周期一起传下去 —— 副图要跟着周期换粒度（分时/五日/日K/周K/月K/预报K）。
+    // 把主图周期和"默认显示多少根"一起传下去 —— 副图要跟主图用同一套横轴契约
+    // （左右留白 / boundaryGap / 刻度函数 / dataZoom），否则上下两块图的日期对不上。
+    // 连横轴类别数组也直接用主图的（Chart.mainCats()）：副图自己的聚合桶数可能只有
+    // 主图 K 线根数的十分之一（实测日K 副图 60 桶 vs 主图 553 根），不共用必然错位。
     // 注意字段名是 S.period（写成 S.p 会静默回落到"分时"，副图看起来毫无变化）。
-    return WXUI.drawSub(S.ind, wx, wx && wx.air, S.period);
+    return WXUI.drawSub(S.ind, wx, wx && wx.air, S.period, viewOf(S.period), Chart.mainCats());
   }
   /** 拉当前城市的逐小时预报 + 空气质量，成功后重绘副图 */
   async function loadWx(cityId) {
@@ -657,7 +666,7 @@
         title: (p === 'trend' ? '分时' : '五日分时') + ' · ' + (p === 'trend' ? d.today : '近 5 日')
       });
       if (!renderWxSub()) {
-        Chart.renderSub({ indName: 'vol', bars: d.daily, ind: d.indicators, metric: S.metric, view: 90 });
+        Chart.renderSub({ indName: 'vol', bars: d.daily, ind: d.indicators, metric: S.metric, view: 90, period: p });
       }
       $('#chartHint').textContent = '昨收 ' + (d.base == null ? '--' : fx(d.base, 1)) + ' ℃　最新 ' + (qp.temp == null ? '--' : fx(qp.temp, 1)) + ' ℃　逐时点 ' + pts.length;
     } else {
@@ -666,10 +675,11 @@
       Chart.renderMain({
         mode: 'kline', bars: s.bars, ind: s.ind, base: s.base, today: s.today, ov: ov,
         metric: S.metric, view: s.view, monthMode: s.monthMode, title: s.title,
+        period: p,
         showBoll: S.ind === 'boll'
       });
       if (!renderWxSub()) {
-        Chart.renderSub({ indName: S.ind, bars: s.bars, ind: s.ind, metric: S.metric, view: s.view });
+        Chart.renderSub({ indName: S.ind, bars: s.bars, ind: s.ind, metric: S.metric, view: s.view, period: p });
       }
       const i = s.bars.length - 1;
       const g = k => (s.ind[k] && s.ind[k][i] != null) ? fx(s.ind[k][i], 1) : '--';
@@ -756,6 +766,16 @@
     return Array.from(new Set(ids));
   }
 
+  /* Open-Meteo 免费额度：10000 次/天、5000 次/小时、600 次/分钟
+     （https://open-meteo.com/en/terms，非商业用途）。
+     逐时 / 归档 / 空气 / 当前值都是"按城市+坐标缓存 15~30 分钟"，一个城市一天几十次，
+     量级跟城市数无关；**只有 brief（昨收 + 迷你走势）是按城市数放大的** ——
+     它是"每个城市一次调用"。所以它的节流周期和城市数上限单独拎出来，
+     让最坏情况的调用量一眼可见：48 轮/天 × 40 城 = 1920 次/天，约日额度的两成。
+     TTL 必须跟节流周期同值：TTL 比节流短的话缓存先过期，等于白节流。 */
+  const BRIEF_MS = 1800000;   // 30 分钟一轮
+  const BRIEF_MAX = 40;       // 一轮最多补多少个城市（自选 + 热门前 16 + 当前所在地）
+
   async function warmQuotes() {
     const ids = watchHotIds();
     const ttl = Math.max(S.refreshMs, 30000);
@@ -763,13 +783,13 @@
     const qs = await API.Store.quotes(cities, 6);
     Object.assign(S.quotes, qs);
 
-    // 昨收/迷你走势（Open-Meteo brief）：自选 + 热门，10 分钟一轮，避免频繁请求
-    if (Date.now() - (S.briefAt || 0) > 600000) {
+    // 昨收 / 迷你走势（Open-Meteo brief）：自选 + 热门，30 分钟一轮
+    if (Date.now() - (S.briefAt || 0) > BRIEF_MS) {
       S.briefAt = Date.now();
-      const need = ids.filter(i => API.Cities.get(i));
+      const need = ids.filter(i => API.Cities.get(i)).slice(0, BRIEF_MAX);
       await runLimited(need, 4, async i => {
         const c = API.Cities.get(i);
-        try { const b = await API.OpenMeteo.brief(c.lat, c.lon, 600000); if (b) S.briefs[i] = b; } catch (e) { }
+        try { const b = await API.OpenMeteo.brief(c.lat, c.lon, BRIEF_MS); if (b) S.briefs[i] = b; } catch (e) { }
       });
     }
     renderWatchlist(); renderHotlist(); renderIndexes();
@@ -1092,7 +1112,7 @@
     S.watch = storeGet('watch', null) || DEFAULT_WATCH.slice();
     S.watch = S.watch.filter(i => API.Cities.get(i));
     if (!S.watch.length) S.watch = DEFAULT_WATCH.slice();
-    S.refreshMs = storeGet('refresh', 3000);
+    S.refreshMs = storeGet('refresh', 10000);
     S.metric = storeGet('metric', 'range');
     S.overlay = !!storeGet('overlay', 0);
     const cm = storeGet('color', 'cn');

@@ -19,14 +19,33 @@
     ? !!global.__TJS_LOCAL__
     : (/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname) || location.protocol === 'file:');
 
-  /* ───────── 缓存 ───────── */
+  /* ───────── 缓存 ─────────
+   * 除了「拿到结果就存」，这里还做了两件必须做的事，起因是一次实测：
+   * 把页面挂 2 小时，Open-Meteo 被打了 804 次，其中 720 次全是同一个坐标的
+   * current= 实况回退 —— 正好等于「每个轮询 tick 一次」（默认 10 秒）。
+   * 原因是缓存只在请求**成功返回之后**才写入：只要一次请求还没落地（网络慢、
+   * 或上游超时 20 秒 > 轮询间隔 10 秒），下一个 tick 就会再发一次，永远存不上。
+   *   · inflight：同一个 key 正在飞的请求只保留一个，后来者直接复用那个 Promise。
+   *   · fail：失败也记一笔短 TTL，避免上游持续挂掉时每个 tick 都重试。
+   * 注意 TTL 必须和调用方的节流周期对齐，否则缓存先过期等于没节流。
+   */
   const mem = {};
   function cacheGet(key, ttl) {
     const e = mem[key];
     if (e && Date.now() - e.t < ttl) return e.v;
     return null;
   }
-  function cacheSet(key, v) { mem[key] = { t: Date.now(), v }; }
+  function cacheSet(key, v) { mem[key] = { t: Date.now(), v, bad: false }; }
+  /** 失败也要压一会儿，否则上游一挂就是每 tick 一次重试 */
+  const FAIL_TTL = 60000;
+  function failGet(key) {
+    const e = mem[key];
+    if (e && e.bad && Date.now() - e.t < FAIL_TTL) return true;
+    return false;
+  }
+  function failSet(key) { mem[key] = { t: Date.now(), v: null, bad: true }; }
+
+  const inflight = {};
 
   async function getJSON(url, opt) {
     opt = opt || {};
@@ -34,19 +53,31 @@
     const key = opt.key || url;
     const hit = cacheGet(key, ttl);
     if (hit !== null) return hit;
+    if (failGet(key)) throw new Error('cached failure: ' + key);
+    if (inflight[key]) return inflight[key];   // 同一个 key 在途 → 合并成一次请求
 
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), opt.timeout || 20000);
-    try {
-      const res = await fetch(url, { signal: ctl.signal, headers: opt.headers, mode: opt.mode || 'cors' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const txt = await res.text();
-      let data;
-      try { data = JSON.parse(txt); }
-      catch (e) { data = JSON.parse(txt.replace(/^[^(]*\(|\)[;\s]*$/g, '')); }  // JSONP 兜底
-      cacheSet(key, data);
-      return data;
-    } finally { clearTimeout(timer); }
+    const p = (async () => {
+      try {
+        const res = await fetch(url, { signal: ctl.signal, headers: opt.headers, mode: opt.mode || 'cors' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const txt = await res.text();
+        let data;
+        try { data = JSON.parse(txt); }
+        catch (e) { data = JSON.parse(txt.replace(/^[^(]*\(|\)[;\s]*$/g, '')); }  // JSONP 兜底
+        cacheSet(key, data);
+        return data;
+      } catch (e) {
+        failSet(key);
+        throw e;
+      } finally {
+        clearTimeout(timer);
+        delete inflight[key];
+      }
+    })();
+    inflight[key] = p;
+    return p;
   }
 
   /* ───────── 日期工具 ───────── */

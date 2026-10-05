@@ -78,6 +78,38 @@
     return { left: l, right: r, top: t, bottom: b, containLabel: false };
   }
 
+  /* ───────── 主图 / 副图共用的横轴契约 ─────────
+     同一个时刻要在上下两块图里落在**同一个 x 像素**上，取决于三件事：
+       ① 左右留白一样（否则绘图区宽度和起点都不同）
+       ② boundaryGap 一样（false 是"点落在轴上"，true 是"点落在格子中间"，两者逐点渐偏）
+       ③ 刻度函数一样（否则同一根刻度线上下写的是不同的字）
+     再加一条：K 线主图有 dataZoom、副图没有的话，可见区间根本不是同一段。
+     所以这四样收成一份，主图和副图都从这里取，谁也别自己定。 */
+  const PAD_L = 52, PAD_R = 56;
+
+  /** 某一周期的横轴刻度参数（interval + formatter）。n = 类别数。
+      hourly（趋势/五日）的类别是原始时间键 `YYYY-MM-DDTHH:MM`，K 线是日期（月K 是 `YYYY-MM`）。 */
+  function axisOf(period, n) {
+    const nKey = Number(n) || 0;
+    if (period === '5day') {
+      return {
+        interval: 0,
+        formatter: v => {
+          const d = String(v).slice(0, 10), h = String(v).slice(11, 16);
+          return h === '00:00' ? d.slice(5) : (h === '12:00' ? h : '');
+        }
+      };
+    }
+    if (period === 'trend') {
+      return { interval: Math.max(1, Math.round(nKey / 14)), formatter: v => String(v).slice(11, 16) };
+    }
+    if (period === 'month') return { interval: 'auto', formatter: v => String(v) };
+    return { interval: 'auto', formatter: v => String(v).slice(5) };
+  }
+
+  /** 主图 dataZoom 的起点百分比。副图必须用同一个值，否则两块图显示的区间不同。 */
+  function zoomStart(n, view) { return n > view ? (1 - view / n) * 100 : 0; }
+
   /* ═══════════════ 主图 ═══════════════ */
 
   /** 分时 / 五日 */
@@ -131,16 +163,13 @@
       splitLine: splitNone
     } : null;
 
-    const labelFmt = (v) => String(v).slice(11, 16);
-    const axisLbl = S.five ? (v) => {
-      const d = String(v).slice(0, 10), h = String(v).slice(11, 16);
-      return h === '00:00' ? d.slice(5) : (h === '12:00' ? h : '');
-    } : labelFmt;
+    const ax = axisOf(S.mode, xs.length);
+    const axisLbl = ax.formatter;
 
     return {
       animation: false,
       backgroundColor: C.bg,
-      grid: grid(52, 56, 14, 22),
+      grid: grid(PAD_L, PAD_R, 14, 22),
       tooltip: Object.assign({}, tooltipBase, {
         formatter: (ps) => {
           const i = ps[0].dataIndex, t = xs[i], p = ys[i];
@@ -159,9 +188,10 @@
       xAxis: [{
         type: 'category', data: xs, boundaryGap: false,
         axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false },
+        // 刻度规则来自共用的 axisOf()：副图用同一份，上下两块图的刻度才会对齐。
         // interval:0 让每个时刻都参与排版；五日图靠 formatter 只在 00:00 写日期、12:00 写"12:00"，
         // 其余返回空串。这样每天都能落下一个日期标签，不会像按固定步长抽稀时那样正好跳过日界。
-        axisLabel: Object.assign({}, axisCommon.axisLabel, { interval: S.five ? 0 : Math.max(1, Math.round(xs.length / 14)), formatter: axisLbl, hideOverlap: true }),
+        axisLabel: Object.assign({}, axisCommon.axisLabel, { interval: ax.interval, formatter: axisLbl, hideOverlap: true }),
         splitLine: splitNone
       }],
       yAxis: [
@@ -231,7 +261,7 @@
     const metric = METRICS[S.metric] || METRICS.range;
 
     const view = S.view == null ? 90 : S.view;
-    const start = bars.length > view ? (1 - view / bars.length) * 100 : 0;
+    const start = zoomStart(bars.length, view);
 
     const series = [{
       name: 'K线', type: 'candlestick', data: candle, z: 3,
@@ -307,13 +337,14 @@
       // bottom 从 34 放到 46：下面还有一条 height:15/bottom:5 的 dataZoom 滑块，
       // 原来的 34 让 x 轴日期正好压在滑块上（用户截图里"日期被遮挡显示不完全"）。
       // 轴标签从 grid 底边再往下约 8~20px，滑块顶边在 H-19，留出 6px 余量。
-      grid: grid(52, 56, 16, 46),
+      grid: grid(PAD_L, PAD_R, 16, 46),
       tooltip: Object.assign({}, tooltipBase, { formatter: klineTip(bars, xs, S, metric) }),
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       xAxis: [{
         type: 'category', data: xs, boundaryGap: true,
         axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false },
-        axisLabel: Object.assign({}, axisCommon.axisLabel, { hideOverlap: true, formatter: v => S.monthMode ? v : v.slice(5) }),
+        axisLabel: Object.assign({}, axisCommon.axisLabel,
+          { hideOverlap: true, interval: axisOf(S.period, xs.length).interval, formatter: axisOf(S.period, xs.length).formatter }),
         splitLine: splitNone
       }],
       yAxis: [
@@ -404,14 +435,14 @@
     const bars = S.bars || [], ind = S.ind || {}, xs = bars.map(b => b.d);
     if (!bars.length) return emptyOpt('');
     const view = S.view == null ? 90 : S.view;
-    const start = bars.length > view ? (1 - view / bars.length) * 100 : 0;
+    const start = zoomStart(bars.length, view);
     const zoom = [
       { type: 'inside', xAxisIndex: [0], start: start, end: 100, zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
       { type: 'slider', xAxisIndex: [0], start: start, end: 100, show: false }
     ];
     const baseOpt = {
       animation: false, backgroundColor: C.bg,
-      grid: grid(52, 56, 12, 6),
+      grid: grid(PAD_L, PAD_R, 12, 26),
       tooltip: Object.assign({}, tooltipBase, {
         formatter: (ps) => subTip(ps, S, xs)
       }),
@@ -419,7 +450,9 @@
       xAxis: [{
         type: 'category', data: xs, boundaryGap: true,
         axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false },
-        axisLabel: Object.assign({}, axisCommon.axisLabel, { hideOverlap: true, formatter: v => v.slice(5) }),
+        // 和主图同一套刻度规则，否则上下两排日期长得不一样
+        axisLabel: Object.assign({}, axisCommon.axisLabel,
+          { hideOverlap: true, interval: axisOf(S.period, xs.length).interval, formatter: axisOf(S.period, xs.length).formatter }),
         splitLine: splitNone
       }],
       yAxis: [{
@@ -523,7 +556,18 @@
       return this;
     },
     setTheme() { readTheme(); },
+    // 副图（wxui.js 画的天气副图）必须复用同一套横轴契约，
+    // 否则同一个时刻会落在不同的 x 像素上 —— 用户报的"上下日期没对齐"。
+    axisOf, zoomStart, PAD_L, PAD_R,
     hasMain() { return !!main; },
+    /** 主图当前用的横轴类别数组。副图必须吃同一份（见 wxui.js 的 alignSeries）——
+        副图自己的聚合桶数跟主图 K 线根数能差一个数量级（实测 60 vs 553 根），
+        不共用类别数组，留白和刻度怎么调都对不上。 */
+    mainCats() {
+      if (!main) return null;
+      const o = main.getOption();
+      return (o && o.xAxis && o.xAxis[0] && o.xAxis[0].data) || null;
+    },
     renderMain(S) {
       if (!main) return;
       readTheme();

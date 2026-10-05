@@ -537,13 +537,6 @@
       period = period || 'trend';
       if (!hourly || !hourly.time || !hourly.time.length) return null;
 
-      // 分时就是"今天 24 小时"，交给 window()，它就是为这个场景写的
-      if (period === 'trend') {
-        const w = this.window(hourly, 24);
-        if (w) { w.mode = 'hour'; w.span = '今天 · 逐小时'; }
-        return w;
-      }
-
       const T = hourly.time;
       const dayStr = t => String(t).slice(0, 10);
       const fmt = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
@@ -555,7 +548,39 @@
         const p = ds.split('-'), d = new Date(+p[0], +p[1] - 1, +p[2]);
         d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return fmt(d);
       };
-      const today = dayStr(T[hourly.i0] || T[T.length - 1]);
+      // ★ 必须用**墙上时钟的当地日期**，绝不能用 hourly.i0。
+      // i0 是为"现在该高亮哪个小时"算的，里面为了容忍 Open-Meteo 的发布延迟，
+      // 故意把 now 往前退了 3 小时、再向前取一格（见本文件 hourly()）。
+      // 于是北京时间 00:00~04:00 之间 i0 会落在**前一天**，整个取数窗口跟着整体前移一天：
+      // 主图的"五日"（Store.loadCity 用 todayStr() 算窗口）起点是昨天，
+      // 副图的"五日"起点却变成前天 —— 上下两块图整整差一天，正是用户报的"日期没对齐"。
+      // 这个 bug 只在凌晨那几个小时复现，白天怎么试都是对的，所以拖了很久才被看见。
+      const today = fmt(new Date());
+
+      // 分时 = "今天 00:00~23:00"，跟主图 d.intraday 完全一致。
+      // 原来这里交给 window(hourly, 24)，那是"从现在往前 2 小时起 24 小时"，
+      // 跟主图的窗口根本不是一回事，副图会整体错开几格。
+      if (period === 'trend') {
+        const out0 = {
+          mode: 'hour', span: '今天 · 逐小时', key: [], label: [], temp: [], precip: [], prob: [],
+          wind: [], gust: [], windDir: [], cloud: [], cloudLow: [], cloudMid: [], cloudHigh: [],
+          pm25: [], aqi: []
+        };
+        for (let i = 0; i < T.length; i++) {
+          if (dayStr(T[i]) !== today) continue;
+          out0.key.push(T[i]);
+          out0.label.push(T[i].slice(5, 16).replace('T', ' ').replace('-', '/'));
+          out0.temp.push(hourly.temp[i]); out0.precip.push(hourly.precip[i]);
+          out0.prob.push(hourly.prob[i]); out0.wind.push(hourly.wind[i]);
+          out0.gust.push(hourly.gust[i]); out0.windDir.push(hourly.windDir[i]);
+          out0.cloud.push(hourly.cloud[i]); out0.cloudLow.push(hourly.cloudLow[i]);
+          out0.cloudMid.push(hourly.cloudMid[i]); out0.cloudHigh.push(hourly.cloudHigh[i]);
+          const ai = air && air.time ? air.time.indexOf(T[i]) : -1;
+          out0.pm25.push(ai >= 0 ? (air.pm25 || [])[ai] : null);
+          out0.aqi.push(ai >= 0 ? (air.aqi || [])[ai] : null);
+        }
+        return out0.key.length ? out0 : null;
+      }
 
       // 空气质量是另一个请求，起止时刻不一定对齐 —— 按时间字符串查表对齐
       const aIdx = {};
@@ -568,24 +593,30 @@
       };
 
       // 每个周期：取数窗口 + 分桶键（keyOf=null 表示不聚合，保持逐小时）
+      // 窗口尽量**盖住主图默认可见的那一段**：主图日K 默认只显示最近 90 根，
+      // 副图要是只取"最近 60 天到今天"，可见区右端那十几根预报就是空的 ——
+      // 所以 K 线周期一律把 to 放到预报末尾（hourly 里本来就有 16 天预报）。
+      // 注意逐小时数据本身只能回溯 92 天，周K/月K 主图跨度远大于此，
+      // 副图只能在有数据的那一段里画 —— 见 drawSub 里按主图类别对齐的处理。
       let from, to, keyOf, mode, span;
       if (period === '5day') {
         // 需求：天气预报最重要的是"预报"，所以五日 = 昨天 → 未来第三天
         from = dayAdd(today, -1); to = dayAdd(today, 3);
         keyOf = null; mode = 'hour'; span = '昨天 → 未来三天 · 逐小时';
       } else if (period === 'day') {
-        from = dayAdd(today, -59); to = today;
-        keyOf = dayStr; mode = 'day'; span = '最近 60 天 · 逐日';
+        from = dayAdd(today, -79); to = dayAdd(today, 15);
+        keyOf = dayStr; mode = 'day'; span = '最近 80 天 + 16 天预报 · 逐日';
       } else if (period === 'week') {
-        from = dayAdd(today, -363); to = today;
-        keyOf = t => weekStart(dayStr(t)); mode = 'week'; span = '最近 52 周 · 逐周';
+        from = dayAdd(today, -91); to = dayAdd(today, 15);
+        keyOf = t => weekStart(dayStr(t)); mode = 'week'; span = '逐小时能覆盖的最近十几周 · 逐周';
       } else if (period === 'month') {
         const p = today.split('-'), d = new Date(+p[0], +p[1] - 1, 1);
-        d.setMonth(d.getMonth() - 23); from = fmt(d); to = today;
-        keyOf = t => dayStr(t).slice(0, 7); mode = 'month'; span = '最近 24 个月 · 逐月';
+        d.setMonth(d.getMonth() - 23); from = fmt(d); to = dayAdd(today, 15);
+        keyOf = t => dayStr(t).slice(0, 7); mode = 'month'; span = '逐小时能覆盖的最近几个月 · 逐月';
       } else {                                   // fcst 预报K
-        from = today; to = dayAdd(today, 15);
-        keyOf = dayStr; mode = 'day'; span = '未来 16 天 · 逐日';
+        // 主图预报K = 最近 10 天 + 未来 16 天，这里取同一段，两边根数正好一致
+        from = dayAdd(today, -10); to = dayAdd(today, 15);
+        keyOf = dayStr; mode = 'day'; span = '最近 10 天 + 未来 16 天 · 逐日';
       }
 
       // 逐小时 -> 分桶

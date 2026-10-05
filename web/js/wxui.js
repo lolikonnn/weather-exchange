@@ -36,20 +36,66 @@
     return echarts.getInstanceByDom(el) || echarts.init(el, null, { renderer: 'canvas' });
   }
 
-  /* 副图统一的坐标轴外壳 */
-  function base(TH, xs, yName) {
-    return {
+  /* 把 Weather.series() 的输出**重新对齐到主图用的横轴类别数组**上。
+     为什么必须这么做（实测数据）：主图日K 有 553 根（来自一份很长的日线历史），
+     而副图的数据源只有逐小时（Open-Meteo 最多回溯 92 天）→ 副图只能聚合出 60 个桶。
+     60 ≠ 553，两边类别数组不同，哪怕留白 / boundaryGap / 刻度函数都调成一样，
+     同一个日期仍旧落在不同的 x 像素上。所以副图不再自己定横轴，直接吃主图的。
+     主图有、逐小时覆盖不到的时段填 null：柱子不画、线自然断开 —— 这是数据可得性的
+     诚实反映，不是 bug；要让它变满只能换更长的数据源（归档 API），不是这里能补的。 */
+  const ALIGN_FIELDS = ['temp', 'precip', 'prob', 'wind', 'gust', 'windDir',
+    'cloud', 'cloudLow', 'cloudMid', 'cloudHigh', 'pm25', 'aqi'];
+
+  function alignSeries(cats, s) {
+    if (!cats || !cats.length) return s;
+    const stub = () => {
+      // s 为 null 时也要返回一份"空但横轴正确"的壳：这样"暂无数据"的空状态
+      // 跟有数据时占的是同一套坐标，切换口径不会整块图跳一下。
+      const o = { mode: null, span: '', key: cats.slice(), label: [] };
+      ALIGN_FIELDS.forEach(f => { o[f] = cats.map(() => null); });
+      cats.forEach(k => o.label.push(String(k).slice(5).replace('T', ' ').replace('-', '/')));
+      return o;
+    };
+    if (!s) return stub();
+    const idx = {};
+    if (s.key) for (let i = 0; i < s.key.length; i++) idx[s.key[i]] = i;
+    const out = { mode: s.mode, span: s.span, key: cats.slice(), label: [] };
+    ALIGN_FIELDS.forEach(f => { out[f] = []; });
+    cats.forEach(k => {
+      const i = idx[k];
+      // 主图有、副图没有 → label 用一个从键现推的兜底写法（K线是 2026-10-05 → 10/05）
+      out.label.push(i == null
+        ? String(k).slice(5).replace('T', ' ').replace('-', '/')
+        : s.label[i]);
+      ALIGN_FIELDS.forEach(f => out[f].push(i == null ? null : ((s[f] || [])[i] == null ? null : s[f][i])));
+    });
+    return out;
+  }
+
+  /* 副图统一的坐标轴外壳。
+     左右留白、boundaryGap、刻度函数、dataZoom 全部从主图那边取同一份（Chart 暴露的横轴契约）——
+     这四样里只要有一样跟主图不同，同一个时刻就会落在不同的 x 像素上，
+     看过去就是用户报的"上下日期没对齐"。 */
+  function base(TH, xs, yName, period, view) {
+    const hourly = (period === 'trend' || period === '5day');
+    const CH = (typeof window !== 'undefined' && window.Chart) || null;
+    const ax = CH ? CH.axisOf(period, xs.length) : { interval: 'auto', formatter: v => String(v) };
+    const L = CH ? CH.PAD_L : 52, R = CH ? CH.PAD_R : 56;
+    const o = {
       animation: false,
-      grid: { left: 46, right: 52, top: 16, bottom: 26, containLabel: false },
+      grid: { left: L, right: R, top: 16, bottom: 26, containLabel: false },
       tooltip: {
         trigger: 'axis', axisPointer: { type: 'cross', label: { backgroundColor: '#39404e' } },
         backgroundColor: '#161a22', borderColor: '#2b323d',
         textStyle: { color: '#e9edf4', fontSize: 11 }
       },
       xAxis: {
-        type: 'category', data: xs, boundaryGap: true,
+        type: 'category', data: xs,
+        // 趋势/五日的主图是折线（boundaryGap:false），K 线主图是蜡烛（true）。
+        // 副图得跟着走：两者之间每个点都差半格，而且是逐点渐偏，越往后越明显。
+        boundaryGap: !hourly,
         axisLine: { lineStyle: { color: TH.line } },
-        axisLabel: { color: TH.dim, fontSize: 10, interval: 5 },
+        axisLabel: { color: TH.dim, fontSize: 10, interval: ax.interval, formatter: ax.formatter, hideOverlap: true },
         splitLine: { show: false }
       },
       yAxis: {
@@ -58,13 +104,23 @@
         splitLine: { lineStyle: { color: TH.line, type: 'dashed' } }
       }
     };
+    // K 线主图带 dataZoom，副图如果不带，两块图可见的区间根本不是同一段。
+    // 用 Chart.zoomStart() 算同一个 start，主图拖到哪儿副图就跟到哪儿。
+    if (!hourly && CH && view) {
+      const start = CH.zoomStart(xs.length, view);
+      o.dataZoom = [
+        { type: 'inside', xAxisIndex: [0], start: start, end: 100, zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
+        { type: 'slider', xAxisIndex: [0], start: start, end: 100, show: false }
+      ];
+    }
+    return o;
   }
 
   /* ═══════════════ 1. 副图 ═══════════════ */
 
   /** 降水：柱子＝降水量(mm)，黄线＝降水概率(%) */
-  function optPrecip(w, TH) {
-    const o = base(TH, w.label, 'mm');
+  function optPrecip(w, TH, period, view) {
+    const o = base(TH, w.key || w.label, 'mm', period, view);
     o.tooltip.formatter = ps => {
       const i = ps[0].dataIndex;
       return w.label[i] + '<br/>降水 ' + fx1(w.precip[i]) + ' mm' +
@@ -96,8 +152,8 @@
   }
 
   /** 风：柱子＝风速，虚线＝阵风，箭头＝风向 */
-  function optWind(w, TH) {
-    const o = base(TH, w.label, 'm/s');
+  function optWind(w, TH, period, view) {
+    const o = base(TH, w.key || w.label, 'm/s', period, view);
     o.tooltip.formatter = ps => {
       const i = ps[0].dataIndex;
       return w.label[i] + '<br/>风速 ' + fx1(w.wind[i]) + ' m/s（' + W.dirName(w.windDir[i]) + '）' +
@@ -135,8 +191,8 @@
   }
 
   /** 云量：低/中/高云堆叠，白线＝总云量 */
-  function optCloud(w, TH) {
-    const o = base(TH, w.label, '%');
+  function optCloud(w, TH, period, view) {
+    const o = base(TH, w.key || w.label, '%', period, view);
     o.yAxis.max = 100;
     o.tooltip.formatter = ps => {
       const i = ps[0].dataIndex;
@@ -164,13 +220,19 @@
   }
 
   /** 空气：柱子＝PM2.5，线＝AQI。吃 series() 的输出，所以跟着周期走 */
-  function optAir(s, TH) {
-    if (!s || !s.label || !s.label.length || !(s.aqi || []).some(v => v != null)) {
-      return { title: { text: '空气质量数据暂不可用', left: 'center', top: 'middle', textStyle: { color: TH.dim, fontSize: 12 } } };
+  function optAir(s, TH, period, view) {
+    // 横轴要用原始键（主图的刻度函数认这个），tooltip 里仍旧写给人看的 label
+    const xs = (s && s.label) || [], keys = (s && (s.key || s.label)) || [];
+    // 没数据时**也要走 base() 建同一套坐标轴**再挂一句提示。
+    // 以前这里直接 return 一个只有 title 的 option，于是空状态下副图连 xAxis 都没有，
+    // 上下两块图的对齐契约当场失效（探针里表现为 reading '0' 的报错）。
+    if (!s || !xs.length || !(s.aqi || []).some(v => v != null)) {
+      const o0 = base(TH, keys, 'AQI', period, view);
+      o0.title = { text: '空气质量数据暂不可用', left: 'center', top: 'middle', textStyle: { color: TH.dim, fontSize: 12 } };
+      return o0;
     }
-    const xs = s.label;
     const pm = s.pm25 || [], aq = s.aqi || [];
-    const o = base(TH, xs, 'AQI');
+    const o = base(TH, keys, 'AQI', period, view);
     o.tooltip.formatter = ps => {
       const i = ps[0].dataIndex;
       const lv = W.aqiLevel(aq[i]);
@@ -205,8 +267,11 @@
 
   const WXUI = {
     /** 副图总入口：name ∈ precip|wind|cloud|air，其它名字返回 false 交回 chart.js。
-        period 是主图的周期（trend|5day|day|week|month|fcst），副图跟着它走。 */
-    drawSub(name, wx, air, period) {
+        period 是主图的周期（trend|5day|day|week|month|fcst），副图跟着它走。
+        view 是主图 K 线默认显示多少根 —— 副图的 dataZoom 必须用同一个值，
+        否则主图只显示最近 90 根、副图显示全部，上下两排刻度对不上。
+        axis 是**主图用的横轴类别数组**，必须原样用（见 alignSeries 的注释）。 */
+    drawSub(name, wx, air, period, view, axis) {
       if (!W.isWeatherSub(name) || name === 'range') return false;
       const ec = subEc();
       if (!ec) return false;
@@ -214,12 +279,15 @@
       // 原来这里写死 window(wx.hourly, 48) —— 不管选哪个周期都只画 48 根小时柱，
       // 所以用户会觉得"降水/风/云量/空气的数据太少、间隔太长"。
       // 现在交给 Weather.series() 按周期重新分桶聚合（日K按天、周K按周…）。
-      const s = wx && wx.hourly ? W.series(wx.hourly, air, name, period) : null;
+      // 但只聚合还不够：聚合出来的桶数是"逐小时数据能覆盖多少"，而主图 K 线是另一套历史，
+      // 实测日K 主图 553 根、副图只有 60 根 —— 两套类别数组对不上，刻度必然错位。
+      // 所以再按主图的类别数组重新对齐一次（缺的时刻填 null）。
+      const s = alignSeries(axis, wx && wx.hourly ? W.series(wx.hourly, air, name, period) : null);
       let opt;
-      if (name === 'air') opt = optAir(s, TH);
-      else if (name === 'precip') opt = s ? optPrecip(s, TH) : msg('暂无数据', TH);
-      else if (name === 'wind') opt = s ? optWind(s, TH) : msg('暂无数据', TH);
-      else if (name === 'cloud') opt = s ? optCloud(s, TH) : msg('暂无数据', TH);
+      if (name === 'air') opt = optAir(s, TH, period, view);
+      else if (name === 'precip') opt = s ? optPrecip(s, TH, period, view) : msg('暂无数据', TH);
+      else if (name === 'wind') opt = s ? optWind(s, TH, period, view) : msg('暂无数据', TH);
+      else if (name === 'cloud') opt = s ? optCloud(s, TH, period, view) : msg('暂无数据', TH);
       else opt = msg('暂无数据', TH);
       ec.setOption(opt, true);
       return true;
