@@ -159,7 +159,9 @@
       xAxis: [{
         type: 'category', data: xs, boundaryGap: false,
         axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false },
-        axisLabel: Object.assign({}, axisCommon.axisLabel, { interval: S.five ? Math.max(1, Math.floor(xs.length / 12)) : 1, formatter: axisLbl, hideOverlap: true }),
+        // interval:0 让每个时刻都参与排版；五日图靠 formatter 只在 00:00 写日期、12:00 写"12:00"，
+        // 其余返回空串。这样每天都能落下一个日期标签，不会像按固定步长抽稀时那样正好跳过日界。
+        axisLabel: Object.assign({}, axisCommon.axisLabel, { interval: S.five ? 0 : Math.max(1, Math.round(xs.length / 14)), formatter: axisLbl, hideOverlap: true }),
         splitLine: splitNone
       }],
       yAxis: [

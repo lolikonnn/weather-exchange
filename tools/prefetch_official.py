@@ -95,6 +95,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--hot-only", action="store_true")
+    ap.add_argument("--all", action="store_true",
+                    help="预抓全部城市（默认只抓 cities.json 里 prefetch 列出的受控名单）")
     ap.add_argument("--no-cal", action="store_true")
     ap.add_argument("--no-cma", action="store_true")
     ap.add_argument("--no-hourly", action="store_true")
@@ -106,6 +108,11 @@ def main():
     if a.hot_only:
         hot = set(doc.get("hot") or [])
         todo = [c for c in all_cities if c["name"] in hot or c.get("id") in hot]
+    elif doc.get("prefetch") and not a.all:
+        # 前端目录是全量 352 城（搜索要能搜到），但日历文件按 352 城规模会暴涨，
+        # 所以预抓范围单独由 prefetch 列出（原来是 45 城）。要抓全量显式传 --all。
+        ids = set(doc["prefetch"])
+        todo = [c for c in all_cities if c.get("id") in ids]
     else:
         todo = [c for c in all_cities if c.get("id")]
     if a.limit:

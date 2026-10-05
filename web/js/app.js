@@ -6,21 +6,32 @@
   const { $, el, fx, sgn, cls, storeGet, storeSet, toast, debounce, marketPhase } = U;
   const DEFAULT_WATCH = ['101010100', '101020100', '101280601', '101280101', '101270101', '101210101'];
 
-  const IDX_DEFS = [
-    { key: 'sh', name: '沪市气温', id: '101020100', nm: '上海' },
-    { key: 'sz', name: '深市气温', id: '101280601', nm: '深圳' },
-    { key: 'bj', name: '京市气温', id: '101010100', nm: '北京' },
-    { key: 'gz', name: '穗市气温', id: '101280101', nm: '广州' },
-    { key: 'cs', name: '湘市气温', id: '101250101', nm: '长沙' },
-    { key: 'all', name: '自选均温', computed: true }
-  ];
+  /* 指数条 = 左栏「当前所在地 + 自选城市」的镜像。
+     这里以前写死沪/深/京/穗/湘五个城市，外加一个 computed 的「自选均温」——
+     用户既不知道"自选均温"是什么，也点不动它（computed 那条 onclick 直接返回 null），
+     而且它跟左栏的自选列表毫无关系。现在整条跟着自选走，点一下就能切城市。 */
+  const IDX_MAX = 8;
+  function idxIds() {
+    const ids = (S.geo ? [LOC_ID] : []).concat(S.watch);
+    const seen = {}, out = [];
+    ids.forEach(id => {
+      if (id && !seen[id] && API.Cities.get(id)) { seen[id] = 1; out.push(id); }
+    });
+    return out.slice(0, IDX_MAX);
+  }
+  /** 指数条位置窄，去掉行政后缀省地方 */
+  function idxShort(c) {
+    const n = String((c && c.name) || '');
+    return n.replace(/(特别行政区|自治州|地区|市|县)$/, '') || n;
+  }
 
   const S = {
     period: 'trend', ind: 'vol', metric: 'range',
     refreshMs: 3000, sortMode: 0,
     watch: [], cur: null, data: null, wx: null,
-    quotes: {}, briefs: {}, idxQ: {}, idxB: {}, briefAt: 0,
+    quotes: {}, briefs: {}, briefAt: 0,
     overlay: false,
+    geo: null, geoBusy: false, geoErr: '',
     loading: false, timer: null, lastQuoteAt: 0, lastFullAt: 0, tick: 0
   };
 
@@ -40,40 +51,32 @@
   /* ═══════════ 指数条 ═══════════ */
   function renderIndexes() {
     const box = $('#indexList');
-    const allTemps = S.watch.map(id => quoteOf(id).temp).filter(v => v != null);
+    if (!box) return;
+    const ids = idxIds();
     box.innerHTML = '';
-    IDX_DEFS.forEach(def => {
-      let temp, prev, spark, code;
-      if (def.computed) {
-        temp = allTemps.length ? allTemps.reduce((a, b) => a + b, 0) / allTemps.length : null;
-        const prevs = S.watch.map(id => { const b = S.briefs[id]; return b ? b.prevClose : null; }).filter(v => v != null);
-        prev = prevs.length === allTemps.length && prevs.length ? prevs.reduce((a, b) => a + b, 0) / prevs.length : null;
-        spark = S.watch.map(id => S.briefs[id]).filter(Boolean).map(b => b.now);
-        code = 'WX.ALL';
-      } else {
-        const q = S.idxQ[def.key], b = S.idxB[def.key];
-        temp = (q && q.temp != null) ? q.temp : (b ? b.now : null);
-        prev = b ? b.prevClose : null;
-        spark = b ? b.sparkPts : null;
-        code = def.id;
-      }
-      const chg = (temp != null && prev != null) ? temp - prev : null;
-      const pct = (chg != null && prev) ? chg / prev * 100 : null;
-      const col = U.trendColor(chg);
-
+    if (!ids.length) {
+      box.appendChild(el('span', { class: 'idx-empty', text: '自选为空 —— 用上面的搜索框或左栏 ＋ 添加城市' }));
+      return;
+    }
+    ids.forEach(id => {
+      const c = API.Cities.get(id); if (!c) return;
+      const q = quoteOf(id);
+      const col = U.trendColor(q.chg);
+      const b = S.briefs[id];
       const cv = el('canvas', { width: 56, height: 18 });
       const item = el('div', {
-        class: 'strip-item' + (S.cur && def.id === S.cur.id ? ' on' : ''),
-        title: code,
-        onclick: () => def.computed ? null : selectCity(def.id)
+        class: 'strip-item' + (S.cur && S.cur.id === id ? ' on' : ''),
+        title: (c.loc ? '当前所在地 · ' : '自选城市 · ') + c.name +
+               (c.prov ? '（' + c.prov + '）' : '') + ' —— 点击查看',
+        onclick: () => selectCity(id)
       }, [
-        el('span', { class: 'si-name', text: def.name }),
-        el('span', { class: 'si-val', text: temp == null ? '--' : fx(temp, 1) }),
-        el('span', { class: 'si-chg', style: { color: col }, text: chg == null ? '--' : sgn(chg, 2) + ' ' + sgn(pct, 2) + '%' }),
+        el('span', { class: 'si-name', text: (c.loc ? '📍' : '') + idxShort(c) }),
+        el('span', { class: 'si-val', text: q.temp == null ? '--' : fx(q.temp, 1) }),
+        el('span', { class: 'si-chg', style: { color: col }, text: q.chg == null ? '--' : sgn(q.chg, 2) + ' ' + sgn(q.pct, 2) + '%' }),
         cv
       ]);
       box.appendChild(item);
-      drawSpark(cv, spark, col);
+      drawSpark(cv, b ? b.sparkPts : null, col);
     });
   }
 
@@ -94,6 +97,8 @@
   function renderWatchlist() {
     const box = $('#watchlist');
     box.innerHTML = '';
+    // 放在最前面：自选清空时下面会提前 return，指数条也得跟着清干净
+    renderIndexes();
     if (!S.watch.length) { box.appendChild(el('div', { class: 'sr-empty', text: '自选为空，点搜索添加城市' })); return; }
     let ids = S.watch.slice();
     if (S.sortMode === 1) ids.sort((a, b) => (quoteOf(b).pct || -1e9) - (quoteOf(a).pct || -1e9));
@@ -168,6 +173,200 @@
   function removeWatch(id) {
     S.watch = S.watch.filter(x => x !== id); storeSet('watch', S.watch);
     renderWatchlist(); renderIndexes(); toast('已移出自选');
+  }
+
+  /* ═══════════ 当前所在地 ═══════════ */
+  /*
+   * 定位拿到的坐标本身就是一个「合成城市」：天气数据直接按经纬度取 Open-Meteo，
+   * 所以列表里显示的是你**所在位置**的天气，而不是最近那个城市的天气 —— 这就是
+   * 「越精确越好」的落点。地址反查只是为了让名字好看，失败也照样出天气。
+   *
+   * 反查走 BigDataCloud 的 reverse-geocode-client（免 key、`Access-Control-Allow-Origin: *`，
+   * 实测返回中文 city/locality/principalSubdivision）。Nominatim 反查不可用（本机连不上）。
+   */
+  const LOC_ID = '__loc__';
+
+  function haversine(a1, o1, a2, o2) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (a2 - a1) * rad, dLon = (o2 - o1) * rad;
+    const s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(a1 * rad) * Math.cos(a2 * rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+  }
+
+  /** 在城市目录里找离坐标最近的一个：气象局站号与单站雷达都只能靠它回落 */
+  function nearestCity(lat, lon) {
+    let best = null, bk = Infinity;
+    API.Cities.all.forEach(c => {
+      if (c.lat == null || c.lon == null) return;
+      const k = haversine(lat, lon, c.lat, c.lon);
+      if (k < bk) { bk = k; best = c; }
+    });
+    return best ? { c: best, km: bk } : null;
+  }
+
+  function geoLabel(g) {
+    if (!g) return '';
+    const t = g.district || g.city || g.prov;
+    return t || (g.lat.toFixed(2) + ', ' + g.lon.toFixed(2));
+  }
+
+  /** 把定位结果做成 city 对象塞进目录，selectCity / 自选 / 行情轮询就都能直接用 */
+  function registerGeo(g) {
+    if (!g || g.lat == null) return null;
+    const c = {
+      id: LOC_ID,
+      name: g.district || g.city || g.nearName || '当前所在地',
+      prov: g.prov || '',
+      py: 'dingwei',
+      lat: g.lat, lon: g.lon,
+      cma: '',                 // 没有气象局站号 → 自动全走 Open-Meteo
+      path: '',
+      loc: true
+    };
+    c.search = (c.name + c.prov + 'dingwei' + LOC_ID).toLowerCase();
+    API.Cities.byId[LOC_ID] = c;
+    return c;
+  }
+
+  /** 反查地名（失败返回 {}，绝不阻塞出天气）。localityLanguage 要用 zh-Hans：zh / zh-CN 返回的是繁体「越秀區」 */
+  async function reverseGeo(lat, lon) {
+    try {
+      const u = 'https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' + lat +
+        '&longitude=' + lon + '&localityLanguage=zh-Hans';
+      const d = await API.getJSON(u, { ttl: 86400000, key: 'geo:' + lat + ',' + lon });
+      return {
+        district: d.locality || d.city || '',
+        city: d.city || '',
+        prov: d.principalSubdivision || ''
+      };
+    } catch (e) { return {}; }
+  }
+
+  /** 记下定位结果并刷新界面（坐标 → 最近城市 → 地名 → 渲染）。多处调用，统一入口 */
+  async function applyGeo(lat, lon, acc, useName) {
+    const g = { lat: lat, lon: lon, acc: acc || 0, at: Date.now() };
+    if (useName !== false) Object.assign(g, await reverseGeo(g.lat, g.lon));
+    const n = nearestCity(g.lat, g.lon);
+    if (n) { g.nearId = n.c.id; g.nearName = n.c.name; g.nearKm = Math.round(n.km); }
+    // 反查失败也要有个像样的名字：退到最近的城市名
+    if (!g.district && !g.city && g.nearName) g.district = '近' + g.nearName;
+    S.geo = g; S.geoBusy = false; S.geoErr = '';
+    storeSet('geo', g);
+    registerGeo(g);
+    renderGeo(); renderWatchlist();
+    if (S.cur && S.cur.id !== LOC_ID) warmQuotes();
+    return g;
+  }
+
+  /** 等当前那次加载结束再切城市 —— 否则会和启动时的 selectCity 撞上 S.loading 守卫被静默吞掉 */
+  function selectWhenIdle(id, tries) {
+    if (tries == null) tries = 40;
+    if (S.loading && tries > 0) { setTimeout(() => selectWhenIdle(id, tries - 1), 250); return; }
+    if (S.cur && S.cur.id === id) return;
+    selectCity(id);
+  }
+
+  /** 返回 Promise：定位结束（成功或失败）后 resolve 成 geo 对象或 null */
+  function locate(silent) {
+    if (!navigator.geolocation) {
+      S.geoErr = 'unsupported'; renderGeo();
+      if (!silent) toast('此环境不支持定位');
+      return Promise.resolve(null);
+    }
+    if (S.geoBusy) return Promise.resolve(null);
+    S.geoBusy = true; S.geoErr = ''; renderGeo();
+    return new Promise(resolve => {
+      navigator.geolocation.getCurrentPosition(pos => {
+        applyGeo(+pos.coords.latitude.toFixed(5), +pos.coords.longitude.toFixed(5),
+          Math.round(pos.coords.accuracy || 0)).then(g => {
+            if (!silent) toast('已定位：' + geoLabel(g) + (g.acc ? '（精度 ' + g.acc + ' m）' : ''));
+            resolve(g);
+          });
+      }, err => {
+        S.geoBusy = false;
+        S.geoErr = err && err.code === 1 ? 'denied' : (err && err.code === 3 ? 'timeout' : 'failed');
+        renderGeo();
+        if (!silent) toast(S.geoErr === 'denied' ? '位置权限被拒绝，可点 ⌖ 重试'
+          : S.geoErr === 'timeout' ? '定位超时，可点 ⌖ 重试' : '定位失败，可点 ⌖ 重试');
+        resolve(null);
+      }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+    });
+  }
+
+  function renderGeo() {
+    const box = $('#geolist'); if (!box) return;
+    box.innerHTML = '';
+    if (S.geoBusy) { box.appendChild(el('div', { class: 'sr-empty', text: '正在定位…' })); return; }
+
+    if (!S.geo) {
+      const msg = S.geoErr === 'denied' ? '位置权限被拒绝，点这里重试'
+        : S.geoErr === 'unsupported' ? '此环境不支持定位（可在搜索框选城市）'
+          : S.geoErr === 'timeout' ? '定位超时，点这里重试'
+            : S.geoErr ? '定位失败，点这里重试' : '点这里用定位获取当前位置';
+      box.appendChild(el('div', {
+        class: 'stock-row' + (S.cur && S.cur.id === LOC_ID ? ' on' : ''),
+        onclick: () => locate(false)
+      }, [
+        el('div', {}, [
+          el('div', { class: 'sw-name', text: '📍 定位当前位置' }),
+          el('div', { class: 'sw-sub', text: msg })
+        ]),
+        el('div', { class: 'sw-price', text: '--' }),
+        el('div', { class: 'sw-pct p-flat', text: '--' })
+      ]));
+      return;
+    }
+
+    const g = S.geo, q = quoteOf(LOC_ID);
+    const col = U.trendColor(q.chg);
+    const sub = [
+      (g.city && g.city !== g.district) ? g.city : '',
+      g.prov || '',
+      g.acc ? '精度 ' + g.acc + ' m' : '',
+      g.nearName ? '近 ' + g.nearName + ' ' + g.nearKm + ' km' : ''
+    ].filter(Boolean).join(' · ') || (g.lat.toFixed(3) + ', ' + g.lon.toFixed(3));
+
+    const row = el('div', {
+      class: 'stock-row' + (S.cur && S.cur.id === LOC_ID ? ' on' : ''),
+      onclick: (e) => {
+        if (e.target.classList.contains('sw-add') || e.target.classList.contains('sw-del')) return;
+        selectCity(LOC_ID);
+      }
+    }, [
+      el('div', {}, [
+        el('div', { class: 'sw-name', text: '📍 ' + (g.district || g.city || '当前所在地') }),
+        el('div', { class: 'sw-sub', text: sub })
+      ]),
+      el('div', { class: 'sw-price', style: { color: col }, text: q.temp == null ? '--' : fx(q.temp, 1) }),
+      el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
+    ]);
+    const starred = S.watch.indexOf(LOC_ID) >= 0;
+    row.appendChild(el('span', {
+      class: starred ? 'sw-del' : 'sw-add',
+      text: starred ? '✕' : '＋',
+      title: starred ? '从自选移除' : '加入自选',
+      onclick: (e) => {
+        e.stopPropagation();
+        if (starred) removeWatch(LOC_ID); else addWatch(LOC_ID);
+        renderGeo();
+      }
+    }));
+    box.appendChild(row);
+  }
+
+  /** 启动时恢复上次定位并刷新；没有就静默要一次（和普通天气软件一致）。返回 Promise<geo|null> */
+  function initGeo(q) {
+    const g = storeGet('geo', null);
+    if (g && g.lat != null) { S.geo = g; registerGeo(g); }
+    renderGeo();
+    if (q && q.lat && q.lon) {          // ?lat=&lon= 手动指定坐标（可分享，也方便无头截图自查）
+      S.geoBusy = true; renderGeo();
+      return applyGeo(+q.lat, +q.lon, 0);
+    }
+    if (!g) return locate(true);
+    if (Date.now() - (g.at || 0) > 1800000) return locate(true);   // 超过 30 分钟静默刷新
+    return Promise.resolve(S.geo);
   }
 
   /* ═══════════ 行情头 ═══════════ */
@@ -370,7 +569,9 @@
     let bars, mode = 'day';
     if (period === 'week') { bars = d.week; mode = 'week'; }
     else if (period === 'month') { bars = d.month; mode = 'month'; }
-    else if (period === 'fcst') { bars = d.daily.filter(b => b.d >= U.fmtDate(new Date(Date.now() - 45 * 86400000))); mode = 'day'; }
+    // 预报K：过去的日子只留最近 10 天当参照，剩下全给未来 16 天预报。
+    // 原来往回留 45 天，图上四分之三都是历史，用户反馈"过去日子的占比太多了"。
+    else if (period === 'fcst') { bars = d.daily.filter(b => b.d >= U.fmtDate(new Date(Date.now() - 10 * 86400000))); mode = 'day'; }
     else bars = d.daily;
     if (!bars || !bars.length) return null;
     const ind = IND.computeAll(bars);
@@ -430,6 +631,9 @@
       const qp = quoteOf(S.cur.id);
       Chart.renderMain({
         mode: p, points: pts, base: d.base, ov: ov,
+        // five 必须显式传：chart.js 的轴标签靠它决定"到点写日期、其余写时刻"。
+        // 以前从来没传过，S.five 恒为 undefined，所以五日图的横轴只有 00:00 而没有日期。
+        five: p === '5day',
         precips: pts.map(x => x.v),
         hours: pts.map(x => U.sessionLabel(Number(String(x.t).slice(11, 13)))),
         title: (p === 'trend' ? '分时' : '五日分时') + ' · ' + (p === 'trend' ? d.today : '近 5 日')
@@ -529,7 +733,9 @@
   }
 
   function watchHotIds() {
-    return Array.from(new Set(S.watch.concat(API.Cities.hot.slice(0, 16).map(c => c.id))));
+    const ids = S.watch.concat(API.Cities.hot.slice(0, 16).map(c => c.id));
+    if (S.geo) ids.push(LOC_ID);          // 当前所在地也要有报价
+    return Array.from(new Set(ids));
   }
 
   async function warmQuotes() {
@@ -552,14 +758,8 @@
     if (S.cur) { renderQuoteHead(); renderOrderbook(); renderTape(); }
   }
 
+  /** 指数条现在就是自选列表的镜像，行情/走势由 warmQuotes() 一并预热，这里只要重画 */
   async function warmIndexes() {
-    const defs = IDX_DEFS.filter(d => !d.computed);
-    await Promise.all(defs.map(async def => {
-      const c = API.Cities.get(def.id) || API.Cities.all.find(x => x.name === def.nm);
-      if (!c) return;
-      if (!S.idxB[def.key]) { try { const b = await API.OpenMeteo.brief(c.lat, c.lon, 600000); if (b) S.idxB[def.key] = b; } catch (e) { } }
-      try { const q = await API.Cma.now(c, Math.max(S.refreshMs, 60000)); if (q) S.idxQ[def.key] = q; } catch (e) { }
-    }));
     renderIndexes();
   }
 
@@ -732,6 +932,7 @@
       toast(['默认排序', '按涨幅排序', '按名称排序'][S.sortMode]);
     });
     $('#btnZoomReset').addEventListener('click', () => { renderChart(); toast('视图已重置'); });
+    $('#btnGeo').addEventListener('click', () => locate(false));
     $('#search').addEventListener('input', doSearch);
     $('#search').addEventListener('keydown', searchKey);
     $('#search').addEventListener('focus', () => { if ($('#search').value.trim()) doSearch(); });
@@ -806,6 +1007,10 @@
     }
     $('#statusLeft').textContent = '已载入 ' + API.Cities.all.length + ' 个城市／地区';
 
+    // 先把上次的定位结果注册进城市目录，否则下面 S.watch 的过滤会把 '__loc__' 当未知城市剔掉
+    const savedGeo = storeGet('geo', null);
+    if (savedGeo && savedGeo.lat != null) { S.geo = savedGeo; registerGeo(savedGeo); }
+
     S.watch = storeGet('watch', null) || DEFAULT_WATCH.slice();
     S.watch = S.watch.filter(i => API.Cities.get(i));
     if (!S.watch.length) S.watch = DEFAULT_WATCH.slice();
@@ -838,9 +1043,15 @@
     const onViewport = () => { clearTimeout(rt); rt = setTimeout(syncMTabs, 120); };
     window.addEventListener('resize', onViewport);
     window.addEventListener('orientationchange', onViewport);
+    const geoP = initGeo(q);
     const first = (q.city && API.Cities.get(q.city)) ? q.city
       : (lastId && API.Cities.get(lastId)) ? lastId : S.watch[0];
     selectCity(first);
+    // 首次访问（没有深链城市、也没有上次浏览记录）时，等定位回来自动切到「当前位置」，
+    // 和普通天气软件一致。有明确指定的城市就尊重它，不做劫持。
+    if (!q.city && !lastId && !savedGeo) {
+      geoP.then(g => { if (g) selectWhenIdle(LOC_ID); });
+    }
 
     warmIndexes();
     warmQuotes();
@@ -896,10 +1107,10 @@
   /** 让 tab 高亮与 S.period / S.ind 保持一致（深链与快捷键都要用） */
   function syncTabs() {
     U.$$('#periodTabs .tab').forEach(x => x.classList.toggle('active', x.dataset.period === S.period));
-    U.$$('.tabbar.sub .tab').forEach(x => x.classList.toggle('active', x.dataset.ind === S.ind));
+    U.$$('.tabbar.sub .tab[data-ind]').forEach(x => x.classList.toggle('active', x.dataset.ind === S.ind));
     const vm = $('#volumeMetric'); if (vm) vm.value = S.metric;
   }
 
   document.addEventListener('DOMContentLoaded', boot);
-  window.__APP = { S, selectCity, addWatch, removeWatch, renderChart };
+  window.__APP = { S, selectCity, addWatch, removeWatch, renderChart, locate, renderGeo, applyGeo, LOC_ID, haversine, nearestCity };
 })();

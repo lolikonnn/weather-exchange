@@ -44,7 +44,7 @@ BUILD = os.path.join(ROOT, "build", "apk")
 ASSETS_WEB = os.path.join(ROOT, "android", "assets", "web")
 NAME = "天气战士"
 
-SKIP_ASSET = ("__probe.html", "__net.html", "__net2.html", "cities.full.json")
+SKIP_ASSET = ("__probe.html", "__net.html", "__net2.html")
 
 
 def run(cmd, **kw):

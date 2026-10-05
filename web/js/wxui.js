@@ -274,15 +274,36 @@
     async openRadar(region, prov, cityId) {
       const app = window.__APP;
       const cur = app && app.S && app.S.cur;
+      const geo = app && app.S && app.S.geo;
       const stations = await W.radarCities();
       const all = (window.API && API.Cities && API.Cities.all) || [];
+      const hv = (app && app.haversine) || (() => 1e9);
+
+      // 主页正在浏览的城市，以及「当前所在地」各自能对到哪个雷达站。
+      // 所在地优先用最近的那个城市；那个城市没有独立雷达站时，退而找**最近的有站城市**
+      // （气象局没有「按坐标取雷达」的接口，只能落到单站产品上）。
+      const curSt = (cur && cur.id && stations[cur.id]) ? cur.id : null;
+      let locSt = null;
+      if (geo) {
+        if (geo.nearId && stations[geo.nearId]) locSt = geo.nearId;
+        else {
+          let bk = Infinity;
+          all.forEach(c => {
+            if (!stations[c.id] || c.lat == null || c.lon == null) return;
+            const k = hv(geo.lat, geo.lon, c.lat, c.lon);
+            if (k < bk) { bk = k; locSt = c.id; }
+          });
+        }
+      }
 
       if (region === undefined || region === null) {
-        // 首次打开：沿用上次选的大区；如果当前城市自己有雷达站，直接定位到它
-        region = this._radarReg || W.regionFor(cur);
+        // 首次打开：默认落到**主页正在浏览的城市**的单站雷达（用户明确要求这个当默认）；
+        // 它没有站就沿用上次选的大区。
+        region = this._radarReg;
         prov = this._radarProv;
         cityId = this._radarCity;
-        if (cur && cur.id && stations[cur.id]) { cityId = cur.id; prov = cur.prov; }
+        if (curSt) { region = W.regionFor(API.Cities.get(curSt)); prov = API.Cities.get(curSt).prov; cityId = curSt; }
+        if (!region) region = W.regionFor(cur);
       }
       if (prov === undefined) prov = this._radarProv;
       if (cityId === undefined) cityId = this._radarCity;
@@ -299,6 +320,12 @@
         ? all.filter(c => c.prov === prov && stations[c.id]).map(c => [c.id, c.name]) : [];
       if (cityId && cityBtns.every(x => x[0] !== cityId)) cityId = null;
 
+      // 「📡 当前位置 / 📍 正在浏览」两个快捷入口，永远排在大区行上面一行
+      const jumpBtns = [];
+      if (locSt) jumpBtns.push(['@loc', '📡 当前位置']);
+      if (curSt && curSt !== locSt) jumpBtns.push(['@cur', '📍 ' + (API.Cities.get(curSt) || {}).name]);
+      const activeJump = (locSt && cityId === locSt) ? '@loc' : ((curSt && cityId === curSt) ? '@cur' : '');
+
       this._radarReg = region; this._radarProv = prov; this._radarCity = cityId;
 
       const body = $('#wxRadarBody'), sub = $('#wxRadarSub');
@@ -307,7 +334,9 @@
       const st = cityId && stations[cityId];
       const key = st ? 'S:' + cityId : region;
       const rname = (W.RADAR_REGIONS.filter(x => x.k === region)[0] || {}).n || region;
-      const label = st ? (st.name + ' 单站雷达') : ('雷达回波 · ' + rname);
+      const label = st
+        ? ((cityId === locSt ? '📡 当前位置 · ' : cityId === curSt ? '📍 ' + (API.Cities.get(curSt) || {}).name + ' · ' : '') + st.name + ' 单站雷达')
+        : ('雷达回波 · ' + rname);
 
       let frames = this._radarFrames;
       if (this._radarKey !== key || !frames || !frames.length) {
@@ -334,12 +363,16 @@
 
       renderPlayer(body, sub, frames, label, {
         segs: [
+          { regions: jumpBtns, region: activeJump, act: 'jump' },
           { regions: W.RADAR_REGIONS.map(r => [r.k, r.n]), region: region, act: 'reg' },
           { regions: provs.map(p => [p, p.replace(/省|市|自治区|回族|维吾尔|壮族|特别行政区/g, '')]), region: prov, act: 'prov' },
           { regions: cityBtns, region: cityId, act: 'city' }
         ],
         onSeg: (act, k) => {
-          if (act === 'reg') WXUI.openRadar(k, null, null);
+          if (act === 'jump') {
+            const c = API.Cities.get(k === '@loc' ? locSt : curSt);
+            if (c) WXUI.openRadar(W.regionFor(c), c.prov, c.id);
+          } else if (act === 'reg') WXUI.openRadar(k, null, null);
           else if (act === 'prov') WXUI.openRadar(region, k, null);
           else WXUI.openRadar(region, prov, k);
         }

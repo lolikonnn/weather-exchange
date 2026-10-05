@@ -86,6 +86,14 @@
   <!-- ───────── 左：自选 ───────── -->
   <aside class="pane pane-left">
     <div class="pane-head">
+      <span>当前所在地</span>
+      <span class="pane-head-tools">
+        <button class="mini" id="btnGeo" title="用浏览器定位获取当前位置（精度越高越准）">⌖</button>
+      </span>
+    </div>
+    <div class="scroll" id="geolist"></div>
+
+    <div class="pane-head">
       <span>自选城市</span>
       <span class="pane-head-tools">
         <button class="mini" id="btnSortWatch" title="切换排序：默认/涨幅/名称">⇅</button>

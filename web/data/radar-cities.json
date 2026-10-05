@@ -1,5 +1,5 @@
 {
- "count": 30,
+ "count": 156,
  "note": "只有这些城市有独立雷达站；其余城市请回落到所在大区的拼图。",
  "source": "中国气象局 · nmc.cn 单站雷达",
  "stations": {
@@ -27,11 +27,59 @@
    "prov": "黑龙江省",
    "slug": "hei-long-jiang/ha-er-bin"
   },
+  "101050201": {
+   "az": "AZ9452",
+   "name": "齐齐哈尔",
+   "prov": "黑龙江省",
+   "slug": "hei-long-jiang/qi-qi-ha-er"
+  },
+  "101050301": {
+   "az": "AZ9453",
+   "name": "牡丹江",
+   "prov": "黑龙江省",
+   "slug": "hei-long-jiang/mu-dan-jiang"
+  },
+  "101050401": {
+   "az": "AZ9454",
+   "name": "佳木斯",
+   "prov": "黑龙江省",
+   "slug": "hei-long-jiang/jia-mu-si"
+  },
+  "101050601": {
+   "az": "AZ9456",
+   "name": "黑河",
+   "prov": "黑龙江省",
+   "slug": "hei-long-jiang/hei-he"
+  },
+  "101050801": {
+   "az": "AZ9458",
+   "name": "伊春",
+   "prov": "黑龙江省",
+   "slug": "hei-long-jiang/yi-chun"
+  },
   "101060101": {
    "az": "AZ9431",
    "name": "长春",
    "prov": "吉林省",
    "slug": "ji-lin/chang-chun"
+  },
+  "101060601": {
+   "az": "AZ9436",
+   "name": "白城",
+   "prov": "吉林省",
+   "slug": "ji-lin/bai-cheng"
+  },
+  "101060701": {
+   "az": "AZ9437",
+   "name": "辽源",
+   "prov": "吉林省",
+   "slug": "ji-lin/liao-yuan"
+  },
+  "101060901": {
+   "az": "AZ9439",
+   "name": "白山",
+   "prov": "吉林省",
+   "slug": "ji-lin/bai-shan"
   },
   "101070101": {
    "az": "AZ9240",
@@ -39,11 +87,53 @@
    "prov": "辽宁省",
    "slug": "liao-ning/shen-yang"
   },
+  "101070201": {
+   "az": "AZ9411",
+   "name": "大连",
+   "prov": "辽宁省",
+   "slug": "liao-ning/da-lian"
+  },
+  "101070801": {
+   "az": "AZ9417",
+   "name": "营口",
+   "prov": "辽宁省",
+   "slug": "liao-ning/ying-kou"
+  },
   "101090101": {
    "az": "AZ9311",
    "name": "石家庄",
    "prov": "河北省",
    "slug": "he-bei/shi-jia-zhuang"
+  },
+  "101090301": {
+   "az": "AZ9313",
+   "name": "张家口",
+   "prov": "河北省",
+   "slug": "he-bei/zhang-jia-kou"
+  },
+  "101090402": {
+   "az": "AZ9314",
+   "name": "承德",
+   "prov": "河北省",
+   "slug": "he-bei/cheng-de"
+  },
+  "101090701": {
+   "az": "AZ9317",
+   "name": "沧州",
+   "prov": "河北省",
+   "slug": "he-bei/cang-zhou"
+  },
+  "101091001": {
+   "az": "AZ9310",
+   "name": "邯郸",
+   "prov": "河北省",
+   "slug": "he-bei/han-dan"
+  },
+  "101091101": {
+   "az": "AZ9335",
+   "name": "秦皇岛",
+   "prov": "河北省",
+   "slug": "he-bei/qin-huang-dao"
   },
   "101100101": {
    "az": "AZ9351",
@@ -51,11 +141,65 @@
    "prov": "山西省",
    "slug": "shan-xi/tai-yuan"
   },
+  "101100201": {
+   "az": "AZ9352",
+   "name": "大同",
+   "prov": "山西省",
+   "slug": "shan-xi/da-tong"
+  },
+  "101100701": {
+   "az": "AZ9357",
+   "name": "临汾",
+   "prov": "山西省",
+   "slug": "shan-xi/lin-fen"
+  },
+  "101101101": {
+   "az": "AZ9358",
+   "name": "吕梁",
+   "prov": "山西省",
+   "slug": "shan-xi/lv-liang"
+  },
   "101110101": {
    "az": "AZ9290",
    "name": "西安",
    "prov": "陕西省",
    "slug": "shan-xi/xi-an"
+  },
+  "101110300": {
+   "az": "AZ9911",
+   "name": "延安",
+   "prov": "陕西省",
+   "slug": "shan-xi/yan-an"
+  },
+  "101110401": {
+   "az": "AZ9912",
+   "name": "榆林",
+   "prov": "陕西省",
+   "slug": "shan-xi/yu-lin"
+  },
+  "101110601": {
+   "az": "AZ9914",
+   "name": "商洛",
+   "prov": "陕西省",
+   "slug": "shan-xi/shang-luo"
+  },
+  "101110701": {
+   "az": "AZ9915",
+   "name": "安康",
+   "prov": "陕西省",
+   "slug": "shan-xi/an-kang"
+  },
+  "101110801": {
+   "az": "AZ9916",
+   "name": "汉中",
+   "prov": "陕西省",
+   "slug": "shan-xi/han-zhong"
+  },
+  "101110901": {
+   "az": "AZ9917",
+   "name": "宝鸡",
+   "prov": "陕西省",
+   "slug": "shan-xi/bao-ji"
   },
   "101120101": {
    "az": "AZ9531",
@@ -63,11 +207,71 @@
    "prov": "山东省",
    "slug": "shan-dong/ji-nan"
   },
+  "101120201": {
+   "az": "AZ9532",
+   "name": "青岛",
+   "prov": "山东省",
+   "slug": "shan-dong/qing-dao"
+  },
+  "101120501": {
+   "az": "AZ9535",
+   "name": "烟台",
+   "prov": "山东省",
+   "slug": "shan-dong/yan-tai"
+  },
+  "101120601": {
+   "az": "AZ9536",
+   "name": "潍坊",
+   "prov": "山东省",
+   "slug": "shan-dong/wei-fang"
+  },
+  "101120901": {
+   "az": "AZ9539",
+   "name": "临沂",
+   "prov": "山东省",
+   "slug": "shan-dong/lin-yi"
+  },
+  "101121101": {
+   "az": "AZ9543",
+   "name": "滨州",
+   "prov": "山东省",
+   "slug": "shan-dong/bin-zhou"
+  },
   "101130101": {
    "az": "AZ9991",
    "name": "乌鲁木齐",
    "prov": "新疆维吾尔自治区",
    "slug": "xin-jiang/wu-lu-mu-qi"
+  },
+  "101130201": {
+   "az": "AZ9990",
+   "name": "克拉玛依",
+   "prov": "新疆维吾尔自治区",
+   "slug": "xin-jiang/ke-la-ma-yi"
+  },
+  "101130301": {
+   "az": "AZ9993",
+   "name": "石河子",
+   "prov": "新疆维吾尔自治区",
+   "slug": "xin-jiang/shi-he-zi"
+  },
+  "101130701": {
+   "az": "AZ9086",
+   "name": "阿拉尔",
+   "prov": "新疆维吾尔自治区",
+   "slug": "xin-jiang/a-la-er"
+  },
+  "101130801": {
+   "az": "AZ9997",
+   "name": "阿克苏",
+   "prov": "新疆维吾尔自治区",
+   "slug": "xin-jiang/a-ke-su"
+  },
+  "101131301": {
+   "az": "AZ9903",
+   "name": "和田",
+   "prov": "新疆维吾尔自治区",
+   "slug": "xin-jiang/he-tian"
   },
   "101150101": {
    "az": "AZ9971",
@@ -75,11 +279,41 @@
    "prov": "青海省",
    "slug": "qing-hai/xi-ning"
   },
+  "101150801": {
+   "az": "AZ9970",
+   "name": "海北",
+   "prov": "青海省",
+   "slug": "qing-hai/hai-bei"
+  },
   "101160101": {
    "az": "AZ9931",
    "name": "兰州",
    "prov": "甘肃省",
    "slug": "gan-su/lan-zhou"
+  },
+  "101160701": {
+   "az": "AZ9936",
+   "name": "张掖",
+   "prov": "甘肃省",
+   "slug": "gan-su/zhang-ye"
+  },
+  "101160901": {
+   "az": "AZ9938",
+   "name": "天水",
+   "prov": "甘肃省",
+   "slug": "gan-su/tian-shui"
+  },
+  "101161201": {
+   "az": "AZ9941",
+   "name": "甘南",
+   "prov": "甘肃省",
+   "slug": "gan-su/gan-nan"
+  },
+  "101161401": {
+   "az": "AZ9937",
+   "name": "嘉峪关",
+   "prov": "甘肃省",
+   "slug": "gan-su/jia-yu-guan"
   },
   "101170101": {
    "az": "AZ9951",
@@ -87,11 +321,65 @@
    "prov": "宁夏回族自治区",
    "slug": "ning-xia/yin-chuan"
   },
+  "101170301": {
+   "az": "AZ9953",
+   "name": "吴忠",
+   "prov": "宁夏回族自治区",
+   "slug": "ning-xia/wu-zhong"
+  },
+  "101170401": {
+   "az": "AZ9954",
+   "name": "固原",
+   "prov": "宁夏回族自治区",
+   "slug": "ning-xia/gu-yuan"
+  },
   "101180101": {
    "az": "AZ9371",
    "name": "郑州",
    "prov": "河南省",
    "slug": "he-nan/zheng-zhou"
+  },
+  "101180501": {
+   "az": "AZ9375",
+   "name": "平顶山",
+   "prov": "河南省",
+   "slug": "he-nan/ping-ding-shan"
+  },
+  "101180701": {
+   "az": "AZ9377",
+   "name": "南阳",
+   "prov": "河南省",
+   "slug": "he-nan/nan-yang"
+  },
+  "101180901": {
+   "az": "AZ9379",
+   "name": "洛阳",
+   "prov": "河南省",
+   "slug": "he-nan/luo-yang"
+  },
+  "101181001": {
+   "az": "AZ9370",
+   "name": "商丘",
+   "prov": "河南省",
+   "slug": "he-nan/shang-qiu"
+  },
+  "101181301": {
+   "az": "AZ9393",
+   "name": "濮阳",
+   "prov": "河南省",
+   "slug": "he-nan/pu-yang"
+  },
+  "101181601": {
+   "az": "AZ9396",
+   "name": "驻马店",
+   "prov": "河南省",
+   "slug": "he-nan/zhu-ma-dian"
+  },
+  "101181701": {
+   "az": "AZ9398",
+   "name": "三门峡",
+   "prov": "河南省",
+   "slug": "he-nan/san-men-xia"
   },
   "101190101": {
    "az": "AZ9250",
@@ -99,11 +387,89 @@
    "prov": "江苏省",
    "slug": "jiang-su/nan-jing"
   },
+  "101190501": {
+   "az": "AZ9513",
+   "name": "南通",
+   "prov": "江苏省",
+   "slug": "jiang-su/nan-tong"
+  },
+  "101190701": {
+   "az": "AZ9515",
+   "name": "盐城",
+   "prov": "江苏省",
+   "slug": "jiang-su/yan-cheng"
+  },
+  "101190801": {
+   "az": "AZ9516",
+   "name": "徐州",
+   "prov": "江苏省",
+   "slug": "jiang-su/xu-zhou"
+  },
+  "101190901": {
+   "az": "AZ9517",
+   "name": "淮安",
+   "prov": "江苏省",
+   "slug": "jiang-su/huai-an"
+  },
+  "101191001": {
+   "az": "AZ9518",
+   "name": "连云港",
+   "prov": "江苏省",
+   "slug": "jiang-su/lian-yun-gang"
+  },
+  "101191101": {
+   "az": "AZ9519",
+   "name": "常州",
+   "prov": "江苏省",
+   "slug": "jiang-su/chang-zhou"
+  },
+  "101191201": {
+   "az": "AZ9523",
+   "name": "泰州",
+   "prov": "江苏省",
+   "slug": "jiang-su/tai-zhou"
+  },
   "101200101": {
    "az": "AZ9270",
    "name": "武汉",
    "prov": "湖北省",
    "slug": "hu-bei/wu-han"
+  },
+  "101200201": {
+   "az": "AZ9710",
+   "name": "襄阳",
+   "prov": "湖北省",
+   "slug": "hu-bei/xiang-yang"
+  },
+  "101200801": {
+   "az": "AZ9716",
+   "name": "荆州",
+   "prov": "湖北省",
+   "slug": "hu-bei/jing-zhou"
+  },
+  "101200901": {
+   "az": "AZ9717",
+   "name": "宜昌",
+   "prov": "湖北省",
+   "slug": "hu-bei/yi-chang"
+  },
+  "101201101": {
+   "az": "AZ9719",
+   "name": "十堰",
+   "prov": "湖北省",
+   "slug": "hu-bei/shi-yan"
+  },
+  "101201201": {
+   "az": "AZ9060",
+   "name": "神农架",
+   "prov": "湖北省",
+   "slug": "hu-bei/shen-nong-jia"
+  },
+  "101201301": {
+   "az": "AZ9722",
+   "name": "随州",
+   "prov": "湖北省",
+   "slug": "hu-bei/sui-zhou"
   },
   "101210101": {
    "az": "AZ9571",
@@ -111,11 +477,95 @@
    "prov": "浙江省",
    "slug": "zhe-jiang/hang-zhou"
   },
+  "101210201": {
+   "az": "AZ9572",
+   "name": "湖州",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/hu-zhou"
+  },
+  "101210401": {
+   "az": "AZ9574",
+   "name": "宁波",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/ning-bo"
+  },
+  "101210601": {
+   "az": "AZ9576",
+   "name": "台州",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/tai-zhou"
+  },
+  "101210701": {
+   "az": "AZ9577",
+   "name": "温州",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/wen-zhou"
+  },
+  "101210801": {
+   "az": "AZ9578",
+   "name": "丽水",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/li-shui"
+  },
+  "101210901": {
+   "az": "AZ9579",
+   "name": "金华",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/jin-hua"
+  },
+  "101211001": {
+   "az": "AZ9570",
+   "name": "衢州",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/qu-zhou"
+  },
+  "101211101": {
+   "az": "AZ9580",
+   "name": "舟山",
+   "prov": "浙江省",
+   "slug": "zhe-jiang/zhou-shan"
+  },
   "101220101": {
    "az": "AZ9551",
    "name": "合肥",
    "prov": "安徽省",
    "slug": "an-hui/he-fei"
+  },
+  "101220201": {
+   "az": "AZ9552",
+   "name": "蚌埠",
+   "prov": "安徽省",
+   "slug": "an-hui/beng-bu"
+  },
+  "101220501": {
+   "az": "AZ9555",
+   "name": "马鞍山",
+   "prov": "安徽省",
+   "slug": "an-hui/ma-an-shan"
+  },
+  "101220601": {
+   "az": "AZ9556",
+   "name": "安庆",
+   "prov": "安徽省",
+   "slug": "an-hui/an-qing"
+  },
+  "101220801": {
+   "az": "AZ9558",
+   "name": "阜阳",
+   "prov": "安徽省",
+   "slug": "an-hui/fu-yang"
+  },
+  "101221001": {
+   "az": "AZ9559",
+   "name": "黄山",
+   "prov": "安徽省",
+   "slug": "an-hui/huang-shan"
+  },
+  "101221301": {
+   "az": "AZ9562",
+   "name": "铜陵",
+   "prov": "安徽省",
+   "slug": "an-hui/tong-ling"
   },
   "101230101": {
    "az": "AZ9591",
@@ -123,11 +573,89 @@
    "prov": "福建省",
    "slug": "fu-jian/fu-zhou"
   },
+  "101230201": {
+   "az": "AZ9592",
+   "name": "厦门",
+   "prov": "福建省",
+   "slug": "fu-jian/xia-men"
+  },
+  "101230301": {
+   "az": "AZ9593",
+   "name": "宁德",
+   "prov": "福建省",
+   "slug": "fu-jian/ning-de"
+  },
+  "101230501": {
+   "az": "AZ9595",
+   "name": "泉州",
+   "prov": "福建省",
+   "slug": "fu-jian/quan-zhou"
+  },
+  "101230601": {
+   "az": "AZ9596",
+   "name": "漳州",
+   "prov": "福建省",
+   "slug": "fu-jian/zhang-zhou"
+  },
+  "101230701": {
+   "az": "AZ9597",
+   "name": "龙岩",
+   "prov": "福建省",
+   "slug": "fu-jian/long-yan"
+  },
+  "101230801": {
+   "az": "AZ9598",
+   "name": "三明",
+   "prov": "福建省",
+   "slug": "fu-jian/san-ming"
+  },
   "101240101": {
    "az": "AZ9791",
    "name": "南昌",
    "prov": "江西省",
    "slug": "jiang-xi/nan-chang"
+  },
+  "101240201": {
+   "az": "AZ9792",
+   "name": "九江",
+   "prov": "江西省",
+   "slug": "jiang-xi/jiu-jiang"
+  },
+  "101240301": {
+   "az": "AZ9793",
+   "name": "上饶",
+   "prov": "江西省",
+   "slug": "jiang-xi/shang-rao"
+  },
+  "101240401": {
+   "az": "AZ9794",
+   "name": "抚州",
+   "prov": "江西省",
+   "slug": "jiang-xi/fu-zhou"
+  },
+  "101240501": {
+   "az": "AZ9795",
+   "name": "宜春",
+   "prov": "江西省",
+   "slug": "jiang-xi/yi-chun"
+  },
+  "101240601": {
+   "az": "AZ9796",
+   "name": "吉安",
+   "prov": "江西省",
+   "slug": "jiang-xi/ji-an"
+  },
+  "101240701": {
+   "az": "AZ9797",
+   "name": "赣州",
+   "prov": "江西省",
+   "slug": "jiang-xi/gan-zhou"
+  },
+  "101240801": {
+   "az": "AZ9798",
+   "name": "景德镇",
+   "prov": "江西省",
+   "slug": "jiang-xi/jing-de-zhen"
   },
   "101250101": {
    "az": "AZ9731",
@@ -135,11 +663,83 @@
    "prov": "湖南省",
    "slug": "hu-nan/chang-sha"
   },
+  "101250501": {
+   "az": "AZ9735",
+   "name": "郴州",
+   "prov": "湖南省",
+   "slug": "hu-nan/chen-zhou"
+  },
+  "101250601": {
+   "az": "AZ9736",
+   "name": "常德",
+   "prov": "湖南省",
+   "slug": "hu-nan/chang-de"
+  },
+  "101250901": {
+   "az": "AZ9739",
+   "name": "邵阳",
+   "prov": "湖南省",
+   "slug": "hu-nan/shao-yang"
+  },
+  "101251001": {
+   "az": "AZ9730",
+   "name": "岳阳",
+   "prov": "湖南省",
+   "slug": "hu-nan/yue-yang"
+  },
+  "101251101": {
+   "az": "AZ9744",
+   "name": "张家界",
+   "prov": "湖南省",
+   "slug": "hu-nan/zhang-jia-jie"
+  },
+  "101251201": {
+   "az": "AZ9745",
+   "name": "怀化",
+   "prov": "湖南省",
+   "slug": "hu-nan/huai-hua"
+  },
+  "101251401": {
+   "az": "AZ9746",
+   "name": "永州",
+   "prov": "湖南省",
+   "slug": "hu-nan/yong-zhou"
+  },
   "101260101": {
    "az": "AZ9851",
    "name": "贵阳",
    "prov": "贵州省",
    "slug": "gui-zhou/gui-yang"
+  },
+  "101260201": {
+   "az": "AZ9852",
+   "name": "遵义",
+   "prov": "贵州省",
+   "slug": "gui-zhou/zun-yi"
+  },
+  "101260501": {
+   "az": "AZ9855",
+   "name": "黔东南",
+   "prov": "贵州省",
+   "slug": "gui-zhou/qian-dong-nan"
+  },
+  "101260601": {
+   "az": "AZ9856",
+   "name": "铜仁",
+   "prov": "贵州省",
+   "slug": "gui-zhou/tong-ren"
+  },
+  "101260701": {
+   "az": "AZ9857",
+   "name": "毕节",
+   "prov": "贵州省",
+   "slug": "gui-zhou/bi-jie"
+  },
+  "101260801": {
+   "az": "AZ9858",
+   "name": "六盘水",
+   "prov": "贵州省",
+   "slug": "gui-zhou/liu-pan-shui"
   },
   "101270101": {
    "az": "AZ9280",
@@ -147,11 +747,71 @@
    "prov": "四川省",
    "slug": "si-chuan/cheng-du"
   },
+  "101270401": {
+   "az": "AZ9816",
+   "name": "绵阳",
+   "prov": "四川省",
+   "slug": "si-chuan/mian-yang"
+  },
+  "101270501": {
+   "az": "AZ9817",
+   "name": "南充",
+   "prov": "四川省",
+   "slug": "si-chuan/nan-chong"
+  },
+  "101270601": {
+   "az": "AZ9818",
+   "name": "达州",
+   "prov": "四川省",
+   "slug": "si-chuan/da-zhou"
+  },
+  "101271101": {
+   "az": "AZ9831",
+   "name": "宜宾",
+   "prov": "四川省",
+   "slug": "si-chuan/yi-bin"
+  },
+  "101271401": {
+   "az": "AZ9833",
+   "name": "乐山",
+   "prov": "四川省",
+   "slug": "si-chuan/le-shan"
+  },
+  "101271701": {
+   "az": "AZ9835",
+   "name": "雅安",
+   "prov": "四川省",
+   "slug": "si-chuan/ya-an"
+  },
+  "101272101": {
+   "az": "AZ9839",
+   "name": "广元",
+   "prov": "四川省",
+   "slug": "si-chuan/guang-yuan"
+  },
   "101280101": {
    "az": "AZ9200",
    "name": "广州",
    "prov": "广东省",
    "slug": "guang-dong/guang-zhou"
+  },
+  "101280201": {
+   "az": "AZ9751",
+   "name": "韶关",
+   "prov": "广东省",
+   "slug": "guang-dong/shao-guan"
+  },
+  "101280401": {
+   "az": "AZ9753",
+   "name": "梅州",
+   "prov": "广东省",
+   "slug": "guang-dong/mei-zhou"
+  },
+  "101280501": {
+   "az": "AZ9754",
+   "name": "汕头",
+   "prov": "广东省",
+   "slug": "guang-dong/shan-tou"
   },
   "101280601": {
    "az": "AZ9755",
@@ -165,11 +825,53 @@
    "prov": "广东省",
    "slug": "guang-dong/zhao-qing"
   },
+  "101281001": {
+   "az": "AZ9759",
+   "name": "湛江",
+   "prov": "广东省",
+   "slug": "guang-dong/zhan-jiang"
+  },
+  "101281201": {
+   "az": "AZ9762",
+   "name": "河源",
+   "prov": "广东省",
+   "slug": "guang-dong/he-yuan"
+  },
+  "101281801": {
+   "az": "AZ9662",
+   "name": "阳江",
+   "prov": "广东省",
+   "slug": "guang-dong/yang-jiang"
+  },
+  "101282101": {
+   "az": "AZ9660",
+   "name": "汕尾",
+   "prov": "广东省",
+   "slug": "guang-dong/shan-wei"
+  },
   "101290101": {
    "az": "AZ9871",
    "name": "昆明",
    "prov": "云南省",
    "slug": "yun-nan/kun-ming"
+  },
+  "101291001": {
+   "az": "AZ9870",
+   "name": "昭通",
+   "prov": "云南省",
+   "slug": "yun-nan/zhao-tong"
+  },
+  "101291401": {
+   "az": "AZ9888",
+   "name": "丽江",
+   "prov": "云南省",
+   "slug": "yun-nan/li-jiang"
+  },
+  "101291501": {
+   "az": "AZ9692",
+   "name": "德宏",
+   "prov": "云南省",
+   "slug": "yun-nan/de-hong"
   },
   "101300101": {
    "az": "AZ9771",
@@ -177,11 +879,65 @@
    "prov": "广西壮族自治区",
    "slug": "guang-xi/nan-ning"
   },
+  "101300301": {
+   "az": "AZ9772",
+   "name": "柳州",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/liu-zhou"
+  },
+  "101300501": {
+   "az": "AZ9773",
+   "name": "桂林",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/gui-lin"
+  },
+  "101300601": {
+   "az": "AZ9774",
+   "name": "梧州",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/wu-zhou"
+  },
+  "101300901": {
+   "az": "AZ9775",
+   "name": "玉林",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/yu-lin"
+  },
+  "101301001": {
+   "az": "AZ9776",
+   "name": "百色",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/bai-se"
+  },
+  "101301201": {
+   "az": "AZ9778",
+   "name": "河池",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/he-chi"
+  },
+  "101301301": {
+   "az": "AZ9779",
+   "name": "北海",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/bei-hai"
+  },
+  "101301401": {
+   "az": "AZ9770",
+   "name": "防城港",
+   "prov": "广西壮族自治区",
+   "slug": "guang-xi/fang-cheng-gang"
+  },
   "101310101": {
    "az": "AZ9898",
    "name": "海口",
    "prov": "海南省",
    "slug": "hai-nan/hai-kou"
+  },
+  "101310201": {
+   "az": "AZ9070",
+   "name": "三亚",
+   "prov": "海南省",
+   "slug": "hai-nan/san-ya"
   }
  }
 }

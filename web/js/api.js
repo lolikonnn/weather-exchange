@@ -431,7 +431,10 @@
     async loadCity(city, onStep) {
       const step = onStep || function () { };
       step('连接中国气象局…');
-      const [now, fcst] = await Promise.all([Cma.now(city), Cma.forecast(city)]);
+      const [now0, fcst] = await Promise.all([Cma.now(city), Cma.forecast(city)]);
+      // 没有气象局站号的城市（例如「当前所在地」这种纯坐标点）实况是空的。
+      // 不补的话报价头会是一片 "--"（体感 / 风向 / 气压最明显），所以退回 Open-Meteo 当前值。
+      const now = now0 || (city.lat != null ? await Store.quote(city) : null);
 
       step('拉取历史逐小时（Open-Meteo）…');
       let hist = { time: [], temp: [], precip: [] };
@@ -526,13 +529,18 @@
       if (city.lat != null) {
         try {
           const d = await getJSON(OM_F + '?latitude=' + city.lat + '&longitude=' + city.lon +
-            '&current=temperature_2m,precipitation,relative_humidity_2m,wind_speed_10m,weather_code' +
+            '&current=temperature_2m,apparent_temperature,precipitation,relative_humidity_2m,' +
+            'wind_speed_10m,wind_direction_10m,surface_pressure,weather_code' +
             '&wind_speed_unit=ms' +          // 同上：默认 km/h，不指定会和气象局的 m/s 混着显示
             '&timezone=' + encodeURIComponent(TZ), { ttl: 300000, key: 'q|' + city.id });
           const c = d && d.current;
           if (c) return {
             src: 'om', temp: c.temperature_2m, precip: c.precipitation, humidity: c.relative_humidity_2m,
-            windSpeed: c.wind_speed_10m, wcode: c.weather_code, time: c.time
+            windSpeed: c.wind_speed_10m, wcode: c.weather_code, time: c.time,
+            // 这几个字段以前没取，导致无站号城市的报价头「体感 / 风向 / 气压」恒为 "--"
+            feels: c.apparent_temperature, pressure: c.surface_pressure,
+            windDeg: c.wind_direction_10m,
+            windDir: (global.Weather ? global.Weather.dirName(c.wind_direction_10m) : null)
           };
         } catch (e) { }
       }

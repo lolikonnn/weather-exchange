@@ -2,6 +2,7 @@ package com.tjs.weather;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -9,6 +10,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.webkit.GeolocationPermissions;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -57,7 +59,49 @@ public class MainActivity extends Activity {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+    private static final int REQ_LOCATION = 0x10c;
+
     private WebView web;
+
+    /** 「当前所在地」定位：把 WebView 的 geolocation 请求挂起，等 Android 运行时权限的结果 */
+    private GeolocationPermissions.Callback geoCb;
+    private String geoOrigin;
+
+    boolean hasLocationPermission() {
+        return checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED
+            || checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** 放行 WebView 的定位请求；还没授权就先弹 Android 权限对话框，结果回调到 onRequestPermissionsResult */
+    void onGeoPrompt(GeolocationPermissions.Callback cb, String origin) {
+        if (Build.VERSION.SDK_INT < 23 || hasLocationPermission()) {
+            cb.invoke(origin, true, false);
+            return;
+        }
+        geoCb = cb;
+        geoOrigin = origin;
+        requestPermissions(new String[]{
+                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] granted) {
+        if (code != REQ_LOCATION) {
+            super.onRequestPermissionsResult(code, perms, granted);
+            return;
+        }
+        boolean ok = false;
+        for (int g : granted) if (g == PackageManager.PERMISSION_GRANTED) ok = true;
+        if (geoCb != null) {
+            // 第三个参数 retain=true 会记住这次授权，之后同源请求不再询问
+            geoCb.invoke(geoOrigin, ok, true);
+            geoCb = null;
+            geoOrigin = null;
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -83,11 +127,21 @@ public class MainActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
+        // WebView 的 geolocation 默认是【关】的：不开这个开关，页面的
+        // navigator.geolocation 永远不会触发 onGeolocationPermissionsShowPrompt。
+        s.setGeolocationEnabled(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         // 让 WebView 的 UA 与桌面 Chrome 一致，减少被上游按 UA 拦截的概率
         s.setUserAgentString(UA);
         web.setBackgroundColor(Color.parseColor("#0e1015"));
-        web.setWebChromeClient(new WebChromeClient());
+        // 默认的 WebChromeClient 会【静默拒绝】WebView 的定位请求，页面只会拿到
+        // PERMISSION_DENIED 且没有任何提示。这里改成：先申请 Android 运行时权限，
+        // 用户允许后再放行 WebView 的 geolocation 请求。
+        // 注意必须用【具名内部类】而不是匿名类：d8(R8 8.2.2) 在编译 javac --release 8
+        // 产出的匿名类 (MainActivity$1.class) 时会抛
+        //   NullPointerException: Cannot invoke "String.length()" because "<parameter1>" is null
+        // 直接让整包构建失败。具名内部类（如 LocalClient）没有这个问题。
+        web.setWebChromeClient(new GeoChromeClient(this));
         web.setWebViewClient(new LocalClient(this));
         root.addView(web, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -112,8 +166,23 @@ public class MainActivity extends Activity {
      * 实测（build/t2）：static 嵌套类 OK；非 static 成员内部类 / 匿名内部类 一律崩。
      * 所以这里显式持有一个 MainActivity 引用，只用它调 route()。
      */
-    private static class LocalClient extends WebViewClient {
+    /**
+     * 同上：必须是 static 嵌套类（非 static / 匿名内部类会让 R8 写 dex 时 NPE）。
+     * 所以显式持有 MainActivity 引用，权限申请与回调都退回宿主去处理。
+     */
+    private static class GeoChromeClient extends WebChromeClient {
         private final MainActivity a;
+
+        GeoChromeClient(MainActivity a) { this.a = a; }
+
+        @Override
+        public void onGeolocationPermissionsShowPrompt(String origin,
+                                                       GeolocationPermissions.Callback cb) {
+            a.onGeoPrompt(cb, origin);
+        }
+    }
+
+    private static class LocalClient extends WebViewClient {        private final MainActivity a;
 
         LocalClient(MainActivity a) { this.a = a; }
 
