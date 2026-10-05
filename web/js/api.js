@@ -269,7 +269,9 @@
         '&start_date=' + startDate + '&end_date=' + endDate +
         '&hourly=temperature_2m,precipitation' +
         '&timezone=' + encodeURIComponent(TZ);
-      const d = await getJSON(url, { ttl: 1800000, key: 'a|' + lat + ',' + lon + '|' + startDate });
+      // key 必须带上 endDate。只按 startDate 做 key 的话，"同一个 start、不同的 end"
+      // 两次调用会互相命中缓存，第二次等于没发出去 —— 是个一直没被触发的潜伏 bug。
+      const d = await getJSON(url, { ttl: 1800000, key: 'a|' + lat + ',' + lon + '|' + startDate + '|' + endDate });
       return this._unpack(d, 'temperature_2m', 'precipitation');
     },
 
@@ -507,16 +509,18 @@
 
       step('拉取历史逐小时（Open-Meteo）…');
       let hist = { time: [], temp: [], precip: [] };
+      const archStart = shiftDate(todayStr(), -560);
       if (city.lat != null && city.lon != null) {
+        // 窗口故意停在「今天-93」：最后 92 天 + 未来 16 天由下面的 recent 接上。
         const end = shiftDate(todayStr(), -93);
-        const start = shiftDate(todayStr(), -560);
-        try { hist = await OpenMeteo.archive(city.lat, city.lon, start, end); } catch (e) { hist = { time: [], temp: [], precip: [] }; }
+        try { hist = await OpenMeteo.archive(city.lat, city.lon, archStart, end); } catch (e) { hist = { time: [], temp: [], precip: [] }; }
       }
 
       step('拉取近期与 16 日预报…');
       let recent = { time: [], temp: [], precip: [], humidity: [], wind: [], wcode: [] };
       if (city.lat != null && city.lon != null) {
-        try { recent = await OpenMeteo.forecast(city.lat, city.lon, 92, 16); } catch (e) { }
+        try { recent = await OpenMeteo.forecast(city.lat, city.lon, 92, 16); }
+        catch (e) { recent = { time: [], temp: [], precip: [], humidity: [], wind: [], wcode: [] }; }
       }
 
       const times = hist.time.concat(recent.time);

@@ -27,7 +27,7 @@
 
   const S = {
     period: 'trend', ind: 'vol', metric: 'range',
-    refreshMs: 10000, sortMode: 0,
+    refreshMs: 900000, sortMode: 0,
     watch: [], cur: null, data: null, wx: null,
     quotes: {}, briefs: {}, briefAt: 0,
     overlay: false,
@@ -814,10 +814,18 @@
         if (S.cur && Date.now() - S.lastFullAt > 1800000 && !S.loading) {
           const id = S.cur.id; S.loading = false; selectCity(id);
         }
-        $('#statusNext').textContent = '下次刷新 ' + (S.refreshMs / 1000) + 's';
+        $('#statusNext').textContent = '下次刷新 ' + fmtGap(S.refreshMs);
       } catch (e) { /* 静默 */ }
     }, S.refreshMs);
-    $('#statusNext').textContent = '下次刷新 ' + (S.refreshMs / 1000) + 's';
+    $('#statusNext').textContent = '下次刷新 ' + fmtGap(S.refreshMs);
+  }
+
+  /** 刷新间隔的人话。默认已经是 15 分钟，不该显示成 "900s"。 */
+  function fmtGap(ms) {
+    if (!ms) return '手动';
+    const s = ms / 1000;
+    if (s < 60) return s + 's';
+    return (s % 60 === 0 ? s / 60 : Math.round(s / 60)) + 'm';
   }
 
   /* ═══════════ 搜索 ═══════════ */
@@ -960,7 +968,7 @@
     });
     $('#refreshRate').addEventListener('change', e => {
       S.refreshMs = Number(e.target.value); storeSet('refresh', S.refreshMs);
-      scheduleRefresh(); toast('行情刷新频率：' + (S.refreshMs ? (S.refreshMs / 1000) + ' 秒' : '手动'));
+      scheduleRefresh(); toast('行情刷新频率：' + fmtGap(S.refreshMs));
     });
     $('#colorMode').addEventListener('change', e => {
       document.body.classList.toggle('us', e.target.value === 'us');
@@ -1112,7 +1120,7 @@
     S.watch = storeGet('watch', null) || DEFAULT_WATCH.slice();
     S.watch = S.watch.filter(i => API.Cities.get(i));
     if (!S.watch.length) S.watch = DEFAULT_WATCH.slice();
-    S.refreshMs = storeGet('refresh', 10000);
+    S.refreshMs = storeGet('refresh', 900000);
     S.metric = storeGet('metric', 'range');
     S.overlay = !!storeGet('overlay', 0);
     const cm = storeGet('color', 'cn');
