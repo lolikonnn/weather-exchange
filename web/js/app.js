@@ -783,14 +783,20 @@
     const qs = await API.Store.quotes(cities, 6);
     Object.assign(S.quotes, qs);
 
-    // 昨收 / 迷你走势（Open-Meteo brief）：自选 + 热门，30 分钟一轮
-    if (Date.now() - (S.briefAt || 0) > BRIEF_MS) {
-      S.briefAt = Date.now();
+    // 昨收 / 迷你走势（Open-Meteo brief）：自选 + 热门。
+    //
+    // ★ briefAt 是"下次允许拉的时刻"，不是"上次拉的时刻"：成功推 30 分钟，失败只推 2 分钟。
+    //   老写法不管成败都写 `S.briefAt = Date.now()`，于是一次失败（典型是 Open-Meteo
+    //   当天额度用光）就把整列涨跌幅锁死半小时 —— 全列表一片 "--"，期间一次重试都没有，
+    //   额度恢复了也不会自己好。
+    if (Date.now() >= (S.briefAt || 0)) {
       const need = ids.filter(i => API.Cities.get(i)).slice(0, BRIEF_MAX);
+      let got = 0;
       await runLimited(need, 4, async i => {
         const c = API.Cities.get(i);
-        try { const b = await API.OpenMeteo.brief(c.lat, c.lon, BRIEF_MS); if (b) S.briefs[i] = b; } catch (e) { }
+        try { const b = await API.OpenMeteo.brief(c.lat, c.lon, BRIEF_MS); if (b) { S.briefs[i] = b; got++; } } catch (e) { }
       });
+      S.briefAt = Date.now() + (got ? BRIEF_MS : 120000);
     }
     renderWatchlist(); renderHotlist(); renderIndexes();
     if (S.cur) { renderQuoteHead(); renderOrderbook(); renderTape(); }

@@ -10,7 +10,6 @@
 
   const TZ = 'Asia/Shanghai';
   const CMA = 'https://weather.cma.cn';
-  const OM_F = 'https://api.open-meteo.com/v1/forecast';
   const OM_A = 'https://archive-api.open-meteo.com/v1/archive';
 
   /* 本地代理探测：EXE / APK 外壳会注入 window.__TJS_LOCAL__。
@@ -46,6 +45,36 @@
   function failSet(key) { mem[key] = { t: Date.now(), v: null, bad: true }; }
 
   const inflight = {};
+
+  /* ───────── Open-Meteo 主机回退 ─────────
+   * 免费额度是**按主机名分桶**的：api.open-meteo.com 被限流（429
+   * "Daily API request limit exceeded"）时，historical-forecast-api.open-meteo.com
+   * 往往还是好的 —— 实测两者互不影响，而且后者参数与返回结构完全一致，
+   * 连 past_days + forecast_days 的未来段都照给（实测 past_days=92&forecast_days=16
+   * 返回 2026-07-06..2026-10-21，与主站等价）。
+   * 所以同一份数据挂两个主机，谁行用谁；把可用的那个记在 omHost，别每次都去撞墙。
+   * 缓存 key 带 `#h<idx>` —— 两台主机各存各的，否则一台的失败记录会把另一台也堵住。 */
+  const OM_F = 'https://api.open-meteo.com/v1/forecast';
+  const OM_F_ALT = 'https://historical-forecast-api.open-meteo.com/v1/forecast';
+  const OM_F_HOSTS = [OM_F, OM_F_ALT];
+  let omHost = 0;
+
+  /** 带主机回退的 Open-Meteo 取数。q 是 '?latitude=…' 那段查询串。 */
+  async function omGetJSON(q, opt) {
+    let lastErr = null;
+    for (let i = 0; i < OM_F_HOSTS.length; i++) {
+      const idx = (omHost + i) % OM_F_HOSTS.length;
+      try {
+        const d = await getJSON(OM_F_HOSTS[idx] + q, {
+          ttl: opt && opt.ttl,
+          key: ((opt && opt.key) || 'om' + q) + '#h' + idx
+        });
+        omHost = idx;              // 记住这台能用，下次先走它
+        return d;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('Open-Meteo 不可用');
+  }
 
   async function getJSON(url, opt) {
     opt = opt || {};
@@ -277,7 +306,7 @@
 
     /** 近期逐小时（含过去 92 天）+ 16 日预报 */
     async forecast(lat, lon, pastDays, fcstDays) {
-      const url = OM_F + '?latitude=' + lat + '&longitude=' + lon +
+      const q = '?latitude=' + lat + '&longitude=' + lon +
         '&hourly=temperature_2m,precipitation,relative_humidity_2m,wind_speed_10m,weather_code' +
         '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,sunrise,sunset' +
         // Open-Meteo 的风速默认单位是 km/h，而中国气象局给的是 m/s。
@@ -287,7 +316,7 @@
         '&past_days=' + (pastDays == null ? 92 : pastDays) +
         '&forecast_days=' + (fcstDays == null ? 16 : fcstDays) +
         '&timezone=' + encodeURIComponent(TZ);
-      const d = await getJSON(url, { ttl: 900000, key: 'f|' + lat + ',' + lon + '|' + pastDays + '|' + fcstDays });
+      const d = await omGetJSON(q, { ttl: 900000, key: 'f|' + lat + ',' + lon + '|' + pastDays + '|' + fcstDays });
       const h = this._unpack(d, 'temperature_2m', 'precipitation');
       h.humidity = (d.hourly && d.hourly.relative_humidity_2m) || [];
       h.wind = (d.hourly && d.hourly.wind_speed_10m) || [];
@@ -304,18 +333,18 @@
 
     /** 仅取最近 24 小时温度，用于指数条 sparkline */
     async mini(lat, lon) {
-      const url = OM_F + '?latitude=' + lat + '&longitude=' + lon +
+      const q = '?latitude=' + lat + '&longitude=' + lon +
         '&hourly=temperature_2m&past_days=1&forecast_days=1&timezone=' + encodeURIComponent(TZ);
-      const d = await getJSON(url, { ttl: 1800000, key: 'm|' + lat + ',' + lon });
+      const d = await omGetJSON(q, { ttl: 1800000, key: 'm|' + lat + ',' + lon });
       return ((d.hourly && d.hourly.temperature_2m) || []).slice(-26);
     },
 
     /** 轻量快照：昨收 / 今日开高低 / 当前 / 最近 24h 走势（行情列表与指数条用） */
     async brief(lat, lon, ttl) {
-      const url = OM_F + '?latitude=' + lat + '&longitude=' + lon +
+      const q = '?latitude=' + lat + '&longitude=' + lon +
         '&hourly=temperature_2m,precipitation&daily=weather_code,precipitation_sum' +
         '&past_days=2&forecast_days=1&timezone=' + encodeURIComponent(TZ);
-      const d = await getJSON(url, { ttl: ttl || 600000, key: 'b|' + lat + ',' + lon });
+      const d = await omGetJSON(q, { ttl: ttl || 600000, key: 'b|' + lat + ',' + lon });
       const h = (d && d.hourly) || {};
       const times = h.time || [], temps = h.temperature_2m || [], prec = h.precipitation || [];
       if (!times.length) return null;
@@ -601,7 +630,7 @@
       // 官方站号缺省时退回 Open-Meteo 当前值
       if (city.lat != null) {
         try {
-          const d = await getJSON(OM_F + '?latitude=' + city.lat + '&longitude=' + city.lon +
+          const d = await omGetJSON('?latitude=' + city.lat + '&longitude=' + city.lon +
             '&current=temperature_2m,apparent_temperature,precipitation,relative_humidity_2m,' +
             'wind_speed_10m,wind_direction_10m,surface_pressure,weather_code' +
             '&wind_speed_unit=ms' +          // 同上：默认 km/h，不指定会和气象局的 m/s 混着显示

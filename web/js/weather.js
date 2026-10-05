@@ -28,6 +28,15 @@
   const pick = (local, remote) => (LOCAL ? local : remote);
 
   const OM_F = pick('/api/om/v1/forecast', 'https://api.open-meteo.com/v1/forecast');
+  /* Open-Meteo 的免费额度是**按主机名分桶**的：api.open-meteo.com 被限流（429
+     "Daily API request limit exceeded"）时，historical-forecast-api.open-meteo.com
+     往往还是好的 —— 实测两者互不影响，而且后者参数与返回结构完全一致，
+     连 past_days + forecast_days 的未来段都照给（实测 past_days=92&forecast_days=16
+     返回 2026-07-06..2026-10-21）。主站挂了就换它，否则"分时/五日"的主线整条断掉，
+     页面上只剩一条 429 横幅。 */
+  const OM_F_ALT = 'https://historical-forecast-api.open-meteo.com/v1/forecast';
+  const OM_F_LIST = [OM_F, OM_F_ALT];
+  let omHost = 0;
   const OM_Q = pick('/api/om/v1/air-quality', 'https://air-quality-api.open-meteo.com/v1/air-quality');
   const NMC = pick('/api/nmc', 'https://typhoon.nmc.cn/weatherservice');
   const IMG = 'https://image.nmc.cn';
@@ -79,6 +88,21 @@
     } finally { clearTimeout(timer); }
   }
 
+  /** 带主机回退的 Open-Meteo 取数。q 是 '?latitude=…' 那段查询串。 */
+  async function jgetOm(q, ttl, key) {
+    let lastErr = null;
+    for (let i = 0; i < OM_F_LIST.length; i++) {
+      const idx = (omHost + i) % OM_F_LIST.length;
+      try {
+        // 缓存 key 带 `#h<idx>` —— 两台主机各存各的，否则一台的失败会把另一台也堵住
+        const d = await jget(OM_F_LIST[idx] + q, ttl, (key || 'om' + q) + '#h' + idx);
+        omHost = idx;              // 记住这台能用，下次先走它
+        return d;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('Open-Meteo 不可用');
+  }
+
   /* ═══════════════ 1. 逐小时天气（一个请求拿全） ═══════════════ */
   const HOURLY = [
     'temperature_2m', 'precipitation', 'precipitation_probability', 'rain', 'showers',
@@ -93,12 +117,12 @@
     async hourly(lat, lon, days, pastDays) {
       days = days || 3;
       pastDays = pastDays == null ? 1 : pastDays;
-      const url = OM_F + '?latitude=' + lat + '&longitude=' + lon +
+      const q = '?latitude=' + lat + '&longitude=' + lon +
         '&hourly=' + HOURLY +
         '&wind_speed_unit=ms' +
         '&past_days=' + pastDays + '&forecast_days=' + days +
         '&timezone=' + encodeURIComponent(TZ);
-      const d = await jget(url, 900000, 'wx2|' + lat + ',' + lon + '|' + days + '|' + pastDays);
+      const d = await jgetOm(q, 900000, 'wx2|' + lat + ',' + lon + '|' + days + '|' + pastDays);
       const h = (d && d.hourly) || {};
       const t = h.time || [];
       if (!t.length) throw new Error('逐小时数据为空');

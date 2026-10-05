@@ -293,6 +293,41 @@ Open-Meteo 免费档（非商业）的硬上限是**每分钟 600 次 / 每小�
 换一台设备、换一个网络出口，额度就是全新的一份。所以调试时千万别用
 `--virtual-time-budget` 长时间跑页面，那会把真实当天的额度一次性烧光。
 
+### 额度用光时的退路：换一台 Open-Meteo 主机
+
+免费额度是**按主机名分桶**的，这一点不看文档看不出来 —— 实测把
+`api.open-meteo.com` 打到 429 之后：
+
+| 主机 | 当时状态 |
+|---|---|
+| `api.open-meteo.com`（forecast） | **429** `Daily API request limit exceeded` |
+| `archive-api.open-meteo.com`（archive） | 200 |
+| `air-quality-api.open-meteo.com` | 200 |
+| `historical-forecast-api.open-meteo.com` | **200** |
+
+而 `historical-forecast-api.open-meteo.com/v1/forecast` 的**参数和返回结构跟主站完全一致**，
+连 `past_days` + `forecast_days` 那一段未来预报都照给（实测
+`past_days=92&forecast_days=16` 返回 `2026-07-06..2026-10-21`，与主站等价）。所以它就是
+一个免费的备份源。三处都加了主机回退，谁行用谁，并把可用的那台记下来（`omHost`），
+下次先走它，不必每次都去撞墙：
+
+- `web/js/api.js` 的 `omGetJSON(q, opt)` —— `brief` / `forecast` / `mini` / 实况回退都走它
+- `web/js/weather.js` 的 `jgetOm(q, ttl, key)` —— 逐小时那一个大请求走它
+- `server/app.py` 的 `om_passthrough()` —— 本地代理 / APK 那条路也照样回退
+
+缓存 key 末尾带 `#h<idx>`（两台主机各存各的），否则一台的失败记录会把另一台也堵住。
+
+写这段的起因值得记一笔：**429 期间页面的表现极具误导性**。中国气象局的数据全都正常
+（气温、湿度、风、气压、日 K 全部有值），只有 Open-Meteo 来的字段变成 `--`：
+自选/热门列表整列涨跌幅、平均风速、日出日落、5 天落差。看上去像"功能坏了"，
+实际上是二级源被限流、一级源好好的 —— 而主图和副图的横轴对齐、K 线形态这些
+"看起来最像坏掉"的部分反而完全正常。
+
+还有一个我自己埋的坑：`warmQuotes()` 里原本不管成败都写 `S.briefAt = Date.now()`，
+于是一次失败（比如当天额度用光）就把整列涨跌幅**锁死半小时**，期间一次重试都没有，
+额度恢复了也不会自己好。现在 `S.briefAt` 是"下次允许拉的时刻"：成功推 30 分钟，
+**失败只推 2 分钟**，能自己恢复。
+
 一个曾经踩过的坑：`OpenMeteo.archive()` 的缓存键漏了 `endDate`
 （原来是 `'a|' + lat + ',' + lon + '|' + startDate`）。同一 start、不同 end 的两次调用
 会互相命中缓存，第二次等于没发出去。目前只有一个调用点所以没暴露，但键该带上就带上。

@@ -193,19 +193,29 @@ def cn_search(q: str) -> list:
 
 # ----------------------------------------------------------------- Open-Meteo 透传
 OM_ALLOW = ("/v1/forecast", "/v1/archive", "/v1/air-quality")
+# Open-Meteo 的免费额度按主机名分桶：api.open-meteo.com 被限流时
+# historical-forecast-api.open-meteo.com 往往还是好的，参数与返回结构完全一致
+# （连 past_days + forecast_days 的未来段都照给）。所以主站失败就换它重试一次。
+OM_ALT = "https://historical-forecast-api.open-meteo.com"
 
 
 def om_passthrough(path: str, query: str) -> bytes:
     if path not in OM_ALLOW:
         raise ValueError("path not allowed")
     if path.endswith("archive"):
-        host = OM_A
+        hosts = [OM_A]
     elif path.endswith("air-quality"):
-        host = OM_AIR
+        hosts = [OM_AIR]
     else:
-        host = OM
-    url = host + path + ("?" + query if query else "")
-    return fetch_cached(url, 900, ref=None, timeout=30)
+        hosts = [OM, OM_ALT]
+    last = None
+    for host in hosts:
+        url = host + path + ("?" + query if query else "")
+        try:
+            return fetch_cached(url, 900, ref=None, timeout=30)
+        except Exception as e:      # 主站 429/超时 → 换备用站再试
+            last = e
+    raise last if last else RuntimeError("Open-Meteo 不可用")
 
 
 # ----------------------------------------------------------------- 气象局台风/预警透传
