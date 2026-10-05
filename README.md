@@ -245,10 +245,11 @@ python tools\push_github.py             # 建仓库 -> 传文件 -> 提交 -> �
 | 场景 | 怎么复现 | 结果 |
 | --- | --- | --- |
 | **本地代理**（APK / 本地调试） | `python server\app.py --port 8765` 然后 `python tools\smoke.py` | 20/20 端点 200 |
-| **GitHub Pages**（无代理、浏览器直连也失败） | 见下方"子路径复现" | 报价头部 / 日K / 五档盘口 / 自选全部正常，`window.__errs` 为空，走**静态预抓**这一级 |
+| **GitHub Pages**（无代理、浏览器直连） | 见下方"子路径复现" | 报价头部 / 日K / 未来 5 天高低温 / 逐时气温流水 / 自选全部正常；雷达、云图、降水预报、台风、预警、我附近六个功能页全部出图；`window.__errs` 为空。走**静态预抓**这一级 |
+| **APK 里的 Java 解析器**（本机没有设备也能测） | `python tools\test_apk_parser.py` | 25 项断言全过，见下方"没有手机怎么测 APK" |
 
 `?local=0` / `?local=1` 是专门为上面第二行加的开关 —— 在本地一条命令就能复现 Pages 的取数路径，
-不用真的等部署。截图见 `docs/screenshots/pages-static.png`。
+不用真的等部署。
 
 **子路径复现（重要）**：Pages 上线后站点在 `https://<user>.github.io/weather-exchange/`，
 是**带子路径**的，绝对路径 `/js/app.js` 这种写法会直接 404。所以 `web/` 里所有静态资源引用
@@ -265,7 +266,22 @@ python -m http.server 8767 --directory $root
 ```
 
 结果：`#qPrice 24.1`、`#qChange +1.2`、`#qPct +5.24%`、`#chartHint "MA5 21.9 …"`、
-28 个 `.stock-row`、8 个 canvas、`window.__errs` 为 `[]`。
+28 行预报、8 个 canvas、`window.__errs` 为 `[]`。
+
+## 没有手机怎么测 APK
+
+本机没有 `adb`、也没有连过任何安卓设备，所以"装到手机上"这一步没法自动化。
+退一步，**把最容易出错的那部分单独拎出来在 PC 上跑**：APK 里真正容易被改坏的，是
+`MainActivity` 里那些把中国天气网的文件解析成 JSON 的 Java 代码（正则、编码、`var` 前缀剥离）。
+
+- `tools\test_apk_parser.py` 直接 `subprocess` 调 `D:\Java\bin\javac` / `java`，把
+  `android\test\TjsParseTest.java` 编出来跑，喂进真实的抓取内容，**25 项断言**覆盖：
+  `var cityDZ101010100 ={...}` 的 `var` 剥离、GBK 解码、`sk_2d` / `dingzhi` / `calendar_new`
+  三种文件形态、`oot` 字段空缺、以及台风 JSONP 的双层括号。
+- `android\test\` 只进仓库、**不进 APK**（`build_apk.py` 的 `SKIP_ASSET` / 编译清单都不含它）。
+
+其余部分（WebView 装载、拦截器路由、签名）只能靠真机验证 —— 这一点在下面的
+「已知限制」里如实写着。
 
 ## 目录结构
 
