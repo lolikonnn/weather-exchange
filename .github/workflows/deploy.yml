@@ -45,16 +45,33 @@ jobs:
         continue-on-error: true      # 上游抽风不应阻断部署
 
       - name: 提交数据变化
+        # 这一步骤**必须不能失败**：提交预抓数据只是附带动作，真正目的是重新部署。
+        # 原来既没有 continue-on-error、push 前也不 rebase —— 推送触发的运行和 cron
+        # 触发的运行会同时想提交 web/data/official，后到的那个被
+        #   ! [rejected]  main -> main (fetch first)
+        # 拒绝，步骤失败 → 后面「放进安装包 / 配置 Pages / 打包静态站 / 部署」全部 skipped，
+        # 站点就停在旧版本。真实踩过：run #11（提交 edaa7a510b 上的定时运行）。
+        continue-on-error: true
         run: |
+          set -u
           git config user.name  "tjs-bot"
           git config user.email "tjs-bot@users.noreply.github.com"
           git add -A web/data/official
           if git diff --staged --quiet; then
             echo "官方数据无变化"
-          else
-            git commit -m "chore(data): 预抓中国天气网数据 $(date -u '+%Y-%m-%dT%H:%MZ')"
-            git push
+            exit 0
           fi
+          git commit -m "chore(data): 预抓中国天气网数据 $(date -u '+%Y-%m-%dT%H:%MZ')"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push; then
+              echo "预抓数据已推送"
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            echo "第 $i 次推送失败（多半是另一个运行抢先推了），重试…"
+            sleep $((i * 3))
+          done
+          echo "::warning::预抓数据连续 5 次推送失败，跳过提交，部署继续（数据下次再说）"
 
       - name: 把客户端安装包放进站点
         # dist/ 是本地构建好并提交进仓库的（仓库里没有 CI 能跑的 Android SDK / JDK 组合），
