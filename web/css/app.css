@@ -628,3 +628,49 @@ body{
   .wx-stage{padding:4px}
 }
 
+/* ───────────────── 主图全屏（⤢） ───────────────── */
+/* 把 .layout 钉到整个视口，顶栏/天气条/指数条/左右栏/状态栏/底部页签全部让位。
+   没有用 Fullscreen API：iOS Safari 至今不支持 Element.requestFullscreen，
+   而 CSS 方案在哪儿都能用，退出也只要再点一次或按 Esc。
+   这些区用 visibility 而不是 display 隐藏 —— 布局不发生跳变，
+   进出全屏前后 .pane-center 的量测结果一致，ECharts 只需要一次 resize。 */
+body.fullchart .layout{
+  position:fixed;inset:0;z-index:200;
+  grid-template-columns:minmax(0,1fr);
+  background:var(--panel);
+}
+body.fullchart .pane-left,
+body.fullchart .pane-right{display:none!important}
+body.fullchart .pane-center{display:flex!important;min-height:0}
+body.fullchart .topbar,
+body.fullchart .wx-bar,
+body.fullchart .index-strip,
+body.fullchart .statusbar,
+body.fullchart .mtabs{visibility:hidden}
+#btnFull.active{color:var(--accent);border-color:var(--accent)}
+
+@media (max-width:860px){
+  /* 手机地址栏收起/展开会改 100vh 的真实含义，dvh 跟随可视高度。
+     不支持 dvh 的浏览器会忽略这一行，退回上面那条 100vh。 */
+  body{height:100vh;height:100dvh}
+
+  /* 主图原来是 flex:1 + min-height:0 —— 在可视高度偏小的手机上会被压成 0 高，
+     表现就是"用手机竖屏打开网页时主图不显示"。给一个高度下限，
+     实在放不下时改由 .pane-center 内部滚动，而不是把图表压没。 */
+  .pane-center{overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .chart-box{flex:1 1 auto;min-height:170px}
+  .chart-box.sub{flex:0 0 132px;min-height:132px}
+
+  /* 底部页签始终压在图表之上；它自己不是滚动区，所以滚动时不会被带走 */
+  .mtabs{position:relative;z-index:90}
+
+  /* 触屏没有 hover：搜索结果里的 ☆ 必须看得见也点得着（原来只有 13px） */
+  .sr-item{padding:9px 10px}
+  .sr-item .sr-star{font-size:16px;padding:3px 9px;margin-left:4px}
+
+  /* 触屏横向滚动区：让浏览器知道这些区域可以横向平移，别把手势吃掉 */
+  .index-strip,#periodTabs,.tabbar,.wx-bar,.wx-seg,.strip-list,.wx-tylist{
+    touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;
+  }
+}
+

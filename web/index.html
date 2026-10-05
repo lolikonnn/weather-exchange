@@ -137,10 +137,11 @@
       <button data-period="fcst"   class="tab" title="未来 16 天的预报气温，用同样的蜡烛画法">预报K</button>
       <span class="tab-spacer"></span>
       <span class="chart-hint" id="chartHint"></span>
-      <button class="mini" id="btnZoomReset" title="重置缩放">⤢</button>
+      <button class="mini" id="btnZoomReset" title="重置视图（回到默认缩放）">🔄️</button>
+      <button class="mini" id="btnFull" title="全屏看主图（再点一次退出，也可按 Esc）">⤢</button>
     </div>
 
-    <div class="chart-box">
+    <div class="chart-box" id="mainChartBox">
       <div id="mainChart" class="chart"></div>
     </div>
 

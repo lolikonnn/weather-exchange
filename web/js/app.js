@@ -957,6 +957,15 @@
       toast(['默认排序', '按涨幅排序', '按名称排序'][S.sortMode]);
     });
     $('#btnZoomReset').addEventListener('click', () => { renderChart(); toast('视图已重置'); });
+    if ($('#btnFull')) $('#btnFull').addEventListener('click', toggleFullChart);
+    // 手机底部页签：以前只画了按钮、根本没绑事件，所以点了没反应。
+    // 用事件委托绑在 #mtabs 上，免得四个按钮各绑一次。
+    const mnav = $('#mtabs');
+    if (mnav) mnav.addEventListener('click', e => {
+      const b = e.target.closest('.mtab[data-mtab]');
+      if (!b) return;
+      setMTab(b.dataset.mtab);
+    });
     $('#btnGeo').addEventListener('click', () => locate(false));
     $('#search').addEventListener('input', doSearch);
     $('#search').addEventListener('keydown', searchKey);
@@ -980,6 +989,10 @@
     }, 120));
     document.addEventListener('keydown', e => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.key === 'Escape' && document.body.classList.contains('fullchart')) {
+        toggleFullChart();
+        return;
+      }
       const map = { 1: 'trend', 2: '5day', 3: 'day', 4: 'week', 5: 'month', 6: 'fcst' };
       if (map[e.key]) {
         S.period = map[e.key];
@@ -1002,6 +1015,22 @@
    * 自选(0) / 行情(1) / 盘口(2) / 明细(3) 四页，由 body[data-mtab] 决定显示哪栏。
    * 切到行情页时要 resize 图表 —— 隐藏期间 ECharts 量到的是 0 宽。
    */
+  /**
+   * 主图全屏：给 body 挂一个 fullchart 类，CSS 把 .layout 钉到整个视口
+   * （顶栏/天气条/指数条/左右栏/状态栏/底部页签都让位），然后必须 resize ——
+   * ECharts 只在自己被 resize 时才会重新量容器。
+   * 没用 Fullscreen API：iOS Safari 的 Element.requestFullscreen 至今不支持，
+   * 用 CSS 反而在哪都能用，退出也只要再点一次。
+   */
+  function toggleFullChart() {
+    const on = !document.body.classList.contains('fullchart');
+    document.body.classList.toggle('fullchart', on);
+    const b = $('#btnFull');
+    if (b) { b.classList.toggle('active', on); b.title = on ? '退出全屏（Esc）' : '全屏看主图'; }
+    setTimeout(() => { try { Chart.resize(); } catch (e) {} }, 60);
+    toast(on ? '已全屏，再点一次或按 Esc 退出' : '已退出全屏');
+  }
+
   function setMTab(i) {
     document.body.dataset.mtab = String(i);
     U.$$('#mtabs .mtab').forEach(b => b.classList.toggle('active', b.dataset.mtab === String(i)));

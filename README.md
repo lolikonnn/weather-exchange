@@ -70,6 +70,22 @@
 | --- | --- |
 | ![手机台风](docs/screenshots/phone-ty.png) | ![手机雷达](docs/screenshots/phone-radar.png) |
 
+| 手机竖屏 · 主图不再被压扁 | 手机竖屏 · 主图全屏（⤢） |
+| --- | --- |
+| ![手机主图](docs/screenshots/mobile-main.png) | ![手机全屏](docs/screenshots/mobile-full.png) |
+
+> 左：窄高屏上主图原来会被 `flex:1` 压成 **0 高**（页签下面直接就是副图，看起来像"主图不见了"），
+> 现在窄屏给 `.chart-box{flex:1 1 auto;min-height:170px}`，整页高度改为 `.pane-center` 内部滚动。
+> 右：全屏按钮用 **CSS**（`position:fixed;inset:0` + 隐藏其它块）而不是 Fullscreen API ——
+> iOS Safari 至今不支持 `Element.requestFullscreen`，CSS 方案在哪都能用，Esc 也能退出。
+
+| 日 K 日期轴不再被缩放条压住 |
+| --- |
+| ![日K日期轴](docs/screenshots/kline-axis.png) |
+
+> 日期标签原本落在 `H-26 .. H-14`，而 `dataZoom` 滑块的顶边在 `H-20`，两者正好重叠。
+> 把主 K 线图的 `grid(52,56,16,34)` 改成 `grid(52,56,16,46)`，把标签抬到滑块上方。
+
 > 桌面截图 1600×1000。手机截图是 **390×844 的真实手机视口**，不是把桌面版缩小出来的。
 > （注意：Windows 上无头 Chrome 会把 `--window-size=390,844` 悄悄夹到约 500px 宽，
 > 然后只截左边 390px —— 那样得到的"手机截图"右侧是被裁掉的，不能用。要量真手机布局，
@@ -386,6 +402,9 @@ python tools\push_github.py             # 建仓库 -> 传文件 -> 提交 -> �
 | **APK 里的 Java 解析器**（本机没有设备也能测） | `python tools\test_apk_parser.py` | 25 项断言全过，见下方"没有手机怎么测 APK" |
 | **区县级搜索 + 无站号城市出天气** | 搜「义乌」→ 点 `义乌市 \| 浙江省 · 金华市 \| 区县` | 报价头 `义乌市 \| p330782 · 浙江省 \| 无官方站号`，**17.3 ℃ -1.5 -7.98%**，体感/风向/气压齐全（Open-Meteo 按坐标补），主副图 canvas 各 1，`__errs = []` |
 | **区县级搜索覆盖面** | 同上搜索框，依次输 15 个词 | 义乌/敦煌/昆山/察隅/朝阳区/浦东新区/漠河/阿里 全部命中且省份正确；苏州 10 条、唐山 15 条（本地城市 + 下属区县） |
+| **手机竖屏 · 主图与底部页签** | 390×844 / 390×**700** 的 iframe 里量 `getBoundingClientRect()` | 两种高度下 `#mainChartBox` 都是 **170px**（修复前 700 高时会塌成 **0**）；依次点 mtab0..3 → `body[data-mtab]=0/1/2/3` 全部跟随（修复前**四个按钮都没绑事件**）；点 `#btnFull` → `body.fullchart`、`.layout` 变成 `0,0 390x844`，再点/Esc 退出 |
+| **日 K 日期轴不被缩放条遮挡** | `?p=day` 截图 | `07-01 … 10-17` 整行日期完整可见，滑块移到标签**下方**（`grid` 底边 34 → 46） |
+| **搜索结果直接加自选** | 搜索框输词 → 点结果行右侧的 ☆ | ☆ 变为 ★（这条功能一直有，本次只是把 13px 放大到 16px 并加了触屏内边距） |
 
 `?local=0` / `?local=1` 是专门为上面第二行加的开关 —— 在本地一条命令就能复现 Pages 的取数路径，
 不用真的等部署。
@@ -466,6 +485,22 @@ weather-fighter/
 
 ## 一些实现上的坑（给后来的人）
 
+- **手机窄高屏上 `flex:1` 的图表会塌成 0 高**：`.chart-box{flex:1;min-height:0}` 在高度不够时会被压到 0，
+  而隔壁 `.chart-box.sub{flex:0 0 132px}` 有固定 basis 照样可见 —— 表现就是"主图不见了，页签下面直接是副图"。
+  窄屏必须给 `.chart-box{flex:1 1 auto;min-height:170px}`，再把整页高度交给 `.pane-center` 内部滚动。
+- **底部页签不会自己工作**：`index.html` 里 `<button class="mtab" data-mtab="N">` 只是标记，
+  事件要在 `bind()` 里自己挂（`closest('.mtab[data-mtab]')` → `setMTab`）。当初只有 `setMTab`/`syncMTabs`
+  和深链分支，四个按钮全是死的 —— 而且不报错，只是点了没反应。
+- **ECharts 的 x 轴标签会被自己的 dataZoom 滑块盖住**：`grid(l,r,t,b)` 的 `b` 必须大于
+  滑块高度 + 底部间距。`{type:'slider', height:15, bottom:5}` 占 `H-20` 往上，而 `b=34` 时
+  标签正好落在 `H-26 .. H-14` —— 两者重叠。主 K 线图现在用 `b=46`。
+- **定位权限提示一辈子只弹一次**：`getCurrentPosition` 在页面加载时被无条件调用，用户随手点掉
+  或拉黑之后就永久 `denied`，再点"定位"也只是立刻失败（看起来像"点了没反应"）。
+  正确做法是加载时先用 `navigator.permissions.query({name:'geolocation'})` 判断，
+  只有 `granted` 才静默取数，其余一律等用户点那一行。
+- **全屏不要用 Fullscreen API**：iOS Safari 至今不支持 `Element.requestFullscreen`。
+  用 `body.fullchart .layout{position:fixed;inset:0}` + 把其它块 `visibility:hidden`
+  （不是 `display:none` —— 用 `visibility` 布局不跳变，进出全屏前后量测一致，ECharts 只需 resize 一次）。
 - **d8 崩在非静态内部类上**：`build-tools 34` 的 R8 8.2.2 处理"继承 `android.jar` 里某个类、
   且带合成 `this$0` 字段的嵌套类"时抛 `NullPointerException: Cannot invoke "String.length()"`。
   必须把 `WebViewClient` 子类写成 `private static class` 并持有外部引用。javac 也要用 `--release 8`

@@ -301,7 +301,10 @@
     return {
       animation: false,
       backgroundColor: C.bg,
-      grid: grid(52, 56, 16, 34),
+      // bottom 从 34 放到 46：下面还有一条 height:15/bottom:5 的 dataZoom 滑块，
+      // 原来的 34 让 x 轴日期正好压在滑块上（用户截图里"日期被遮挡显示不完全"）。
+      // 轴标签从 grid 底边再往下约 8~20px，滑块顶边在 H-19，留出 6px 余量。
+      grid: grid(52, 56, 16, 46),
       tooltip: Object.assign({}, tooltipBase, { formatter: klineTip(bars, xs, S, metric) }),
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       xAxis: [{
