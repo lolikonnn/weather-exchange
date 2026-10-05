@@ -88,52 +88,61 @@
   ].join(',');
 
   const Weather = {
-    /** 当前城市的逐小时气象要素。解析失败抛异常，调用方自己兜。 */
-    async hourly(lat, lon, days) {
+    /** 当前城市的逐小时气象要素。解析失败抛异常，调用方自己兜。
+        pastDays 决定往回拉多久 —— 副图要能画"日K/周K/月K"，就得有几个月的历史。 */
+    async hourly(lat, lon, days, pastDays) {
       days = days || 3;
+      pastDays = pastDays == null ? 1 : pastDays;
       const url = OM_F + '?latitude=' + lat + '&longitude=' + lon +
         '&hourly=' + HOURLY +
         '&wind_speed_unit=ms' +
-        '&past_days=1&forecast_days=' + days +
+        '&past_days=' + pastDays + '&forecast_days=' + days +
         '&timezone=' + encodeURIComponent(TZ);
-      const d = await jget(url, 900000, 'wx|' + lat + ',' + lon + '|' + days);
+      const d = await jget(url, 900000, 'wx2|' + lat + ',' + lon + '|' + days + '|' + pastDays);
       const h = (d && d.hourly) || {};
       const t = h.time || [];
       if (!t.length) throw new Error('逐小时数据为空');
-      // 从"现在"往前留 3 小时，方便看刚刚发生了什么
+      // "现在"在数组里的下标。past_days 拉长以后它不再固定是 24，所以显式算出来
+      // 交给 series() 用。
+      // 注意这里**不再截断** —— 返回完整数组，series() 按周期自己切，
+      // window() 也会重新定位"现在"，向后兼容。
       const now = Date.now() - 3 * 3600000;
       let i0 = 0;
       for (let i = 0; i < t.length; i++) {
         if (new Date(t[i].replace(' ', 'T') + ':00+08:00').getTime() >= now) { i0 = Math.max(0, i - 1); break; }
       }
-      const cut = a => (a || []).slice(i0, i0 + 24 * days);
       return {
         src: 'Open-Meteo',
-        time: t.slice(i0, i0 + 24 * days),
-        temp: cut(h.temperature_2m),
-        precip: cut(h.precipitation).map(v => v || 0),
-        prob: cut(h.precipitation_probability).map(v => (v == null ? 0 : v)),
-        wind: cut(h.wind_speed_10m),
-        windDir: cut(h.wind_direction_10m),
-        gust: cut(h.wind_gusts_10m),
-        cloud: cut(h.cloud_cover),
-        cloudLow: cut(h.cloud_cover_low),
-        cloudMid: cut(h.cloud_cover_mid),
-        cloudHigh: cut(h.cloud_cover_high),
-        rh: cut(h.relative_humidity_2m),
-        uv: cut(h.uv_index),
-        vis: cut(h.visibility),
-        dew: cut(h.dew_point_2m),
-        wcode: cut(h.weather_code)
+        time: t, i0: i0,
+        temp: h.temperature_2m || [],
+        precip: (h.precipitation || []).map(v => v || 0),
+        prob: (h.precipitation_probability || []).map(v => (v == null ? 0 : v)),
+        wind: h.wind_speed_10m || [],
+        windDir: h.wind_direction_10m || [],
+        gust: h.wind_gusts_10m || [],
+        cloud: h.cloud_cover || [],
+        cloudLow: h.cloud_cover_low || [],
+        cloudMid: h.cloud_cover_mid || [],
+        cloudHigh: h.cloud_cover_high || [],
+        rh: h.relative_humidity_2m || [],
+        uv: h.uv_index || [],
+        vis: h.visibility || [],
+        dew: h.dew_point_2m || [],
+        wcode: h.weather_code || []
       };
     },
 
-    /** 空气质量逐小时 */
-    async air(lat, lon) {
+    /** 空气质量逐小时（同样支持往回拉，副图的"空气"也要能看日K）
+        坑：air-quality 接口**不接受 past_days 与 forecast_days 同时出现** ——
+        两个都给会 400 Bad Request（实测 past_days=92&forecast_days=16 → 400，
+        而只给 past_days=92 → 200，自带 92 天历史 + 5 天预报）。所以这里只给 past_days。 */
+    async air(lat, lon, pastDays) {
+      pastDays = pastDays == null ? 1 : pastDays;
       const url = OM_Q + '?latitude=' + lat + '&longitude=' + lon +
-        '&hourly=pm10,pm2_5,us_aqi,ozone,nitrogen_dioxide&forecast_days=3' +
+        '&hourly=pm10,pm2_5,us_aqi,ozone,nitrogen_dioxide' +
+        '&past_days=' + pastDays +
         '&timezone=' + encodeURIComponent(TZ);
-      const d = await jget(url, 1800000, 'air|' + lat + ',' + lon);
+      const d = await jget(url, 1800000, 'air3|' + lat + ',' + lon + '|' + pastDays);
       const h = (d && d.hourly) || {};
       return {
         src: 'Open-Meteo CAMS',
@@ -150,9 +159,12 @@
       const cur = this._wx[city.id];
       if (cur && Date.now() - cur.t < 900000) return cur;
       const out = { t: Date.now(), city: city, hourly: null, air: null, err: null };
-      try { out.hourly = await this.hourly(city.lat, city.lon, 3); }
+      // 92 天历史 + 16 天预报：副图要画月K就得有 24 个月……
+      // 实际取 92 天（够画日K/周K，月K会只剩 3 个点，所以月K在副图上隐藏），
+      // 再长会让这次请求的 JSON 大到手机上难接受。
+      try { out.hourly = await this.hourly(city.lat, city.lon, 16, 92); }
       catch (e) { out.err = String(e.message || e); }
-      try { out.air = await this.air(city.lat, city.lon); } catch (e) { /* 空气是加分项，失败不影响主图 */ }
+      try { out.air = await this.air(city.lat, city.lon, 92); } catch (e) { /* 空气是加分项，失败不影响主图 */ }
       this._wx[city.id] = out;
       return out;
     },
@@ -167,16 +179,61 @@
           是 404。所以下面前缀一律用 getUTC* 取值，Date 对象本身仍是真实时刻，
           显示的时候用本地 getter 就自动是北京时间。
 
-       ② 华东 AECN **没有 small/ 档**（只有原图，约 665 KB），
-          全国 ACHN 才有 small/（约 200 KB）。所以 small 只对 ACHN 用。 */
+       ② **只有全国 ACHN 有 small/ 档**（约 200 KB），其余七个大区
+          （东北/华北/华东/华南/华中/西北/西南）**只有原图**，每帧 479–960 KB。
+          所以 small 只对 ACHN 用；别的区域一律走原图，靠少取几帧控制流量。 */
 
-    /** 某个 6 分钟整点的雷达拼图地址。region: ACHN=全国, AECN=华东 */
+    /** 雷达八大区。城市级雷达官方没有发布，能拿到的最细粒度就是这八个大区。 */
+    RADAR_REGIONS: [
+      { k: 'ACHN', n: '全国' }, { k: 'ANEC', n: '东北' }, { k: 'ANCN', n: '华北' },
+      { k: 'AECN', n: '华东' }, { k: 'ACCN', n: '华中' }, { k: 'ASCN', n: '华南' },
+      { k: 'ANWC', n: '西北' }, { k: 'ASWC', n: '西南' }
+    ],
+
+    /** 省 -> 雷达大区。打开雷达时按当前城市所在省自动选中对应大区。 */
+    PROV_REGION: {
+      '黑龙江': 'ANEC', '吉林': 'ANEC', '辽宁': 'ANEC',
+      '北京': 'ANCN', '天津': 'ANCN', '河北': 'ANCN', '山西': 'ANCN', '内蒙古': 'ANCN',
+      '上海': 'AECN', '江苏': 'AECN', '浙江': 'AECN', '安徽': 'AECN', '福建': 'AECN',
+      '江西': 'AECN', '山东': 'AECN', '台湾': 'AECN',
+      '河南': 'ACCN', '湖北': 'ACCN', '湖南': 'ACCN',
+      '广东': 'ASCN', '广西': 'ASCN', '海南': 'ASCN', '香港': 'ASCN', '澳门': 'ASCN',
+      '陕西': 'ANWC', '甘肃': 'ANWC', '青海': 'ANWC', '宁夏': 'ANWC', '新疆': 'ANWC',
+      '重庆': 'ASWC', '四川': 'ASWC', '贵州': 'ASWC', '云南': 'ASWC', '西藏': 'ASWC'
+    },
+
+    /** 城市 -> 该城市对应的雷达大区代号（查不到就回落到全国） */
+    regionFor(city) {
+      if (!city) return 'ACHN';
+      const p = String(city.prov || city.province || '').replace(/省|市|自治区|回族|维吾尔|壮族|特别行政区/g, '');
+      return this.PROV_REGION[p] || this.PROV_REGION[String(city.prov || '').slice(0, 2)] || 'ACHN';
+    },
+
+    /** 某个 6 分钟整点的雷达拼图地址。region 取 RADAR_REGIONS 里的代号 */
     radarUrl(region, dt, size) {
       const y = dt.getUTCFullYear(), mo = pad2(dt.getUTCMonth() + 1), da = pad2(dt.getUTCDate());
       const ts = '' + y + mo + da + pad2(dt.getUTCHours()) + pad2(dt.getUTCMinutes()) + '00000';
-      const small = (size !== 'full') && region !== 'AECN';
+      // 见上面 ②：只有 ACHN 有 small/ 档，别的区域请求 small/ 会 404
+      const small = (size !== 'full') && region === 'ACHN';
       return IMG + '/product/' + y + '/' + mo + '/' + da + '/RDCP/' + (small ? 'small/' : '') +
         'SEVP_AOC_RDCP_SLDAS3_ECREF_' + region + '_L88_PI_' + ts + '.PNG';
+    },
+
+    /** FY-4B 真彩云图（比红外 WXCL 好看，用于"卫星云图"页的第二个产品）。 */
+    satColorUrl(dt) {
+      const y = dt.getUTCFullYear(), m = pad2(dt.getUTCMonth() + 1), d = pad2(dt.getUTCDate());
+      const ts = '' + y + m + d + pad2(dt.getUTCHours()) + pad2(dt.getUTCMinutes()) + '00000';
+      return IMG + '/product/' + y + '/' + m + '/' + d + '/WXBL/medium/' +
+        'SEVP_NSMC_WXBL_FY4B_ETCC_ACHN_LNO_PY_' + ts + '.JPG';
+    },
+
+    /** 1 小时降水实况（"降水预报"页的第二个产品：预报 + 实况对照）。
+        注意这是 PB_ 前缀、小写 .jpg、15 位时次戳；24 小时预报图是 P9_ + 17 位。 */
+    precipNowUrl(dt) {
+      const y = dt.getUTCFullYear(), m = pad2(dt.getUTCMonth() + 1), d = pad2(dt.getUTCDate());
+      const ts = '' + y + m + d + pad2(dt.getUTCHours()) + pad2(dt.getUTCMinutes()) + '00000';
+      return IMG + '/product/' + y + '/' + m + '/' + d + '/STFC/medium/' +
+        'SEVP_NMC_STFC_SFER_ER1_ACHN_L88_PB_' + ts + '.jpg';
     },
 
     /** 卫星云图（国家卫星气象中心 FY 系列，产品代号 WXCL）。
@@ -229,9 +286,11 @@
       return out;
     },
 
-    /** 卫星云图：从最近的一个 :15 / :45 世界时时次往回凑 n 帧 */
-    async probeSat(n, onStep) {
+    /** 卫星云图：从最近的一个 :15 / :45 世界时时次往回凑 n 帧。
+        kind='ir' 红外云图 WXCL ｜ 'rgb' FY-4B 真彩云图 WXBL */
+    async probeSat(n, onStep, kind) {
       n = n || 12;
+      const rgb = kind === 'rgb';
       const now = new Date();
       const base = new Date(now.getTime());
       base.setUTCMinutes(base.getUTCMinutes() < 45 ? 15 : 45, 0, 0);
@@ -239,7 +298,7 @@
       for (let k = 0; k < n * 4 && out.length < n; k++) {
         const dt = new Date(base.getTime() - k * 1800000);
         if (dt.getTime() > now.getTime()) continue;
-        const url = this.satUrl(dt);
+        const url = rgb ? this.satColorUrl(dt) : this.satUrl(dt);
         /* eslint-disable no-await-in-loop */
         const ok = await this._tryImg(url);
         if (ok) out.push({ url: url, t: dt, f: true });
@@ -249,18 +308,24 @@
       return out;
     },
 
-    /** 全国降水量预报图：从最近的一个 00 / 12 世界时时次往回凑 n 张 */
-    async probePrecip(n, onStep) {
+    /** 降水图两种：
+        kind='fcst' 未来 24 小时**预报**（中央气象台画的，每 12 小时一张，00/12 UTC）
+        kind='now'  最近 1 小时**实况**（每小时一张，整点） */
+    async probePrecip(n, onStep, kind) {
       n = n || 6;
+      const nowKind = kind === 'now';
       const now = new Date();
       const base = new Date(now.getTime());
       base.setUTCMinutes(0, 0, 0);
-      if (base.getUTCHours() < 12) base.setUTCHours(0); else base.setUTCHours(12);
+      let step = 43200000;
+      if (nowKind) step = 3600000;
+      else if (base.getUTCHours() < 12) base.setUTCHours(0);
+      else base.setUTCHours(12);
       const out = [];
       for (let k = 0; k < n * 3 && out.length < n; k++) {
-        const dt = new Date(base.getTime() - k * 43200000);
+        const dt = new Date(base.getTime() - k * step);
         if (dt.getTime() > now.getTime()) continue;
-        const url = this.precipUrl(dt);
+        const url = nowKind ? this.precipNowUrl(dt) : this.precipUrl(dt);
         /* eslint-disable no-await-in-loop */
         const ok = await this._tryImg(url);
         if (ok) out.push({ url: url, t: dt, f: true });
@@ -402,13 +467,150 @@
       };
     },
 
+    /* ═══════════ 7.5 副图按周期出数（分时 / 五日 / 日K / 周K / 月K / 预报K） ═══════════
+
+       原来 drawSub 里写死 `window(wx.hourly, 48)` —— 不管选哪个周期都只画
+       "从现在起 48 小时"（48 根柱子、每根 1 小时），所以用户会觉得
+       "降水/风/云量/空气的数据太少、间隔太长"。实际上逐小时数组本身横跨
+       past_days+forecast_days 天，只要按周期重新分桶聚合就行，不用再发请求。
+
+       聚合口径按物理量该有的口径选，不是一律取平均：
+         降水量      窗口内 **求和**（一天的雨量 = 各小时之和）
+         降水概率    窗口内 **最大**（这一天下雨的可能性）
+         风速/阵风   窗口内 **最大**（这一天风最大的时候）
+         云量        窗口内 **平均**
+         PM2.5/AQI   窗口内 **平均**
+         气温        窗口内 **平均**
+       桶的边界用**当地时间**（Open-Meteo 已按时区返回本地时间字符串）。 */
+    series(hourly, air, name, period) {
+      period = period || 'trend';
+      if (!hourly || !hourly.time || !hourly.time.length) return null;
+
+      // 分时就是"今天 24 小时"，交给 window()，它就是为这个场景写的
+      if (period === 'trend') {
+        const w = this.window(hourly, 24);
+        if (w) { w.mode = 'hour'; w.span = '今天 · 逐小时'; }
+        return w;
+      }
+
+      const T = hourly.time;
+      const dayStr = t => String(t).slice(0, 10);
+      const fmt = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+      const dayAdd = (ds, n) => {
+        const p = ds.split('-'), d = new Date(+p[0], +p[1] - 1, +p[2]);
+        d.setDate(d.getDate() + n); return fmt(d);
+      };
+      const weekStart = ds => {
+        const p = ds.split('-'), d = new Date(+p[0], +p[1] - 1, +p[2]);
+        d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return fmt(d);
+      };
+      const today = dayStr(T[hourly.i0] || T[T.length - 1]);
+
+      // 空气质量是另一个请求，起止时刻不一定对齐 —— 按时间字符串查表对齐
+      const aIdx = {};
+      if (air && air.time) for (let i = 0; i < air.time.length; i++) aIdx[air.time[i]] = i;
+      const airP = (k, t) => {
+        const i = aIdx[t];
+        if (i == null) return null;
+        const v = (air[k] || [])[i];
+        return v == null ? null : v;
+      };
+
+      // 每个周期：取数窗口 + 分桶键（keyOf=null 表示不聚合，保持逐小时）
+      let from, to, keyOf, mode, span;
+      if (period === '5day') {
+        // 需求：天气预报最重要的是"预报"，所以五日 = 昨天 → 未来第三天
+        from = dayAdd(today, -1); to = dayAdd(today, 3);
+        keyOf = null; mode = 'hour'; span = '昨天 → 未来三天 · 逐小时';
+      } else if (period === 'day') {
+        from = dayAdd(today, -59); to = today;
+        keyOf = dayStr; mode = 'day'; span = '最近 60 天 · 逐日';
+      } else if (period === 'week') {
+        from = dayAdd(today, -363); to = today;
+        keyOf = t => weekStart(dayStr(t)); mode = 'week'; span = '最近 52 周 · 逐周';
+      } else if (period === 'month') {
+        const p = today.split('-'), d = new Date(+p[0], +p[1] - 1, 1);
+        d.setMonth(d.getMonth() - 23); from = fmt(d); to = today;
+        keyOf = t => dayStr(t).slice(0, 7); mode = 'month'; span = '最近 24 个月 · 逐月';
+      } else {                                   // fcst 预报K
+        from = today; to = dayAdd(today, 15);
+        keyOf = dayStr; mode = 'day'; span = '未来 16 天 · 逐日';
+      }
+
+      // 逐小时 -> 分桶
+      const buckets = [], byKey = {};
+      for (let i = 0; i < T.length; i++) {
+        const ds = dayStr(T[i]);
+        if (ds < from || ds > to) continue;
+        const k = keyOf ? keyOf(T[i]) : null;
+        let b;
+        if (k == null) {
+          b = { label: T[i].slice(5, 16).replace('T', ' ').replace('-', '/'), rows: [] };
+          buckets.push(b);
+        } else {
+          b = byKey[k];
+          if (!b) {
+            b = byKey[k] = {
+              label: (mode === 'month' ? k.replace('-', '/') : k.slice(5).replace('-', '/')),
+              rows: []
+            };
+            buckets.push(b);
+          }
+        }
+        b.rows.push({
+          temp: hourly.temp[i], precip: hourly.precip[i], prob: hourly.prob[i],
+          wind: hourly.wind[i], gust: hourly.gust[i], windDir: hourly.windDir[i],
+          cloud: hourly.cloud[i], cloudLow: hourly.cloudLow[i],
+          cloudMid: hourly.cloudMid[i], cloudHigh: hourly.cloudHigh[i],
+          pm25: airP('pm25', T[i]), aqi: airP('aqi', T[i])
+        });
+      }
+      if (!buckets.length) return null;
+
+      const agg = (rows, k, how) => {
+        const a = rows.map(r => r[k]);
+        if (how === 'sum') { let s = 0; a.forEach(v => { s += (v || 0); }); return +s.toFixed(1); }
+        if (how === 'max') { let m = null; a.forEach(v => { if (v != null && (m == null || v > m)) m = v; }); return m; }
+        let s = 0, n = 0; a.forEach(v => { if (v != null) { s += v; n++; } });
+        return n ? +(s / n).toFixed(1) : null;
+      };
+      // 主导风向：取风最大那一刻的风向（角度直接取平均是错的）
+      const dirAt = rows => {
+        let bd = null, bw = -1;
+        rows.forEach(r => { if (r.wind != null && r.wind > bw) { bw = r.wind; bd = r.windDir; } });
+        return bd;
+      };
+
+      const out = {
+        mode: mode, span: span, label: [], temp: [], precip: [], prob: [],
+        wind: [], gust: [], windDir: [], cloud: [], cloudLow: [], cloudMid: [],
+        cloudHigh: [], pm25: [], aqi: []
+      };
+      buckets.forEach(b => {
+        out.label.push(b.label);
+        out.temp.push(agg(b.rows, 'temp', 'mean'));
+        out.precip.push(agg(b.rows, 'precip', 'sum'));
+        out.prob.push(agg(b.rows, 'prob', 'max'));
+        out.wind.push(agg(b.rows, 'wind', 'max'));
+        out.gust.push(agg(b.rows, 'gust', 'max'));
+        out.windDir.push(dirAt(b.rows));
+        out.cloud.push(agg(b.rows, 'cloud', 'mean'));
+        out.cloudLow.push(agg(b.rows, 'cloudLow', 'mean'));
+        out.cloudMid.push(agg(b.rows, 'cloudMid', 'mean'));
+        out.cloudHigh.push(agg(b.rows, 'cloudHigh', 'mean'));
+        out.pm25.push(agg(b.rows, 'pm25', 'mean'));
+        out.aqi.push(agg(b.rows, 'aqi', 'mean'));
+      });
+      return out;
+    },
+
     /** 副图定义表：名字 -> {标题, 单位, 数据源} */
     SUBS: [
       { k: 'range',  n: '温差',   tip: '每天一根柱子，柱子越高说明那天忽冷忽热（最高温与最低温的差）' },
-      { k: 'precip', n: '降水',   tip: '未来每小时的降水量（柱子）和下雨概率（黄线）' },
-      { k: 'wind',   n: '风',     tip: '每小时的风速（柱子）、阵风（虚线）和风向（箭头指着风吹去的方向）' },
-      { k: 'cloud',  n: '云量',   tip: '总云量（白线）以及低云/中云/高云各占多少' },
-      { k: 'air',    n: '空气',   tip: '空气质量指数 AQI 与 PM2.5 浓度' }
+      { k: 'precip', n: '降水',   tip: '降水量（柱子）和下雨概率（黄线）。跟着上面的周期走：分时看小时、日K看天、周K看周' },
+      { k: 'wind',   n: '风',     tip: '风速（柱子）、阵风（虚线）和风向（箭头）。跟着周期走：日K取当天最大风，周K取当周最大风' },
+      { k: 'cloud',  n: '云量',   tip: '总云量（白线）以及低云/中云/高云各占多少。跟着周期走，按窗口取平均' },
+      { k: 'air',    n: '空气',   tip: '空气质量指数 AQI 与 PM2.5 浓度。跟着周期走，按窗口取平均' }
     ],
 
     isWeatherSub(k) { return this.SUBS.some(s => s.k === k); }

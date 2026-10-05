@@ -163,19 +163,13 @@
     return o;
   }
 
-  /** 空气：柱子＝PM2.5，线＝AQI */
-  function optAir(air, TH) {
-    if (!air || !air.time || !air.time.length) {
+  /** 空气：柱子＝PM2.5，线＝AQI。吃 series() 的输出，所以跟着周期走 */
+  function optAir(s, TH) {
+    if (!s || !s.label || !s.label.length || !(s.aqi || []).some(v => v != null)) {
       return { title: { text: '空气质量数据暂不可用', left: 'center', top: 'middle', textStyle: { color: TH.dim, fontSize: 12 } } };
     }
-    const now = Date.now() - 3600000;
-    let i0 = 0;
-    for (let i = 0; i < air.time.length; i++) {
-      if (new Date(air.time[i].replace(' ', 'T') + ':00+08:00').getTime() >= now) { i0 = i; break; }
-    }
-    const e = i0 + 48;
-    const xs = air.time.slice(i0, e).map(mdhm);
-    const pm = air.pm25.slice(i0, e), aq = air.aqi.slice(i0, e);
+    const xs = s.label;
+    const pm = s.pm25 || [], aq = s.aqi || [];
     const o = base(TH, xs, 'AQI');
     o.tooltip.formatter = ps => {
       const i = ps[0].dataIndex;
@@ -210,18 +204,23 @@
   /* ═══════════════ 2. 全屏功能页 ═══════════════ */
 
   const WXUI = {
-    /** 副图总入口：name ∈ precip|wind|cloud|air，其它名字返回 false 交回 chart.js */
-    drawSub(name, wx, air) {
+    /** 副图总入口：name ∈ precip|wind|cloud|air，其它名字返回 false 交回 chart.js。
+        period 是主图的周期（trend|5day|day|week|month|fcst），副图跟着它走。 */
+    drawSub(name, wx, air, period) {
       if (!W.isWeatherSub(name) || name === 'range') return false;
       const ec = subEc();
       if (!ec) return false;
       const TH = theme();
-      const w = wx && wx.hourly ? W.window(wx.hourly, name === 'air' ? 48 : 48) : null;
+      // 原来这里写死 window(wx.hourly, 48) —— 不管选哪个周期都只画 48 根小时柱，
+      // 所以用户会觉得"降水/风/云量/空气的数据太少、间隔太长"。
+      // 现在交给 Weather.series() 按周期重新分桶聚合（日K按天、周K按周…）。
+      const s = wx && wx.hourly ? W.series(wx.hourly, air, name, period) : null;
       let opt;
-      if (name === 'precip') opt = w ? optPrecip(w, TH) : msg('暂无逐小时数据', TH);
-      else if (name === 'wind') opt = w ? optWind(w, TH) : msg('暂无逐小时数据', TH);
-      else if (name === 'cloud') opt = w ? optCloud(w, TH) : msg('暂无逐小时数据', TH);
-      else opt = optAir(wx && wx.air, TH);
+      if (name === 'air') opt = optAir(s, TH);
+      else if (name === 'precip') opt = s ? optPrecip(s, TH) : msg('暂无数据', TH);
+      else if (name === 'wind') opt = s ? optWind(s, TH) : msg('暂无数据', TH);
+      else if (name === 'cloud') opt = s ? optCloud(s, TH) : msg('暂无数据', TH);
+      else opt = msg('暂无数据', TH);
       ec.setOption(opt, true);
       return true;
     },
@@ -230,12 +229,20 @@
     _play: null,
 
     async openRadar(region) {
-      region = region || 'ACHN';
+      // 城市级雷达官方没有单独发布，能拿到的最细粒度就是这八个大区。
+      // 没指定过区域时，按当前城市所在省自动选中（广州→华南、北京→华北…）。
+      if (!region) {
+        const app = window.__APP;
+        region = this._radarReg || W.regionFor(app && app.S && app.S.cur);
+      }
+      this._radarReg = region;
+      const rname = (W.RADAR_REGIONS.filter(x => x.k === region)[0] || {}).n || region;
       const body = $('#wxRadarBody'), sub = $('#wxRadarSub');
       if (!body) return;
       body.innerHTML = '<div class="wx-load">正在探测最近有货的雷达帧…</div>';
-      // 华东只有原图档（每帧约 665 KB），少取几帧免得一次下十兆
-      const want = region === 'AECN' ? 10 : 16;
+      // 只有全国 ACHN 有 small/ 档（约 200 KB）；其余七个大区每帧 479–960 KB，
+      // 所以少取几帧，免得一次下十兆。
+      const want = region === 'ACHN' ? 16 : 8;
       let frames;
       try {
         frames = await W.probeRadar(region, want, (got, total) => {
@@ -246,35 +253,50 @@
         body.innerHTML = '<div class="wx-load">暂时取不到雷达回波（中国气象局该时段没有发布，或本机网络不通）</div>';
         return;
       }
-      renderPlayer(body, sub, frames, '雷达回波', {
-        regions: [['ACHN', '全国'], ['AECN', '华东']], region: region,
+      renderPlayer(body, sub, frames, '雷达回波 · ' + rname, {
+        regions: W.RADAR_REGIONS.map(r => [r.k, r.n]), region: region,
         onRegion: r => WXUI.openRadar(r)
       });
     },
 
-    async openSat() {
+    /** 卫星云图：红外（WXCL）/ FY-4B 真彩（WXBL）两种产品可切 */
+    _satKind: 'ir',
+    async openSat(kind) {
+      kind = kind || this._satKind || 'ir';
+      this._satKind = kind;
       const body = $('#wxSatBody'), sub = $('#wxSatSub');
       if (!body) return;
       body.innerHTML = '<div class="wx-load">正在探测最近的卫星云图…</div>';
       let frames;
       try {
-        frames = await W.probeSat(12, (got, total) => { if (sub) sub.textContent = '已找到 ' + got + ' 帧'; });
+        frames = await W.probeSat(12, (got, total) => { if (sub) sub.textContent = '已找到 ' + got + ' 帧'; }, kind);
       } catch (e) { body.innerHTML = '<div class="wx-load">云图获取失败：' + esc(e.message) + '</div>'; return; }
       if (!frames.length) { body.innerHTML = '<div class="wx-load">暂时取不到卫星云图</div>'; return; }
-      renderPlayer(body, sub, frames, '卫星云图', {});
+      renderPlayer(body, sub, frames, kind === 'rgb' ? '卫星云图 · FY-4B 真彩' : '卫星云图 · 风云二号红外', {
+        regions: [['ir', '红外云图'], ['rgb', '真彩云图']], region: kind,
+        onRegion: k => WXUI.openSat(k)
+      });
     },
 
-    /* ── 全国降水量预报图（中央气象台，每 12 小时一张） ── */
-    async openPrecip() {
+    /* ── 降水：中央气象台未来 24 小时预报图 / 最近 1 小时实况 ── */
+    _precipKind: 'fcst',
+    async openPrecip(kind) {
+      kind = kind || this._precipKind || 'fcst';
+      this._precipKind = kind;
       const body = $('#wxPrecipBody'), sub = $('#wxPrecipSub');
       if (!body) return;
-      body.innerHTML = '<div class="wx-load">正在探测最新的降水预报图…</div>';
+      const nowKind = kind === 'now';
+      body.innerHTML = '<div class="wx-load">' + (nowKind ? '正在探测最近 1 小时降水实况…' : '正在探测最新的降水预报图…') + '</div>';
       let frames;
+      const n = nowKind ? 8 : 6;
       try {
-        frames = await W.probePrecip(6, (got, total) => { if (sub) sub.textContent = '已找到 ' + got + ' 张'; });
-      } catch (e) { body.innerHTML = '<div class="wx-load">降水预报获取失败：' + esc(e.message) + '</div>'; return; }
-      if (!frames.length) { body.innerHTML = '<div class="wx-load">暂时取不到降水预报图</div>'; return; }
-      renderPlayer(body, sub, frames, '全国降水量预报图', {});
+        frames = await W.probePrecip(n, (got, total) => { if (sub) sub.textContent = '已找到 ' + got + ' 张'; }, kind);
+      } catch (e) { body.innerHTML = '<div class="wx-load">降水数据获取失败：' + esc(e.message) + '</div>'; return; }
+      if (!frames.length) { body.innerHTML = '<div class="wx-load">暂时取不到降水图</div>'; return; }
+      renderPlayer(body, sub, frames, nowKind ? '全国 1 小时降水实况' : '全国降水量预报图（未来 24 小时）', {
+        regions: [['fcst', '未来 24 小时预报'], ['now', '最近 1 小时实况']], region: kind,
+        onRegion: k => WXUI.openPrecip(k)
+      });
     },
 
     /* ── 台风 ── */
@@ -327,9 +349,9 @@
     open(id) {
       const el = document.getElementById(id);
       if (el) el.hidden = false;
-      if (id === 'wxRadar') this.openRadar(this._radarReg || 'ACHN');
-      if (id === 'wxSat') this.openSat();
-      if (id === 'wxPrecip') this.openPrecip();
+      if (id === 'wxRadar') this.openRadar(this._radarReg);
+      if (id === 'wxSat') this.openSat(this._satKind);
+      if (id === 'wxPrecip') this.openPrecip(this._precipKind);
       if (id === 'wxTy') this.openTyphoon();
       if (id === 'wxWarn') this.openWarn();
     },
@@ -369,11 +391,20 @@
       document.querySelectorAll('[data-wx]').forEach(b => {
         b.addEventListener('click', () => WXUI.open(b.dataset.wx));
       });
-      // 点遮罩或 ✕ 关闭；点面板内部不关
+      // 点遮罩或 ✕ 关闭；点面板内部不关。
+      //
+      // ⚠ 这里必须是**捕获阶段**（第三个参数 true）。原因：面板里有些按钮在自己的
+      // handler 里会把 body.innerHTML 整个重画（雷达/云图的地区切换 .wx-segbtn、
+      // 台风列表 .wx-tyitem）。如果这个判断放在冒泡阶段，等事件冒泡到抽屉时
+      // e.target 已经脱离文档，closest('.drawer-panel') 返回 null，于是被误判成
+      // "点了面板外面" —— 表现就是"切换项目时弹出的小窗口自己关掉了"。
+      // 捕获阶段在目标自己的 handler 之前跑，DOM 还没被改，判断才准。
       document.querySelectorAll('.wx-drawer').forEach(d => {
         d.addEventListener('click', e => {
-          if (e.target.closest('[data-close]') || !e.target.closest('.drawer-panel')) WXUI.close(d.id);
-        });
+          const t = e.target;
+          if (!t || !t.closest) return;
+          if (t.closest('[data-close]') || !t.closest('.drawer-panel')) WXUI.close(d.id);
+        }, true);
       });
       document.addEventListener('keydown', e => {
         if (e.key === 'Escape') document.querySelectorAll('.wx-drawer').forEach(d => { d.hidden = true; });

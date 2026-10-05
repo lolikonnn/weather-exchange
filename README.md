@@ -22,25 +22,29 @@
 | --- | --- |
 | ![分时走势](docs/screenshots/shot.png) | ![日K](docs/screenshots/kday.png) |
 
-| 降水副图 | 风副图 |
+| 降水副图（日 K · 按天聚合） | 风副图（周 K · 按周聚合） |
 | --- | --- |
 | ![降水副图](docs/screenshots/sub-precip.png) | ![风副图](docs/screenshots/sub-wind.png) |
 
-| 雷达回波 | 卫星云图 |
+| 空气副图（日 K · 按天聚合） | 雷达回波（八个大区） |
 | --- | --- |
-| ![雷达回波](docs/screenshots/radar.png) | ![卫星云图](docs/screenshots/sat.png) |
+| ![空气副图](docs/screenshots/sub-air.png) | ![雷达回波](docs/screenshots/radar.png) |
 
-| 降水预报 | 台风路径 |
+| 卫星云图 | 降水预报 |
 | --- | --- |
-| ![降水预报](docs/screenshots/precip.png) | ![台风路径](docs/screenshots/ty.png) |
+| ![卫星云图](docs/screenshots/sat.png) | ![降水预报](docs/screenshots/precip.png) |
 
-| 预警信号 | 术语对照表 |
+| 台风路径 | 预警信号 |
 | --- | --- |
-| ![预警信号](docs/screenshots/warn.png) | ![术语对照表](docs/screenshots/help.png) |
+| ![台风路径](docs/screenshots/ty.png) | ![预警信号](docs/screenshots/warn.png) |
 
-| 手机竖屏 · 自选 | 手机竖屏 · 台风 |
+| 术语对照表 | 手机竖屏 · 自选 |
 | --- | --- |
-| ![手机自选](docs/screenshots/phone-main.png) | ![手机台风](docs/screenshots/phone-ty.png) |
+| ![术语对照表](docs/screenshots/help.png) | ![手机自选](docs/screenshots/phone-main.png) |
+
+| 手机竖屏 · 台风 | 手机竖屏 · 雷达（按省自动选中华南） |
+| --- | --- |
+| ![手机台风](docs/screenshots/phone-ty.png) | ![手机雷达](docs/screenshots/phone-radar.png) |
 
 > 桌面截图 1600×1000。手机截图是 **390×844 的真实手机视口**，不是把桌面版缩小出来的。
 > （注意：Windows 上无头 Chrome 会把 `--window-size=390,844` 悄悄夹到约 500px 宽，
@@ -72,27 +76,39 @@
 
 | 按钮 | 打开什么 | 数据源 |
 | --- | --- | --- |
-| 🛰 雷达回波 | 全国 / 华东雷达拼图，每 6 分钟一帧，可拖滑块也可自动播放，能回看约 30 小时 | `image.nmc.cn` 中央气象台雷达拼图 |
-| ☁ 卫星云图 | 风云二号气象卫星云图，每 30 分钟一张，能回看一天 | `image.nmc.cn` 国家卫星气象中心 `WXCL` |
-| 🌧 降水预报 | 中央气象台全国降水量预报图（未来 24 小时雨下在哪、下多大），每 12 小时出一张 | `image.nmc.cn` `STFC_SFER_ER24` |
+| 🛰 雷达回波 | 雷达拼图，**分全国 / 东北 / 华北 / 华东 / 华中 / 华南 / 西北 / 西南 八个大区**，打开时按当前城市所在省自动选中对应大区（在广州就自动是华南）。每 6 分钟一帧，可拖滑块也可自动播放，能回看约 30 小时 | `image.nmc.cn` 中央气象台雷达拼图 |
+| ☁ 卫星云图 | 气象卫星云图，**两种产品可切**：红外云图（风云二号，每 30 分钟一张）/ 真彩云图（风云四号 B 星，白天更好看）。能回看一天 | `image.nmc.cn` 国家卫星气象中心 `WXCL` / `WXBL` |
+| 🌧 降水预报 | 中央气象台全国降水量预报图，**两种产品可切**：未来 24 小时预报（每 12 小时一张）/ 最近 1 小时实况（每小时一张） | `image.nmc.cn` `STFC_SFER_ER24` / `STFC_SFER_ER1` |
 | 🌀 台风路径 | 西北太平洋活动台风的实时路径 + 中央气象台 120 小时预报路径。底图是「亚洲–太平洋」，中国和台风同框，看得出台风往哪走 | `typhoon.nmc.cn` |
 | ⚠ 预警信号 | 全国生效中的气象预警，按颜色分级，含发布单位与完整正文 | `typhoon.nmc.cn` 预警接口 |
 | 📍 我附近 | 用浏览器定位找到最近的城市并切过去。**坐标换算全在本机做，不往任何服务器发位置** | 浏览器 Geolocation |
 
-底部副图页签也从股票的 MACD / KDJ / RSI / BOLL / WR 换成了五个天气口径：
+> 雷达 / 云图 / 降水预报**官方最细就到大区**，没有按城市出图的产品，所以城市级只能靠
+> 自动选中所在大区来近似。台风是路经图不是图片，点列表里任意台风就能看它的轨迹。
+
+底部副图页签从股票的 MACD / KDJ / RSI / BOLL / WR 换成了五个天气口径，
+而且**每个都跟着上面选的主图周期走**：
 
 | 页签 | 画什么 |
 | --- | --- |
-| 温差 | 逐小时的日内温差柱（默认） |
-| 降水 | 逐小时降水量柱（左轴 mm）+ 降水概率线（右轴 %） |
+| 温差 | 日内温差（最高 − 最低） |
+| 降水 | 降水量柱（左轴 mm）+ 降水概率线（右轴 %） |
 | 风 | 风速柱（按蒲福风级着色）+ 阵风虚线 + 顶部风向箭头 |
 | 云量 | 低云 / 中云 / 高云堆叠面积 + 总云量线 |
 | 空气 | PM2.5 柱 + AQI 线（含「良 100」参考线） |
 
+选**分时**就是今天的逐小时，选**五日**就是逐小时 120 个点，选**日 K** 就按天聚合最近 60 天，
+选**周 K / 月 K** 就按周 / 按月，选**预报 K** 就是未来 16 天。聚合口径按物理量定：
+降水量**求和**、降水概率取**最大**、风速阵风取**最大**、云量和 PM2.5/AQI 取**平均**；
+风向不能平均，取「风最大的那一刻」的风向。
+
+周期页签的「五日」口径是 **昨天 + 今天 + 未来三天**（共 120 个逐时点）——
+天气预报最要紧的就是后面这三四天，所以窗口是往前压的，不是往回看。
+
 > 雷达 / 云图 / 降水预报这三张是**图片**，文件名里的时次戳是 **UTC**（不是北京时间），
-> 前端按 `floor(分钟/6)*6`（雷达）和 `:15 / :45`（云图）对齐到官方出图的整点网格，
-> 再换算成本地时区显示。界面上的时次和图上自带的压字时间戳是对得上的 —— 这是这套时间
-> 换算正确的硬证据。
+> 前端按 `floor(分钟/6)*6`（雷达）、`:15 / :45`（云图）、整点（降水实况）对齐到官方出图的
+> 整点网格，再换算成本地时区显示。界面上的时次和图上自带的压字时间戳是对得上的 ——
+> 这是这套时间换算正确的硬证据。
 
 ## 三个版本
 
@@ -302,11 +318,15 @@ weather-exchange/
 │   ├── data/china.json      省级底图（指数条 / 台风底图兜底）
 │   ├── data/world.json      亚洲–太平洋裁剪底图，154 KB（台风页专用，首开才加载）
 │   ├── data/official/       Actions 预抓的官方数据
+│   ├── img/logo.png         站标（由 tools/logo-src.png 生成）
 │   └── vendor/echarts.min.js
 ├── server/app.py            本地代理 + 静态服务（APK 用同一套解析逻辑）
 ├── android/                 Java 代理 + 清单 + 资源（不走 Gradle）
 ├── tools/                   数据集构建、预抓、打包脚本
 │   ├── slim_world.py        把 echarts world.json 裁成 data/world.json
+│   ├── make_icon.py         从 logo-src.png 生成站标与五种密度的 launcher 图标
+│   ├── logo-src.png         站标源图（**故意不放在 web/ 下**，否则 1.2 MB 会被打进 APK）
+│   ├── test_apk_parser.py   在 PC 上单测 APK 里的 Java 解析器
 │   └── build_apk.py         手工 aapt2 + d8 + apksigner 打包
 └── dist/                    产物
 ```
@@ -327,14 +347,25 @@ weather-exchange/
 - **气象局的图片文件名用 UTC，不是北京时间**：`image.nmc.cn` 上雷达 / 云图 / 降水预报的
   时次戳都是 UTC。按北京时间去拼文件名会 100% 404。显示时用本地 getter 自动变回北京时间，
   和图上自带的压字时间戳一致。
-- **`AECN`（华东雷达）没有 `small/` 档**：`image.nmc.cn/product/.../RDCP/small/` 只有全国拼图有，
-  华东只有原图（每帧约 665 KB），所以华东要少取几帧。
+- **八个雷达大区里只有`ACHN`（全国）有 `small/` 和 `medium/` 档**：`image.nmc.cn/product/.../RDCP/`
+  下 `small/` 只有全国拼图有（约 200 KB），东北 / 华北 / 华东 / 华中 / 华南 / 西北 / 西南
+  七个大区**只有原图**（每帧 479–960 KB）。所以判定要写成"只有 `ACHN` 用 `small/`"，
+  而且切到大区时每帧大得多，一次别取太多帧。
 - **气象局的 JSONP 剥壳层次不统一**：`/typhoon/jsons/list_default` 是 `fname(({...}))`（两层括号），
   `/typhoon/jsons/view_{id}` 是 `fname({...})`，`/fetch_json/warning/json` 是 `fname([[...]])`。
   只剥一层会在 `JSON.parse` 上炸 `Unexpected token '('`。要逐个候选试解析，谁成功用谁。
 - **无头 Chrome 会把窄窗口夹到约 500px 宽**：Windows 上传 `--window-size=390,844`，
   实际页面按 ~500px 排版，而截图只画左边 390px。看着像"手机版右侧被裁掉"，
   其实是**截图工具**的问题，不是 CSS。要验真手机布局，必须把页面塞进 390px 宽的 iframe 再量。
+- **Open-Meteo 的 air-quality 接口不接受 `past_days` 与 `forecast_days` 同时出现**：
+  两个都给直接 `400 Bad Request`。只给 `past_days=92` 时它自己会带上 92 天历史 + 5 天预报，
+  足够画日 K / 周 K。气象主接口没这个限制，可以两个都给。
+- **参数名写错会被默认值静默兜住，界面看起来"毫无变化"**：副图接周期时写成了 `S.p`，
+  而状态里存的是 `S.period`，`undefined` 落进 `period = period || 'trend'` 又不报错，
+  于是日 K / 周 K 的副图全都还是分时，白验一轮。这种失败模式只能靠**前后截图对比**发现，
+  改完参数接线一定要重拍一张对比，不能只看"页面没报错"。
+- **横排的 segmented 按钮要 `flex:none` + `white-space:nowrap`**：否则窄屏上按钮会被压扁，
+  把「华南」这种两字标签折成两行，整条工具栏高度翻倍。
 - **别用 `python -c "..."` 从 PowerShell 传含引号的脚本**：PS 会把内层双引号吃掉，
   Python 收到 `open(p,encoding=utf-8)` 这种残缺代码 → `SyntaxError`。
   改文件要么写成 `.py` 再跑，要么用 `[IO.File]::ReadAllText` + `.Replace()` + `WriteAllText`。

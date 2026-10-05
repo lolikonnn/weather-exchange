@@ -391,7 +391,9 @@
   function renderWxSub() {
     if (!isWxInd()) return false;
     const wx = S.wx;
-    return WXUI.drawSub(S.ind, wx, wx && wx.air);
+    // 把主图周期一起传下去 —— 副图要跟着周期换粒度（分时/五日/日K/周K/月K/预报K）。
+    // 注意字段名是 S.period（写成 S.p 会静默回落到"分时"，副图看起来毫无变化）。
+    return WXUI.drawSub(S.ind, wx, wx && wx.air, S.period);
   }
   /** 拉当前城市的逐小时预报 + 空气质量，成功后重绘副图 */
   async function loadWx(cityId) {
@@ -674,8 +676,8 @@
       U.$$('.tabbar.sub .tab').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
       S.ind = t.dataset.ind;
-      // 天气口径（降水/风/云量/空气）和主图的K线周期没关系，不要因此把用户踢出分时
-      if (!isWxInd() && (S.period === 'trend' || S.period === '5day')) S.period = 'day';
+      // 副图现在跟着主图周期走（分时/五日/日K/周K/月K/预报K 各有对应粒度），
+      // 所以不用再把用户从"分时/五日"里踢出去。
       U.$$('#periodTabs .tab').forEach(x => x.classList.toggle('active', x.dataset.period === S.period));
       renderChart();
       if (isWxInd() && !S.wx && S.cur) loadWx(S.cur.id);

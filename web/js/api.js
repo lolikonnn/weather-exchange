@@ -489,8 +489,10 @@
       const dayIdx = times.findIndex(t => String(t).slice(0, 10) === lastDay);
       const intraday = dayIdx >= 0 ? toHourlyPoints(times, temps, precs, dayIdx, 1) : [];
 
-      // 五日分时
-      const d5start = ti >= 4 ? daily[ti - 4].d : lastDay;
+      // 五日分时：**昨天 → 未来第三天**（共 5 天）。
+      // 原来取的是"今天往前数 5 天"，全是已经发生过的历史，而天气预报最该看的
+      // 恰恰是还没发生的部分 —— 所以改成横跨昨天/今天/未来三天。
+      const d5start = daily[Math.max(0, ti - 1)].d;
       const d5idx = times.findIndex(t => String(t).slice(0, 10) === d5start);
       const five = d5idx >= 0 ? toHourlyPoints(times, temps, precs, d5idx, 5) : [];
 

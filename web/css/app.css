@@ -51,9 +51,10 @@ body{
 }
 .brand{display:flex;align-items:center;gap:8px;flex:none}
 .brand-mark{
-  width:27px;height:27px;border-radius:6px;background:linear-gradient(145deg,#f7c948,#d99e05);
-  color:#141518;font-weight:800;font-size:15px;display:grid;place-items:center;
-  box-shadow:0 0 12px rgba(240,185,11,.35);
+  /* 品牌图：原来是一个写着「战」的金色渐变方块，现在换成用户给的那张图。
+     图片本身接近正方形，这里只管尺寸/圆角/描边，不再需要文字排版属性。 */
+  width:27px;height:27px;border-radius:6px;display:block;object-fit:cover;
+  box-shadow:0 0 12px rgba(240,185,11,.35),0 0 0 1px rgba(240,185,11,.45);
 }
 .brand-text{font-size:15px;font-weight:700;color:var(--txt-hi);letter-spacing:.5px;white-space:nowrap}
 .brand-text em{font-style:normal;font-size:11px;font-weight:400;color:var(--dim);margin-left:7px;letter-spacing:0}
@@ -384,7 +385,7 @@ body{
   /* ── 顶栏：折成两行，去掉控件的文字标签 ── */
   .topbar{flex-wrap:wrap;height:auto;padding:6px 8px;gap:6px;row-gap:6px}
   .brand{flex:none}
-  .brand-mark{width:24px;height:24px;font-size:13px}
+  .brand-mark{width:24px;height:24px}
   .brand-text{font-size:13px}
   .brand-text em{display:none}
   .search-wrap{order:3;flex:1 1 100%;min-width:0}
@@ -514,9 +515,12 @@ body{
   display:flex;align-items:center;gap:8px;padding:7px 10px;flex:none;
   border-bottom:1px solid var(--line);background:var(--panel2);
 }
-.wx-seg{display:flex;gap:4px}
+/* .wx-seg 可横向滚动：窄屏上八个雷达大区按钮放不下，
+   按钮必须 flex:none + nowrap，否则会被压得把"华南"断成两行。 */
+.wx-seg{display:flex;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:none}
+.wx-seg::-webkit-scrollbar{display:none}
 .wx-segbtn{
-  height:22px;padding:0 11px;border-radius:var(--r);
+  flex:none;white-space:nowrap;height:22px;padding:0 11px;border-radius:var(--r);
   background:var(--panel3);border:1px solid var(--line2);color:var(--txt);
   font-family:inherit;font-size:12px;cursor:pointer;
 }

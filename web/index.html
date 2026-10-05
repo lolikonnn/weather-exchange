@@ -5,16 +5,16 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#12141a">
 <title>天气战士 · 老实看天气预报，很枯燥吧？</title>
-<meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、五档盘口、MACD/KDJ/RSI/BOLL。老实看天气预报，很枯燥吧？">
+<meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、降水/风/云量/空气，还有雷达回波、卫星云图、降水预报、台风路径、预警信号。老实看天气预报，很枯燥吧？">
 <link rel="stylesheet" href="css/app.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23f0b90b'/><path d='M7 21l5-7 4 4 4-9 5 5' stroke='%23121418' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="icon" type="image/png" href="img/logo-32.png">
 </head>
 <body>
 
 <!-- ══════════════════════ 顶栏 ══════════════════════ -->
 <header class="topbar">
   <div class="brand" title="老实看天气预报，很枯燥吧？">
-    <span class="brand-mark">战</span>
+    <img class="brand-mark" src="img/logo.png" alt="天气战士" width="26" height="26">
     <span class="brand-text">天气战士<em>老实看天气预报，很枯燥吧？</em></span>
   </div>
 
@@ -121,12 +121,12 @@
     </div>
 
     <div class="tabbar" id="periodTabs">
-      <button data-period="trend"  class="tab active" title="今天的每小时气温，和股价分时图一个画法">分时</button>
-      <button data-period="5day"   class="tab" title="最近 5 天连起来的每小时气温">五日</button>
+      <button data-period="trend"  class="tab active" title="今天 0 点到 23 点的每小时气温，和股价分时图一个画法">分时</button>
+      <button data-period="5day"   class="tab" title="昨天 + 今天 + 未来三天，连起来的每小时气温。天气预报主要看的就是后面这三四天">五日</button>
       <button data-period="day"    class="tab" title="每天一根蜡烛：开盘＝当天 0 点，收盘＝当天 23 点，上下影线＝当天最高／最低">日K</button>
       <button data-period="week"   class="tab" title="每周一根蜡烛：开盘＝周一 0 点，收盘＝周日 23 点">周K</button>
       <button data-period="month"  class="tab" title="每月一根蜡烛">月K</button>
-      <button data-period="fcst"   class="tab" title="未来 15 天的预报气温，用同样的蜡烛画法">预报K</button>
+      <button data-period="fcst"   class="tab" title="未来 16 天的预报气温，用同样的蜡烛画法">预报K</button>
       <span class="tab-spacer"></span>
       <span class="chart-hint" id="chartHint"></span>
       <button class="mini" id="btnZoomReset" title="重置缩放">⤢</button>
@@ -137,11 +137,11 @@
     </div>
 
     <div class="tabbar sub">
-      <button data-ind="vol"    class="tab active" title="柱子高度＝当天温差（最高气温减最低气温），越高说明那天忽冷忽热">温差</button>
-      <button data-ind="precip" class="tab" title="未来两天每个小时的降水量（柱子）和降水概率（黄线）">降水</button>
-      <button data-ind="wind"   class="tab" title="风速（柱子）、阵风（紫虚线）和风向（箭头，指风吹去的方向）">风</button>
-      <button data-ind="cloud"  class="tab" title="低云／中云／高云的占比，白线是总云量。云越厚越可能阴天">云量</button>
-      <button data-ind="air"    class="tab" title="PM2.5（柱子）和空气质量指数 AQI（黄线），虚线是「良」的分界 100">空气</button>
+      <button data-ind="vol"    class="tab active" title="温差柱：柱子高度＝当天温差（最高气温减最低气温），越高说明那天忽冷忽热">温差</button>
+      <button data-ind="precip" class="tab" title="降水量（柱子，毫米）和降水概率（黄线，百分比）。跟着上面的周期走：分时＝每小时、日K＝每天总雨量、周K＝当周总雨量">降水</button>
+      <button data-ind="wind"   class="tab" title="风速（柱子）、阵风（紫虚线）和风向（箭头，指风吹去的方向）。跟着周期走：日K取当天最大风，周K取当周最大风">风</button>
+      <button data-ind="cloud"  class="tab" title="低云／中云／高云的占比，白线是总云量。跟着周期走，按窗口取平均">云量</button>
+      <button data-ind="air"    class="tab" title="PM2.5（柱子）和空气质量指数 AQI（黄线），虚线是「良」的分界 100。跟着周期走，按窗口取平均">空气</button>
     </div>
     <div class="chart-box sub">
       <div id="subChart" class="chart"></div>
