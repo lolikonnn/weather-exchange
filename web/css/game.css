@@ -159,8 +159,38 @@
 .gg-seg button.on { background: #2b3345; color: var(--fg, #e6e9ef); border-color: #3d4761; }
 .gg-seg button.lev-danger.on { background: #4a1f22; color: #ff9a9b; border-color: #7a2b2e; }
 
+/* 杠杆有 6 档（1/5/10/20/50/100 倍），一行塞不下 —— 排成 3 列 2 行，
+   "100× 久留美" 这种长文案才不会把按钮挤成两个字一行。 */
+#ggLev { flex-wrap: wrap; }
+#ggLev button { flex: 1 1 calc(33.333% - 3px); }
+
 .gg-hint { font-size: 11px; color: var(--dim, #8b919e); line-height: 1.55; margin-top: 9px; }
 .gg-hint b { color: #ffb74d; }
+.gg-hint code {
+  font: 11px/1 'SF Mono', Menlo, monospace; background: #1e2430;
+  padding: 1px 4px; border-radius: 3px; color: #ffd28a;
+}
+
+/* ───────── 天气闪报 ───────── */
+/* 打雷 / 对流爆发 / 大风时从面板顶上滑下来的一条横幅，数值都是当根 K 线的真值 */
+.gg-news {
+  position: absolute; left: 50%; top: 62px; z-index: 7;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 18px; border-radius: 8px; pointer-events: none;
+  background: linear-gradient(180deg, rgba(58, 34, 12, .96), rgba(34, 22, 10, .96));
+  border: 1px solid rgba(255, 183, 77, .45);
+  box-shadow: 0 6px 26px rgba(0, 0, 0, .55), 0 0 22px rgba(255, 183, 77, .18);
+  animation: gg-news 2.2s ease-out forwards;
+}
+.gg-news b { font-size: 15px; color: #ffd28a; letter-spacing: .5px; }
+.gg-news span { font: 600 12px/1 'SF Mono', Menlo, monospace; color: #c8cdd8; }
+@keyframes gg-news {
+  0%   { opacity: 0; transform: translate(-50%, -14px) scale(.94); }
+  9%   { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  78%  { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -8px) scale(.98); }
+}
 
 /* ───────── 结算 / 开场遮罩 ───────── */
 .gg-cover {

@@ -379,6 +379,49 @@
       return { time: h.time || [], temp: h[tk] || [], precip: (h[pk] || []).map(v => v || 0) };
     },
 
+    /** 15 分钟级行情（「点击做空天气」用）。
+     *
+     *  这里比逐小时多了两样关键的东西：**CAPE（对流有效位能）** 和 **阵风**。
+     *  气温一小时才挪一两度，做成 K 线就是一条几乎水平的线，毫无盘感；
+     *  而对流能量可以从 0 冲到 5000、阵风能从 2 m/s 冲到 60 m/s —— 这才是
+     *  「天气行情」真正的波动来源，也是打雷下雨时价格突然拉升的物理依据。
+     *
+     *  **主机顺序是特意反过来的**：实测 api.open-meteo.com 的 minutely_15
+     *  只保留最近一个月左右（past_days=92 时前面 2000 多个点全是 null），
+     *  而 historical-forecast-api 满 92 天。omGetJSON 默认先走主站，
+     *  所以这里先试 ALT，并且拿到后要验一遍「最早那天到底有没有数」。
+     *  单看 HTTP 状态码是发现不了这件事的 —— 它会老老实实返回 200 加一串 null。 */
+    async minutely(lat, lon) {
+      const q = '?latitude=' + lat + '&longitude=' + lon +
+        '&minutely_15=temperature_2m,wind_gusts_10m,precipitation,weather_code,cape' +
+        '&past_days=92&forecast_days=1&timezone=' + encodeURIComponent(TZ);
+      let lastErr = null;
+      for (let i = 0; i < OM_F_HOSTS.length; i++) {
+        const idx = (1 + i) % OM_F_HOSTS.length;   // 1=ALT 优先，然后才轮到主站
+        try {
+          const d = await getJSON(OM_F_HOSTS[idx] + q, {
+            ttl: 1800000, key: 'mn|' + lat + ',' + lon + '#h' + idx
+          });
+          const m = (d && d.minutely_15) || {};
+          const t = m.time || [];
+          if (!t.length) throw new Error('minutely_15 返回空');
+          // 抽查最早一天：够一半才算这段历史是真的有
+          let nn = 0, probe = Math.min(96, t.length);
+          for (let k = 0; k < probe; k++) if (m.wind_gusts_10m && m.wind_gusts_10m[k] != null) nn++;
+          if (nn < probe * 0.5 && i + 1 < OM_F_HOSTS.length) throw new Error('这台主机的 15 分钟历史不够长');
+          return {
+            time: t,
+            temp: m.temperature_2m || [],
+            gust: m.wind_gusts_10m || [],
+            precip: (m.precipitation || []).map(v => v || 0),
+            wcode: m.weather_code || [],
+            cape: m.cape || []
+          };
+        } catch (e) { lastErr = e; }
+      }
+      throw lastErr || new Error('取不到 15 分钟行情');
+    },
+
     /** 仅取最近 24 小时温度，用于指数条 sparkline */
     async mini(lat, lon) {
       const q = '?latitude=' + lat + '&longitude=' + lon +
