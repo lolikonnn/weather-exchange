@@ -1837,3 +1837,87 @@ display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));
   现在只保留组间那条实线。
 - **反而更省高度。** 21 格摊 6 行 → 20 格排 5 行，行情头从 157px 降到 **141px**，
   主图那块多出 60 多像素。**"整理信息"不一定是加东西，这次是净赚。**
+
+---
+
+## 「记住上次的设置」：为什么不能只存在存档里
+
+**需求原话**：「模拟游戏能否记录上次游玩时的设置」。
+
+### 症状为什么只出现在「行情速度」上
+
+面板上有六项：本金 / K 线周期 / 行情速度 / 杠杆 / 仓位 / 音效。改之前：
+
+| 设置 | 存法 | 表现 |
+| --- | --- | --- |
+| 本金 | `wxgame_cash`，`setCash()` 每次都写 | 记得住 |
+| K 线周期 | `wxgame_bar`，`setBar()` 每次都写 | 记得住 |
+| 行情速度 / 杠杆 / 仓位 / 音效 | **只写进 `saveRound()` 的存档里** | 有存档才记得住 |
+
+于是「行情速度」成了最扎眼的那一个：它**只有在你把这一局存下来的时候**才被顺带记住。
+新用户、刚点过「结束本局」、玩完一局结算过 —— 这三种情况下 `wxgame_save` 是空的，
+面板就只剩本金和周期还在，**速度被打回默认的「悠闲」**。
+
+### 根因：把两类东西存在了同一个地方
+
+`saveRound()` 里捎带 `barIdx / speedIdx / lev / pct / sound` 本身没错 ——
+「接着玩那一局」的时候，确实应该把当时的档位一起还回来。错的是**把"设置"的下落
+绑在了"局还在不在"上**：
+
+    wxgame_save  = 局      → 点「结束本局」该清，清了是对的
+    （没有别的了）          → 于是设置跟着一起没了
+
+**该分开的东西必须分开存。** 现在多一份 `wxgame_cfg`：
+
+    开局：    cfg 当默认值  → 填进 G
+    有存档：  存档里那套覆盖 G，并且顺手写回 cfg（那就是"目前正在用的"）
+    结束时：  清 save，不动 cfg
+
+`resumeRound()` 里那句 `saveCfg()` 是这条链的收口：**恢复存档之后立刻把设置刷成存档里那套**，
+这样这局结束之后再开局，还是你最后用的那一套。
+
+### 存档键带命名空间
+
+`web/js/util.js` 里的 `storeGet/storeSet` 包了一层前缀 `NS = 'tjs.'`，
+所以 `storeGet('wxgame_cfg')` 在 DevTools 里看到的是 `localStorage['tjs.wxgame_cfg']`。
+写探针时如果用 `localStorage.getItem('wxgame_cfg')` 去读，**永远读到 null**，
+而页面自己读写得好好的 —— 看起来就像"保存失败了"。第一版探针就栽在这上面：
+它读到 null，又把结论写进没前缀的键，导致后面几条断言全部误判。
+
+### 别把"点不亮的按钮"记下来
+
+`lev` 和 `pct` 的合法值是**从 DOM 里现查**的，不是写死的常量表：
+
+    function pickSeg(sel, attr, val, d) {
+      const vals = U.$$(sel).map(b => +b.dataset[attr]);
+      return vals.indexOf(+val) >= 0 ? +val : (vals.indexOf(d) >= 0 ? d : (vals.length ? vals[0] : d));
+    }
+
+理由是以后加减档位（比如再加一个 200×）时，旧设备上记着的那个值在新版本里可能不存在 ——
+写死常量表的话就会得到一个**谁也没高亮的面板**：值在 `G` 里是真的，按钮上却什么都没选中。
+现查 DOM 则天然对齐。
+
+同理 `barIdx` 用 `clampIdx(v, BAR_MIN.length, 2)` 卡范围，`cash0` 卡在 `CASH_MIN ~ CASH_MAX`。
+
+### 老版本迁移
+
+`wxgame_bar` / `wxgame_cash` 是上一版分开存的键。`loadCfg()` 在**读不到 `wxgame_cfg` 时**
+回落到这两个键：
+
+    const rawBar = c ? c.barIdx : storeGet('wxgame_bar', null);
+    const rawCash = c ? c.cash0 : storeGet('wxgame_cash', null);
+
+`v` 对不上的旧格式 cfg 一样当作"没有"，走同一条回落路径 —— 这样升级上来的人
+不会突然丢掉已经用熟的周期和本金。写这两个键的代码暂时留着（`setCash` / `setBar` 里那两行），
+不为别的，只为**万一有人还开着旧版本的缓存页面**，那边读的还是老键。
+
+### 怎么验「记住」
+
+关键是**必须真的整页重载**，不能在同一段 JS 里关掉面板再打开 ——
+后者只证明"内存里的 G 没被重置"，跟 localStorage 一点关系都没有。
+`tmp/cfg.js` 的做法：第一趟调设置并写一个 `tjs.__cfg_phase = 'B'` 标志，然后 `location.reload()`；
+第二趟（脚本重新执行、`G` 全新构造）读标志、只跑 B 段。
+
+顺带一个坑：**`location.reload()` 会把探针的 `<pre id="o">` 一起冲掉**，
+第一趟的结论就没了。所以 A 段结束时把 `O.textContent` 拆行写进 `localStorage`，
+B 段开头再打出来 —— 不然只能看到后半截，前半截的失败会被误当成通过。

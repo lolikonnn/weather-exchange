@@ -2932,6 +2932,7 @@
     v = Math.max(CASH_MIN, Math.min(CASH_MAX, v));
     G.cash0 = v;
     storeSet('wxgame_cash', v);
+    saveCfg();
     const s = $('#ggCashShow'); if (s) s.textContent = money(v);
     const inp = $('#ggCash'); if (inp && +inp.value !== v) inp.value = v;
     U.$$('.gg-cbtn').forEach(b => b.classList.toggle('on', +b.dataset.cash === v));
@@ -2971,12 +2972,13 @@
   function setBar(idx) {
     idx = Math.max(0, Math.min(BAR_MIN.length - 1, Math.round(+idx) || 0));
     storeSet('wxgame_bar', idx);
-    if (idx === G.barIdx || !G.base) { G.barIdx = idx; syncBar(); return; }
+    if (idx === G.barIdx || !G.base) { G.barIdx = idx; saveCfg(); syncBar(); return; }
     // 已经推进到第几分钟天气：G.i 是**最后一根已经走完的** K 线，所以"现在"在
     // 它的收盘时刻，也就是 (G.i + 1) × 旧周期。
     const nowMin = (G.i + 1) * barMin();
     const hist = G.hist.slice();
     G.barIdx = idx;
+    saveCfg();
     const rs = resample(G.base, G.baseSeeds, G.baseReg);
     G.series = rs.series; G.seeds = rs.seeds; G.regLine = rs.regLine;
     // 只认"已经走完"的那些根 —— 下标 i 的 K 线**收于** (i+1)×周期，所以要
@@ -3112,6 +3114,9 @@
     setSeg('#ggPct button', 'pct', G.pct);
     setSeg('#ggSpeed button', 'sp', G.speedIdx);
     syncBar();
+    // 存档里带着的那套设置就是"目前正在用的"，顺手记成默认 —— 这样这局结束之后
+    // 再开局，面板还是这一套，不会退回初始值。
+    saveCfg();
 
     // 先把离线那段行情补上，再开计时器 —— 顺序反了会先把新的一根走掉
     const cu = catchUp(s);
@@ -3190,6 +3195,55 @@
     // v === null（取消）：卡片已经被 askChoice 收掉了，局还在跑，什么都不用做
   }
 
+  /* ═══════════════ 设置：记住上次调好的那一套 ═══════════════ */
+  /** 面板上这几项（本金 / K 线周期 / 行情速度 / 杠杆 / 仓位 / 音效）跟「进行中的那一局」
+   *  是两回事，所以要分开存：
+   *    - `wxgame_save` 存的是**局**。点「结束本局」会把它清掉，这是对的 —— 局确实没了。
+   *    - `wxgame_cfg` 存的是**设置**。局在不在跟它没关系：结束一局、玩完一局、
+   *      换台设备重新打开，面板还是上次调好的样子。
+   *  两者的先后关系：**开局时用设置当默认值；存档里带着的那套优先**
+   *  （因为那是"当时正在用的"），恢复存档时顺手把设置也刷成存档里那套。 */
+  const CFG_KEY = 'wxgame_cfg';
+  const CFG_V = 1;
+  const CFG_DEF = { barIdx: 2, speedIdx: 2, lev: 10, pct: 30, sound: true, cash0: DEF_CASH };
+  /** 只接受落在合法档位里的值。档位表按 DOM 里实际有的按钮来验，不写死常量 ——
+   *  以后加减档位不会让这里悄悄记住一个点不亮的按钮。 */
+  function pickSeg(sel, attr, val, d) {
+    const vals = U.$$(sel).map(b => +b.dataset[attr]);
+    return vals.indexOf(+val) >= 0 ? +val : (vals.indexOf(d) >= 0 ? d : (vals.length ? vals[0] : d));
+  }
+  function clampIdx(v, n, d) {
+    v = Math.round(+(v));
+    return (isFinite(v) && v >= 0 && v < n) ? v : d;
+  }
+  function loadCfg() {
+    let c = null;
+    try { c = storeGet(CFG_KEY, null); } catch (e) { c = null; }
+    if (!c || c.v !== CFG_V) c = null;
+    // 老版本把 K 线周期和本金分开存在 wxgame_bar / wxgame_cash 里，没有 cfg 时从那儿搬
+    const rawBar = c ? c.barIdx : storeGet('wxgame_bar', null);
+    const rawCash = c ? c.cash0 : storeGet('wxgame_cash', null);
+    const num = (v, d) => (v != null && v !== '' && isFinite(+v)) ? +v : d;
+    const cash0 = Math.round(num(rawCash, CFG_DEF.cash0));
+    return {
+      barIdx: clampIdx(rawBar != null ? rawBar : CFG_DEF.barIdx, BAR_MIN.length, CFG_DEF.barIdx),
+      speedIdx: clampIdx(c ? c.speedIdx : CFG_DEF.speedIdx, SPEEDS.length, CFG_DEF.speedIdx),
+      lev: pickSeg('#ggLev button', 'lev', c ? c.lev : NaN, CFG_DEF.lev),
+      pct: pickSeg('#ggPct button', 'pct', c ? c.pct : NaN, CFG_DEF.pct),
+      sound: c && typeof c.sound === 'boolean' ? c.sound : CFG_DEF.sound,
+      cash0: (cash0 >= CASH_MIN && cash0 <= CASH_MAX) ? cash0 : CFG_DEF.cash0
+    };
+  }
+  /** 换档、改本金、切音效都要落一次盘。这几处都是人手动点的，频率低，不用节流。 */
+  function saveCfg() {
+    try {
+      storeSet(CFG_KEY, {
+        v: CFG_V, barIdx: G.barIdx, speedIdx: G.speedIdx,
+        lev: G.lev, pct: G.pct, sound: !!G.sound, cash0: G.cash0
+      });
+    } catch (e) { /* 存不下就只影响"下次记不记得住"，别把面板搞崩 */ }
+  }
+
   /* ═══════════════ 开关面板 ═══════════════ */
   function open() {
     readTheme();
@@ -3197,12 +3251,14 @@
     if (!mask) return;
     mask.hidden = false;
     G.open = true;
-    // 本金存的是"上次用过的"，第一次进来是默认值
-    const saved = Math.round(+(storeGet('wxgame_cash', DEF_CASH) || DEF_CASH));
-    G.cash0 = (isFinite(saved) && saved >= CASH_MIN && saved <= CASH_MAX) ? saved : DEF_CASH;
-    // K 线周期也存上次用过的
-    const sb = Math.round(+(storeGet('wxgame_bar', 2)));
-    G.barIdx = (isFinite(sb) && sb >= 0 && sb < BAR_MIN.length) ? sb : 2;
+    // 设置：上次调好的那一套 —— 本金 / K 线周期 / 行情速度 / 杠杆 / 仓位 / 音效
+    const cfg = loadCfg();
+    G.cash0 = cfg.cash0;
+    G.barIdx = cfg.barIdx;
+    G.speedIdx = cfg.speedIdx;
+    G.lev = cfg.lev;
+    G.pct = cfg.pct;
+    G.sound = cfg.sound;
 
     const sv = loadSaved();
     if (sv) resumeCard(sv); else startCard();
@@ -3213,6 +3269,11 @@
       setSeg('#ggLev button', 'lev', G.lev);
       setSeg('#ggPct button', 'pct', G.pct);
       setSeg('#ggSpeed button', 'sp', G.speedIdx);
+      const snd0 = $('#ggSound');
+      if (snd0) {
+        snd0.textContent = G.sound ? '🔊' : '🔇';
+        snd0.title = G.sound ? '音效：开' : '音效：关';
+      }
       syncBar();
       render();
     }, 30);
@@ -3424,20 +3485,20 @@
     });
 
     U.$$('#ggLev button').forEach(b => b.addEventListener('click', () => {
-      G.lev = +b.dataset.lev; setSeg('#ggLev button', 'lev', G.lev); render();
+      G.lev = +b.dataset.lev; saveCfg(); setSeg('#ggLev button', 'lev', G.lev); render();
     }));
     U.$$('#ggPct button').forEach(b => b.addEventListener('click', () => {
-      G.pct = +b.dataset.pct; setSeg('#ggPct button', 'pct', G.pct); render();
+      G.pct = +b.dataset.pct; saveCfg(); setSeg('#ggPct button', 'pct', G.pct); render();
     }));
     U.$$('#ggSpeed button').forEach(b => b.addEventListener('click', () => {
-      G.speedIdx = +b.dataset.sp; setSeg('#ggSpeed button', 'sp', G.speedIdx);
+      G.speedIdx = +b.dataset.sp; saveCfg(); setSeg('#ggSpeed button', 'sp', G.speedIdx);
       if (G.running) startTimer();
     }));
     // K 线周期：局中也能换（setBar 会把已推进的天气时间映射到新周期上）
     U.$$('#ggBar button').forEach(b => b.addEventListener('click', () => setBar(b.dataset.bar)));
     const snd = $('#ggSound');
     if (snd) snd.addEventListener('click', () => {
-      G.sound = !G.sound; snd.textContent = G.sound ? '🔊' : '🔇';
+      G.sound = !G.sound; saveCfg(); snd.textContent = G.sound ? '🔊' : '🔇';
       snd.title = G.sound ? '音效：开' : '音效：关';
     });
 
@@ -3476,6 +3537,7 @@
       stepBars, saveRound, loadSaved, clearSave, resumeRound, catchUp, autoSave,
       equityOfSave, gapText, dayAt, exitFlow, SAVE_KEY, showGuide,
       showCover, hideCover,
+      loadCfg, saveCfg, CFG_KEY, CFG_DEF,
       P, cityAmp, cityWeight, dishScale
     }
   };
