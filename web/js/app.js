@@ -708,6 +708,35 @@
     return (period === 'day' || period === 'fcst') ? 90 : period === 'week' ? 80 : period === 'month' ? 60 : 0;
   }
 
+  /** 分时 / 7日 下的「温差」副图。
+      温差是**每天**的量（当日最高 − 当日最低），而这两档主图是逐小时的 ——
+      所以把当天那根日K的温差铺到这一天覆盖的每个小时上，横轴类别直接用主图的时间键，
+      上下两块图才会一格对一格（一天画成一条等高的宽带子，带子之间留缝就是日界）。
+      以前这里一律把 553 根日K 丢给副图：主图是 24 小时 / 7 天，副图是 553 天，
+      两块图说的根本不是同一段时间 —— 周期从五日改成 7 日之后这个错位更明显。 */
+  function renderVolSub(pts) {
+    const d = S.data || {};
+    const idx = {};
+    (d.daily || []).forEach((b, i) => { idx[b.d] = i; });
+    const ind = d.indicators || {};
+    const bars = [], ma5 = [], ma10 = [];
+    pts.forEach(pt => {
+      const ds = String(pt.t).slice(0, 10), i = idx[ds];
+      const b = i == null ? null : d.daily[i];
+      // ⚠ 直接放**那一根日K本身**，不要另拼一个 {o,h,l,c} 的小对象 ——
+      //   温差口径取的是 b.range（不是现场算 h−l），少拷一个字段柱子就全长不出来，
+      //   而且不报错（ECharts 拿到 value=undefined 就是一根空柱）。
+      // 取不到那天的日K就占个位（h/l 为空 → 那一段自然空着）。
+      bars.push(b || { d: ds, o: null, h: null, l: null, c: null, range: null });
+      ma5.push(i == null ? null : ((ind.volMa5 || [])[i]));
+      ma10.push(i == null ? null : ((ind.volMa10 || [])[i]));
+    });
+    Chart.renderSub({
+      indName: 'vol', bars: bars, ind: { volMa5: ma5, volMa10: ma10 },
+      cats: pts.map(x => x.t), metric: S.metric, period: S.period
+    });
+  }
+
   function seriesFor(period) {
     const d = S.data; if (!d) return null;
     const today = d.today;
@@ -728,7 +757,7 @@
     return {
       bars, ind, mode, base, today: tk, view,
       monthMode: mode === 'month',
-      title: ({ trend: '分时', '5day': '五日分时', day: '日K', week: '周K', month: '月K', fcst: '预报K' })[period] + ' · ' + bars.length + ' 根'
+      title: ({ trend: '分时', '7day': '7日分时', day: '日K', week: '周K', month: '月K', fcst: '预报K' })[period] + ' · ' + bars.length + ' 根'
     };
   }
 
@@ -774,20 +803,21 @@
     // 副图切回温差（vol）就自动取消 —— 温差本来就是主图自己的东西，再叠一条没意义。
     const ov = (S.overlay && isWxInd() && window.WXUI)
       ? WXUI.overlayOf(S.ind, S.wx, S.wx && S.wx.air, p) : null;
-    if (p === 'trend' || p === '5day') {
-      const pts = p === 'trend' ? d.intraday : d.five;
+    if (p === 'trend' || p === '7day') {
+      const pts = p === 'trend' ? d.intraday : d.seven;
       const qp = quoteOf(S.cur.id);
       Chart.renderMain({
         mode: p, points: pts, base: d.base, ov: ov,
-        // five 必须显式传：chart.js 的轴标签靠它决定"到点写日期、其余写时刻"。
-        // 以前从来没传过，S.five 恒为 undefined，所以五日图的横轴只有 00:00 而没有日期。
-        five: p === '5day',
+        // seven 必须显式传：chart.js 的轴标签靠它决定"到点写日期、其余写时刻"。
+        // 以前从来没传过，S.seven 恒为 undefined，所以多日分时图的横轴只有 00:00 而没有日期。
+        seven: p === '7day',
         precips: pts.map(x => x.v),
         hours: pts.map(x => U.sessionLabel(Number(String(x.t).slice(11, 13)))),
-        title: (p === 'trend' ? '分时' : '五日分时') + ' · ' + (p === 'trend' ? d.today : '近 5 日')
+        title: (p === 'trend' ? '分时' : '7日分时') + ' · ' + (p === 'trend' ? d.today : '近 7 日')
       });
       if (!renderWxSub()) {
-        Chart.renderSub({ indName: 'vol', bars: d.daily, ind: d.indicators, metric: S.metric, view: 90, period: p });
+        if (p === 'trend' || p === '7day') renderVolSub(pts);
+        else Chart.renderSub({ indName: 'vol', bars: d.daily, ind: d.indicators, metric: S.metric, view: 90, period: p });
       }
       $('#chartHint').textContent = '昨收 ' + (d.base == null ? '--' : fx(d.base, 1)) + ' ℃　最新 ' + (qp.temp == null ? '--' : fx(qp.temp, 1)) + ' ℃　逐时点 ' + pts.length;
     } else {
@@ -1133,8 +1163,8 @@
       U.$$('.tabbar.sub .tab[data-ind]').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
       S.ind = t.dataset.ind;
-      // 副图现在跟着主图周期走（分时/五日/日K/周K/月K/预报K 各有对应粒度），
-      // 所以不用再把用户从"分时/五日"里踢出去。
+      // 副图现在跟着主图周期走（分时/7日/日K/周K/月K/预报K 各有对应粒度），
+      // 所以不用再把用户从"分时/7日"里踢出去。
       U.$$('#periodTabs .tab').forEach(x => x.classList.toggle('active', x.dataset.period === S.period));
       renderChart();
       if (isWxInd() && !S.wx && S.cur) loadWx(S.cur.id);
@@ -1216,7 +1246,7 @@
         toggleFullChart();
         return;
       }
-      const map = { 1: 'trend', 2: '5day', 3: 'day', 4: 'week', 5: 'month', 6: 'fcst' };
+      const map = { 1: 'trend', 2: '7day', 3: 'day', 4: 'week', 5: 'month', 6: 'fcst' };
       if (map[e.key]) {
         S.period = map[e.key];
         U.$$('#periodTabs .tab').forEach(x => x.classList.toggle('active', x.dataset.period === S.period));
@@ -1383,7 +1413,7 @@
   }
 
   /** 支持 ?city=101010100&p=day&ind=wind&color=us&m=precip&wx=wxRadar&help=1 深链与分享（也方便无头截图） */
-  const PERIODS = ['trend', '5day', 'day', 'week', 'month', 'fcst'];
+  const PERIODS = ['trend', '7day', 'day', 'week', 'month', 'fcst'];
   const INDS = ['vol', 'precip', 'wind', 'cloud', 'air'];
 
   function urlParams() {

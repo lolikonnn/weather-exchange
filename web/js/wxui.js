@@ -79,7 +79,7 @@
      这四样里只要有一样跟主图不同，同一个时刻就会落在不同的 x 像素上，
      看过去就是用户报的"上下日期没对齐"。 */
   function base(TH, xs, yName, period, view) {
-    const hourly = (period === 'trend' || period === '5day');
+    const hourly = (period === 'trend' || period === '7day');
     const CH = (typeof window !== 'undefined' && window.Chart) || null;
     const ax = CH ? CH.axisOf(period, xs.length) : { interval: 'auto', formatter: v => String(v) };
     const L = CH ? CH.PAD_L : 52, R = CH ? CH.PAD_R : 56;
@@ -93,7 +93,7 @@
       },
       xAxis: {
         type: 'category', data: xs,
-        // 趋势/五日的主图是折线（boundaryGap:false），K 线主图是蜡烛（true）。
+        // 趋势/7日的主图是折线（boundaryGap:false），K 线主图是蜡烛（true）。
         // 副图得跟着走：两者之间每个点都差半格，而且是逐点渐偏，越往后越明显。
         boundaryGap: !hourly,
         axisLine: { lineStyle: { color: TH.line } },
@@ -300,7 +300,7 @@
 
   const WXUI = {
     /** 副图总入口：name ∈ precip|wind|cloud|air，其它名字返回 false 交回 chart.js。
-        period 是主图的周期（trend|5day|day|week|month|fcst），副图跟着它走。
+        period 是主图的周期（trend|7day|day|week|month|fcst），副图跟着它走。
         view 是主图 K 线默认显示多少根 —— 副图的 dataZoom 必须用同一个值，
         否则主图只显示最近 90 根、副图显示全部，上下两排刻度对不上。
         axis 是**主图用的横轴类别数组**，必须原样用（见 alignSeries 的注释）。 */
@@ -328,7 +328,7 @@
 
     /** 主图叠加用的取数：把当前副图口径变成「按时间键索引」的查表，交给 chart.js 画到主图上。
         为什么不直接按下标对：
-          - 分时/五日的横轴是"今天 24 小时 / 昨天→未来三天"，而 series('trend') 给的是
+          - 分时/7日的横轴是"今天 24 小时 / 昨天→未来五天"，而 series('trend') 给的是
             "从现在往前 2 小时起 24 小时"，两边窗口不一样，按下标对会整体错位；
           - K 线周期的横轴是 K 线柱子，只有按分桶键对才准 —— 而 series() 的分桶键和
             IND.aggregate 的完全一致（周一 / YYYY-MM / YYYY-MM-DD），所以那边反过来必须按键对。
@@ -347,7 +347,7 @@
       if (!src || !src.time || !src.time.length) return null;
 
       const byKey = {};
-      if (period === 'trend' || period === '5day' || !period) {
+      if (period === 'trend' || period === '7day' || !period) {
         // 逐小时：直接拿原始时次当键，主图显示哪几个小时就有哪几个小时
         const a = src[M.raw] || [];
         for (let i = 0; i < src.time.length; i++) byKey[src.time[i]] = a[i];

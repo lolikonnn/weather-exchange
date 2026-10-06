@@ -839,7 +839,7 @@
   }
 
   /** 逐小时数组 -> 分时点 [{t, p, v}] */
-  /** 从 fromIdx 起按天截取逐时点。days 用于封顶（分时=1 天，五日分时=5 天），
+  /** 从 fromIdx 起按天截取逐时点。days 用于封顶（分时=1 天，7日分时=7 天），
       否则会把 Open-Meteo 未来 16 天的预报一股脑画进"分时图"。 */
   function toHourlyPoints(times, temps, precs, fromIdx, days) {
     const out = [];
@@ -933,12 +933,14 @@
       const dayIdx = times.findIndex(t => String(t).slice(0, 10) === lastDay);
       const intraday = dayIdx >= 0 ? toHourlyPoints(times, temps, precs, dayIdx, 1) : [];
 
-      // 五日分时：**昨天 → 未来第三天**（共 5 天）。
+      // 7 日分时：**昨天 → 未来第五天**（共 7 天）。
       // 原来取的是"今天往前数 5 天"，全是已经发生过的历史，而天气预报最该看的
-      // 恰恰是还没发生的部分 —— 所以改成横跨昨天/今天/未来三天。
-      const d5start = daily[Math.max(0, ti - 1)].d;
-      const d5idx = times.findIndex(t => String(t).slice(0, 10) === d5start);
-      const five = d5idx >= 0 ? toHourlyPoints(times, temps, precs, d5idx, 5) : [];
+      // 恰恰是还没发生的部分 —— 所以改成横跨昨天/今天/未来若干天。
+      // 2026-10-07：从 5 天扩到 7 天 —— 右侧盘口列的是"未来 5 日"，主图只到未来第三天，
+      // 两块对不上；现在 昨天 + 今天 + 未来五天，正好和右边一一对应。
+      const d7start = daily[Math.max(0, ti - 1)].d;
+      const d7idx = times.findIndex(t => String(t).slice(0, 10) === d7start);
+      const seven = d7idx >= 0 ? toHourlyPoints(times, temps, precs, d7idx, 7) : [];
 
       const official = await Cn.snapshot(city.id);
       // 中国天气网 d1 域：当日预报/预警 + 官方月度日历（历史同期均值 / 最近观测 / 15·40 日预报）
@@ -953,7 +955,7 @@
       const out = {
         city, now, fcst, official, cnFcst, calDaily,
         hourly: { time: times, temp: temps, precip: precs, humidity: humids, wind: winds, wcode: wcodes, cloud: clouds, uv: uvs },
-        daily, week, month, intraday, five,
+        daily, week, month, intraday, seven,
         omDaily, lastDay, todayIndex: ti, today,
         base: ti > 0 ? daily[ti - 1].c : (ti === 0 ? daily[0].o : null)
       };

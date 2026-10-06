@@ -32,7 +32,7 @@
      "Daily API request limit exceeded"）时，historical-forecast-api.open-meteo.com
      往往还是好的 —— 实测两者互不影响，而且后者参数与返回结构完全一致，
      连 past_days + forecast_days 的未来段都照给（实测 past_days=92&forecast_days=16
-     返回 2026-07-06..2026-10-21）。主站挂了就换它，否则"分时/五日"的主线整条断掉，
+     返回 2026-07-06..2026-10-21）。主站挂了就换它，否则"分时/7日"的主线整条断掉，
      页面上只剩一条 429 横幅。 */
   const OM_F_ALT = 'https://historical-forecast-api.open-meteo.com/v1/forecast';
   const OM_F_LIST = [OM_F, OM_F_ALT];
@@ -545,7 +545,7 @@
       };
     },
 
-    /* ═══════════ 7.5 副图按周期出数（分时 / 五日 / 日K / 周K / 月K / 预报K） ═══════════
+    /* ═══════════ 7.5 副图按周期出数（分时 / 7日 / 日K / 周K / 月K / 预报K） ═══════════
 
        原来 drawSub 里写死 `window(wx.hourly, 48)` —— 不管选哪个周期都只画
        "从现在起 48 小时"（48 根柱子、每根 1 小时），所以用户会觉得
@@ -579,8 +579,8 @@
       // i0 是为"现在该高亮哪个小时"算的，里面为了容忍 Open-Meteo 的发布延迟，
       // 故意把 now 往前退了 3 小时、再向前取一格（见本文件 hourly()）。
       // 于是北京时间 00:00~04:00 之间 i0 会落在**前一天**，整个取数窗口跟着整体前移一天：
-      // 主图的"五日"（Store.loadCity 用 todayStr() 算窗口）起点是昨天，
-      // 副图的"五日"起点却变成前天 —— 上下两块图整整差一天，正是用户报的"日期没对齐"。
+      // 主图的"7 日"（Store.loadCity 用 todayStr() 算窗口）起点是昨天，
+      // 副图的"7 日"起点却变成前天 —— 上下两块图整整差一天，正是用户报的"日期没对齐"。
       // 这个 bug 只在凌晨那几个小时复现，白天怎么试都是对的，所以拖了很久才被看见。
       const today = fmt(new Date());
 
@@ -627,10 +627,11 @@
       // 注意逐小时数据本身只能回溯 92 天，周K/月K 主图跨度远大于此，
       // 副图只能在有数据的那一段里画 —— 见 drawSub 里按主图类别对齐的处理。
       let from, to, keyOf, mode, span;
-      if (period === '5day') {
-        // 需求：天气预报最重要的是"预报"，所以五日 = 昨天 → 未来第三天
-        from = dayAdd(today, -1); to = dayAdd(today, 3);
-        keyOf = null; mode = 'hour'; span = '昨天 → 未来三天 · 逐小时';
+      if (period === '7day') {
+        // 需求：天气预报最重要的是"预报"，所以 7 日 = 昨天 → 未来第五天。
+        // 2026-10-07：从"昨天→未来第三天"扩到"未来第五天"，跟右侧盘口的「未来 5 日」对齐。
+        from = dayAdd(today, -1); to = dayAdd(today, 5);
+        keyOf = null; mode = 'hour'; span = '昨天 → 未来五天 · 逐小时';
       } else if (period === 'day') {
         from = dayAdd(today, -79); to = dayAdd(today, 15);
         keyOf = dayStr; mode = 'day'; span = '最近 80 天 + 16 天预报 · 逐日';

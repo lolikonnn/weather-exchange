@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   chart.js — ECharts 行情图（分时 / 五日 / 日K / 周K / 月K / 预报K + 副图）
+   chart.js — ECharts 行情图（分时 / 7日 / 日K / 周K / 月K / 预报K + 副图）
    ═══════════════════════════════════════════════════════════════ */
 (function (global) {
   'use strict';
@@ -159,10 +159,10 @@
   const PAD_L = 52, PAD_R = 56;
 
   /** 某一周期的横轴刻度参数（interval + formatter）。n = 类别数。
-      hourly（趋势/五日）的类别是原始时间键 `YYYY-MM-DDTHH:MM`，K 线是日期（月K 是 `YYYY-MM`）。 */
+      hourly（趋势/7日）的类别是原始时间键 `YYYY-MM-DDTHH:MM`，K 线是日期（月K 是 `YYYY-MM`）。 */
   function axisOf(period, n) {
     const nKey = Number(n) || 0;
-    if (period === '5day') {
+    if (period === '7day') {
       return {
         interval: 0,
         formatter: v => {
@@ -183,7 +183,7 @@
 
   /* ═══════════════ 主图 ═══════════════ */
 
-  /** 分时 / 五日 */
+  /** 分时 / 7日 */
   function optTrend(S) {
     const pts = S.points || [];
     if (!pts.length) return emptyOpt('暂无分时数据');
@@ -212,7 +212,7 @@
       prevDay = d;
     });
 
-    // 明暗带：从第 1 天开始交替（第 1/3/5 天亮、第 2/4 天暗 —— 五日就是"三明两暗"）。
+    // 明暗带：从第 1 天开始交替（第 1/3/5/7 天亮、第 2/4/6 天暗 —— 7 日就是"四明三暗"）。
     // 第一天也要参与，所以起始边界是 0；单日分时没有分界，就不铺带子。
     const bands = [];
     if (dayBoundary.length) {
@@ -263,7 +263,7 @@
         type: 'category', data: xs, boundaryGap: false,
         axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false },
         // 刻度规则来自共用的 axisOf()：副图用同一份，上下两块图的刻度才会对齐。
-        // interval:0 让每个时刻都参与排版；五日图靠 formatter 只在 00:00 写日期、12:00 写"12:00"，
+        // interval:0 让每个时刻都参与排版；7日图靠 formatter 只在 00:00 写日期、12:00 写"12:00"，
         // 其余返回空串。这样每天都能落下一个日期标签，不会像按固定步长抽稀时那样正好跳过日界。
         axisLabel: Object.assign({}, axisCommon.axisLabel, { interval: ax.interval, formatter: axisLbl, hideOverlap: true }),
         splitLine: splitNone
@@ -517,10 +517,15 @@
 
   /* ═══════════════ 副图 ═══════════════ */
   function optSub(S) {
-    const bars = S.bars || [], ind = S.ind || {}, xs = bars.map(b => b.d);
+    const bars = S.bars || [], ind = S.ind || {};
     if (!bars.length) return emptyOpt('');
+    // 横轴类别默认取柱子自己的日期。但**分时 / 7日 的主图是逐小时的、温差是"每天"的量** ——
+    // 这时 app.js 会把主图的类别数组传进来（S.cats），两块图才会一格对一格。
+    // 不这么干的话副图会按 553 根日K 排横轴，跟主图（24 / 168 个时次）说的不是同一段时间。
+    const xs = S.cats || bars.map(b => b.d);
     const view = S.view == null ? 90 : S.view;
-    const start = zoomStart(bars.length, view);
+    // 副图的缩放起点跟着主图 —— 主图自己缩过放的话，两块图不能各缩各的
+    const start = (S.cats && Chart && Chart._mainStart != null) ? Chart._mainStart : zoomStart(xs.length, view);
     const zoom = [
       { type: 'inside', xAxisIndex: [0], start: start, end: 100, zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
       { type: 'slider', xAxisIndex: [0], start: start, end: 100, show: false }
@@ -669,7 +674,7 @@
       if (!main) return;
       readTheme();
       let opt;
-      if (S.mode === 'trend' || S.mode === '5day') opt = optTrend(S);
+      if (S.mode === 'trend' || S.mode === '7day') opt = optTrend(S);
       else opt = optKline(S);
       main.setOption(opt, true);
       this._mainStart = opt.dataZoom ? opt.dataZoom[0].start : null;
