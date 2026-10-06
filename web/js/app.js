@@ -416,10 +416,17 @@
 
     // 标签
     const tags = $('#qTags'); tags.innerHTML = '';
-    const wtxt = d.now && d.now.temp != null ? (d.fcst && d.fcst.daily && d.fcst.daily[0] ? d.fcst.daily[0].dayText : '') :
-      (curBar && curBar.wcode != null ? API.wmoText(curBar.wcode) : '');
+    // 天气文案优先用中国天气网日预报的措辞（"多云转晴"），没有就用 Open-Meteo 的天气码。
+    // 以前这里以"气象局实况存在"为前提挑措辞，可实况缺失时会连着文案一起空掉。
+    const dayTxt = (d.fcst && d.fcst.daily && d.fcst.daily[0]) ? d.fcst.daily[0].dayText : '';
+    const wtxt = dayTxt || (curBar && curBar.wcode != null ? API.wmoText(curBar.wcode) : '');
     if (wtxt) tags.appendChild(el('span', { class: 'tag tag-info', text: U.wxIcon(wtxt) + ' ' + wtxt }));
-    if (d.now) tags.appendChild(el('span', { class: 'tag tag-src', text: '中国气象局实况 ' + String(d.now.time || '').slice(11, 16) }));
+    // 标签必须按 src 选：港澳台这种没有实时观测的站会退回 Open-Meteo，
+    // 再写"中国气象局实况"就是撒谎（而且会把一年前的 lastUpdate 当成观测时刻显示）。
+    if (d.now && d.now.src === 'cma')
+      tags.appendChild(el('span', { class: 'tag tag-src', text: '中国气象局实况 ' + String(d.now.time || '').slice(11, 16) }));
+    else if (d.now)
+      tags.appendChild(el('span', { class: 'tag tag-src', text: 'Open-Meteo 实况 ' + String(d.now.time || '').slice(11, 16) }));
     else tags.appendChild(el('span', { class: 'tag tag-mute', text: '实况不可用' }));
     if (!c.cma) tags.appendChild(el('span', { class: 'tag tag-mute', text: '无官方站号' }));
     if (API.LOCAL) tags.appendChild(el('span', { class: 'tag tag-src', text: '中国天气网代理已连接' }));
@@ -712,7 +719,7 @@
   function renderStatus(msg) {
     if (msg) $('#statusLeft').textContent = msg;
     const srcs = [];
-    if (S.data && S.data.now) srcs.push('中国气象局 weather.cma.cn');
+    if (S.data && S.data.now && S.data.now.src === 'cma') srcs.push('中国气象局 weather.cma.cn');
     if (S.data) srcs.push('Open-Meteo 逐小时');
     if (S.data && S.data.official) srcs.push('中国天气网 d1');
     if (API.LOCAL) srcs.push('本地代理');

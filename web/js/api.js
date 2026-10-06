@@ -228,6 +228,56 @@
     return null;
   }
 
+  /* ═══════ 气象局的"没数据"哨兵值 ═══════
+     站点没有实时观测时，气象局不返回 null，而是把**每个**字段填成哨兵：
+     数值给 9999、字符串给 "9999"、lastUpdate 停在最后一次正常上报的时刻。
+     实测（2026-10-06）：
+       45011B 澳门  lastUpdate 2025/08/08 10:25  9 个字段全 9999（一年前）
+       58968  台北  lastUpdate 2025/04/23 21:17  同样全 9999
+     这两个站是长期没人上报；而 58367 上海 / 57083 郑州 / 57780 株洲 / S1003 成都
+     在 Actions 预抓的静态文件里也出现过 9999（lastUpdate 2026/10/05 19:10，
+     说明这是**偶发**的，不是港澳台专属）—— 所以过滤要放在这里，而不是按城市白名单。
+
+     不过滤的后果（用户实际报的 bug）：9999 被当成真温度存进 S.quotes，
+     quoteOf 又优先取 S.quotes 而不是中国天气网快照，于是
+     报价头显示 9999.0℃、涨幅 9999-23.9 = +9975.1 / (23.9+273.15) ≈ +3358%，
+     湿度 9999%、风速 9999 m/s、体感 9999℃ 一起炸；9999 还会在自选按涨幅排序时顶到最上面。 */
+  const CMA_BAD = 9999;
+  function cmaNum(v) {
+    if (v == null || v === '') return null;
+    const n = (typeof v === 'number') ? v : Number(String(v).trim());
+    return (!isFinite(n) || n === CMA_BAD) ? null : n;
+  }
+  function cmaStr(v) {
+    if (v == null) return '';
+    const t = String(v).trim();
+    return (t === '' || t === String(CMA_BAD)) ? '' : t;
+  }
+  /** lastUpdate 形如 "2025/08/08 10:25"，不是 ISO —— 自己解析，别指望 new Date 跨引擎一致 */
+  function cmaStamp(s) {
+    const m = /^(\d{4})\/(\d{2})\/(\d{2})[ T](\d{2}):(\d{2})/.exec(String(s || ''));
+    if (!m) return NaN;
+    return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime();
+  }
+  /* 超过这个岁数的实况就不叫实况了。24 小时足够宽松：气象局正常时每分钟都上报，
+     只有站点停报（或偶发 9999）才会跨过这条线。解析不出来时不判定，宁可信其有。 */
+  const CMA_STALE_MS = 24 * 3600 * 1000;
+
+  /** 清洗 data.now；整站没有可用温度、或实况已经过期时返回 null，让调用方退回 Open-Meteo */
+  function cleanNow(n, lastUpdate) {
+    if (!n) return null;
+    const temp = cmaNum(n.temperature);
+    if (temp == null) return null;
+    const at = cmaStamp(lastUpdate);
+    if (isFinite(at) && Date.now() - at > CMA_STALE_MS) return null;
+    return {
+      temp: temp, feels: cmaNum(n.feelst),
+      precip: cmaNum(n.precipitation), humidity: cmaNum(n.humidity), pressure: cmaNum(n.pressure),
+      windDir: cmaStr(n.windDirection), windDeg: cmaNum(n.windDirectionDegree),
+      windSpeed: cmaNum(n.windSpeed), windScale: cmaStr(n.windScale)
+    };
+  }
+
   const Cma = {
     ok(city) { return !!(city && city.cma); },
 
@@ -237,17 +287,15 @@
       try {
         const ms = ttl || 180000;
         const d = await cmaRaw('now', city.cma, ms, 'now:' + city.cma);
-        const dd = d && d.data, n = dd && dd.now;
+        const dd = d && d.data;
+        const n = cleanNow(dd && dd.now, dd && dd.lastUpdate);
+        // 哨兵/过期值被清干净 → 这个站没有实况。必须返回 null：
+        // Store.quote 里 `if (n && n.temp != null) return n;` 和 loadCity 里
+        // `now0 || Store.quote(...)` 都靠这个 null 才会去走 Open-Meteo 兜底。
         if (!n) return null;
-        return {
-          src: 'cma',
-          temp: n.temperature, feels: n.feelst,
-          precip: n.precipitation, humidity: n.humidity, pressure: n.pressure,
-          windDir: n.windDirection, windDeg: n.windDirectionDegree,
-          windSpeed: n.windSpeed, windScale: n.windScale,
-          alarm: dd.alarm || [], jieQi: dd.jieQi || '',
-          time: dd.lastUpdate || ''
-        };
+        return Object.assign({
+          src: 'cma', alarm: dd.alarm || [], jieQi: dd.jieQi || '', time: dd.lastUpdate || ''
+        }, n);
       } catch (e) { return null; }
     },
 
@@ -277,7 +325,7 @@
       if (!dd) return null;
       return {
         location: dd.location || null,
-        now: dd.now || null,
+        now: cleanNow(dd.now, dd.lastUpdate),
         daily: (dd.daily || []).map(x => ({
           date: x.date,
           high: x.high, low: x.low,
