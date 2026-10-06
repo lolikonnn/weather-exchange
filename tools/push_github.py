@@ -42,8 +42,10 @@ API = "https://api.github.com"
 UA = "TJS-Weather-Push/1.0"
 
 # 提交的顶层条目（目录递归，文件直接收）
+# 注意：这里是个**白名单** —— 顶层新加的文件如果没写进来，push 会一声不响地跳过它。
+# 2026-10-06 加了 CHANGELOG.md 才踩到：文件在本地、提交也"成功"了，仓库里就是没有。
 PICK = [
-    ".github", ".gitignore", "README.md",
+    ".github", ".gitignore", "README.md", "CHANGELOG.md",
     "web", "server", "android", "tools", "docs",
 ]
 # android/ 下只提交源码，SDK 与拷贝出来的前端不打进去
