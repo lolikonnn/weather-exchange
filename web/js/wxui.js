@@ -533,6 +533,59 @@
       }).join('') + '</div>';
     },
 
+    /* ── 地震 ──
+       数据源是 USGS（免 key、CORS 全开）。为什么不用中国地震台网：www.ceic.ac.cn
+       响应是 200 但**不带 CORS 头**，浏览器里直连读不到。
+       为什么按"离当前城市的距离"排：全国一年几千次地震，不筛距离就是一堆与你无关的列表。
+       半径 700 公里、震级 3.0 以上、最近 130 天 —— 与游戏里用的是同一套口径。 */
+    _qk: { R: 700, D: 130 },
+    async openQuake() {
+      const body = $('#wxQuakeBody'), sub = $('#wxQuakeSub');
+      if (!body) return;
+      // ⚠ 是 window.__APP 不是 window.APP —— 全局只有带双下划线那一个，
+      // 写成 APP 的话这里恒为 null，面板永远显示"先选一个城市"。
+      const app = window.__APP;
+      const c = (app && app.S && app.S.cur) || null;
+      body.innerHTML = '<div class="wx-load">正在拉取地震目录…</div>';
+      if (!c || c.lat == null) {
+        body.innerHTML = '<div class="wx-load">先选一个城市，地震按离它的距离筛。</div>';
+        return;
+      }
+      let list;
+      try { list = await API.OpenMeteo.quakes(c.lat, c.lon, this._qk.R, this._qk.D); }
+      catch (e) { body.innerHTML = '<div class="wx-load">地震目录获取失败：' + esc(e.message) + '</div>'; return; }
+      if (!list.length) {
+        if (sub) sub.textContent = '最近 ' + this._qk.D + ' 天 · ' + this._qk.R + ' 公里内';
+        body.innerHTML = '<div class="wx-load">最近 ' + this._qk.D + ' 天、' + this._qk.R +
+          ' 公里内没有 M3.0 以上的地震 —— 这是好事。</div>';
+        return;
+      }
+      // 算到当前城市的真实大圆距离，顺便记住最近的那次
+      const rows = list.map(q => {
+        const d = (q.lat != null && isFinite(q.lat)) ? qkDist(c.lat, c.lon, q.lat, q.lon) : null;
+        return { q: q, d: d };
+      });
+      const near = rows.filter(r => r.d != null).sort((a, b) => a.d - b.d)[0];
+      if (sub) sub.textContent = '最近 ' + this._qk.D + ' 天 · ' + this._qk.R + ' 公里内 ' + rows.length +
+        ' 次' + (near ? ' · 最近一次 ' + Math.round(near.d) + ' 公里' : '');
+      // 近的排前面：同一次地震对"当地"的意义就是这个距离
+      rows.sort((a, b) => (a.d == null ? 1e9 : a.d) - (b.d == null ? 1e9 : b.d));
+      body.innerHTML = '<div class="wx-quake">' + rows.map(r => {
+        const q = r.q, mag = (q.mag == null ? '—' : q.mag.toFixed(1));
+        const col = qkColor(q.mag);
+        const t = q.t ? new Date(q.t) : null;
+        const ts = t ? (t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate()) +
+          ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes())) : '';
+        return '<div class="wx-qk-item" style="border-left-color:' + col + '">' +
+          '<div class="wx-qk-top"><span class="wx-qk-mag" style="background:' + col + '">M' + mag + '</span>' +
+          '<span class="wx-qk-place">' + esc(q.place || '（无地点描述）') + '</span>' +
+          (r.d != null ? '<span class="wx-qk-d">' + Math.round(r.d) + ' km</span>' : '') + '</div>' +
+          '<div class="wx-qk-meta">' + esc(ts) +
+          (q.depth != null && isFinite(q.depth) ? ' · 深 ' + Math.round(q.depth) + ' km' : '') +
+          '</div></div>';
+      }).join('') + '</div>';
+    },
+
     /* 通用开关 */
     open(id) {
       const el = document.getElementById(id);
@@ -546,6 +599,7 @@
       if (id === 'wxPrecip') this.openPrecip(this._precipKind);
       if (id === 'wxTy') this.openTyphoon();
       if (id === 'wxWarn') this.openWarn();
+      if (id === 'wxQuake') this.openQuake();
     },
     close(id) {
       const el = document.getElementById(id);
@@ -624,6 +678,29 @@
     if (/黄色/.test(s)) return '#f0c419';
     if (/蓝色/.test(s)) return '#3498db';
     return '#7f8c9a';
+  }
+
+  /* ── 地震面板用的小工具 ──
+     ⚠ pad2 不要在这里再定义一次 —— 文件顶部（wxui.js:16）已经有一个
+     `const pad2 = n => ...`，重复声明会让整个 IIFE 抛
+     `SyntaxError: Identifier 'pad2' has already been declared`，
+     WXUI 直接挂不上（报错只在 window.__errs 里能看见）。 */
+  /** 两点间大圆距离（公里）。和 game.js 里的 distKm 同一套算法，
+   *  但不共用 —— wxui 是主站天气页的模块，不该为了一个函数去依赖游戏模块。 */
+  function qkDist(la1, lo1, la2, lo2) {
+    const R = 6371, rad = Math.PI / 180;
+    const dla = (la2 - la1) * rad, dlo = (lo2 - lo1) * rad;
+    const a = Math.sin(dla / 2) * Math.sin(dla / 2) +
+      Math.cos(la1 * rad) * Math.cos(la2 * rad) * Math.sin(dlo / 2) * Math.sin(dlo / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+  /** 震级配色：跟预警信号一个思路 —— 越严重越红。 */
+  function qkColor(m) {
+    if (m == null) return '#7f8c9a';
+    if (m >= 6.0) return '#e74c3c';
+    if (m >= 5.0) return '#e67e22';
+    if (m >= 4.0) return '#f0c419';
+    return '#3498db';
   }
 
   /* 图片播放器：雷达 / 卫星 / 降水共用。

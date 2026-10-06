@@ -603,6 +603,22 @@ body{
 .wx-warn-time{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono)}
 .wx-warn-x{margin-top:6px;color:var(--txt);font-size:12px;line-height:1.6;white-space:pre-wrap}
 
+/* ───────────────── 地震 ───────────────── */
+.wx-quake{padding:9px 11px;display:flex;flex-direction:column;gap:6px}
+.wx-qk-item{
+  background:var(--panel2);border:1px solid var(--line);
+  border-left:3px solid var(--flat);border-radius:3px;padding:7px 10px;
+}
+.wx-qk-top{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt-hi);font-weight:600}
+/* 徽章宽度固定，免得 M4.0 和 M6.2 把地点那一列推得左右横跳 */
+.wx-qk-mag{
+  flex:none;min-width:36px;text-align:center;padding:1px 5px;border-radius:2px;
+  color:#1a1400;font-size:11px;font-weight:700;font-family:var(--mono);
+}
+.wx-qk-place{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wx-qk-d{flex:none;color:var(--accent);font-size:11.5px;font-family:var(--mono)}
+.wx-qk-meta{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono)}
+
 /* ───────────────── 竖屏 ───────────────── */
 @media (max-width:860px){
   /* 六个按钮在 390px 下合计 521px：靠横向滚动的话"我附近"整颗都在屏幕外，

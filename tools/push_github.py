@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
+import hashlib
 import io
 import json
 import os
@@ -79,8 +81,14 @@ def req(method, path, token, data=None, tries=3):
                 obj = json.loads(raw)
             except Exception:
                 obj = {"raw": raw.decode("utf-8", "replace")[:400]}
-            if e.code in (502, 503, 504) and attempt < tries - 1:
-                time.sleep(2 * (attempt + 1))
+            # GitHub 的 secondary rate limit 回的是 403/429 + 一段 "secondary rate limit"
+            # 说明。它跟"权限不足的 403"长得一样，只能看 message 区分 —— 当成权限问题
+            # 直接 sys.exit 的话，一次并发上传打到 320 个文件就会白白丢掉整轮结果。
+            msg = json.dumps(obj, ensure_ascii=False).lower()
+            throttled = e.code in (429, 502, 503, 504) or (
+                e.code == 403 and ("secondary rate limit" in msg or "rate limit" in msg))
+            if throttled and attempt < tries - 1:
+                time.sleep(5 * (attempt + 1))
                 continue
             return e.code, obj
         except Exception as e:                      # 网络抖动
@@ -212,14 +220,35 @@ def main():
         print("已用占位提交初始化仓库，父提交 %s（占位文件不进最终提交）" % parent[:10])
 
     # 4) 上传 blob
-    tree = []
-    done = 0
-    for rel in sorted(files):
+    #
+    # 串行上传 360 个文件要几分钟，而这条链路（前台跑几分钟的命令）在这个环境里
+    # 一定会被会话打断 —— 打断后 blobs 已在 GitHub 上、但没有 commit，
+    # 于是"结果未知"，下一次只能从头再来。改成线程池并发：
+    # 8 个 worker 把 360 次 HTTPS 往返压到 ~45 轮，几十秒就能跑完，
+    # 前台跑得完，也就不用再赌后台作业能不能活过中断。
+    # 注意：tree 的顺序在这里无所谓（GitHub 自己会排），但先按 rel 排序收集，
+    # 保证同一份输入每次得到同一个 tree 顺序，便于对拍。
+    order = sorted(files)
+    results = {}
+
+    # blob 缓存：GitHub 的 blob 是**内容寻址**的，同一份内容永远得到同一个 sha，
+    # 所以本地按内容哈希记一份 (sha256 -> blob sha) 就能在重试时跳过已经传上去的文件。
+    # 上传到一半被限流/被会话打断时，这一条能把下一轮从"重传 359 个"降到"只补剩下的"。
+    cache_path = os.path.join(ROOT, "tmp", ".blobcache.json")
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            cache = json.load(f)
+    except Exception:
+        cache = {}
+    cache_hits = [0]
+
+    def upload_one(rel):
         full = files[rel]
+        content = None
         if rel.startswith("web/"):
             wr = rel[4:]
             if webfilter.is_probe(os.path.basename(wr)) or webfilter.skip_rel(wr):
-                continue
+                return rel, "SKIP", None
             if wr == "index.html":
                 # 把游戏相关的几行摘掉再传；web/index.html 源文件一个字节都不动
                 html = open(full, encoding="utf-8").read()
@@ -227,27 +256,43 @@ def main():
                 if cut:
                     print("  推送时摘掉 index.html 里 %d 行游戏相关内容" % cut)
                 content = html.encode("utf-8")
-                st, blob = req("POST", "/repos/%s/%s/git/blobs" % (owner, a.repo), a.token, {
-                    "content": base64.b64encode(content).decode("ascii"),
-                    "encoding": "base64",
-                })
-                if st not in (200, 201):
-                    sys.exit("上传 %s 失败 (%s): %s" % (rel, st, blob))
-                tree.append({"path": rel, "mode": "100644", "type": "blob", "sha": blob["sha"]})
-                done += 1
-                continue
-        with open(full, "rb") as f:
-            content = f.read()
+        if content is None:
+            with open(full, "rb") as f:
+                content = f.read()
+        ck = hashlib.sha256(content).hexdigest()
+        if cache.get(ck):
+            cache_hits[0] += 1
+            return rel, "OK", cache[ck]
         st, blob = req("POST", "/repos/%s/%s/git/blobs" % (owner, a.repo), a.token, {
             "content": base64.b64encode(content).decode("ascii"),
             "encoding": "base64",
         })
         if st not in (200, 201):
-            sys.exit("上传 %s 失败 (%s): %s" % (rel, st, blob))
-        tree.append({"path": rel, "mode": "100644", "type": "blob", "sha": blob["sha"]})
-        done += 1
-        if done % 20 == 0 or done == len(files):
-            print("  已上传 %d/%d" % (done, len(files)))
+            return rel, "ERR", (st, blob)
+        cache[ck] = blob["sha"]
+        return rel, "OK", blob["sha"]
+
+    workers = max(1, int(os.environ.get("PUSH_WORKERS") or 4))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(upload_one, rel): rel for rel in order}
+        for done, fut in enumerate(concurrent.futures.as_completed(futs), 1):
+            rel, status, payload = fut.result()
+            if status == "SKIP":
+                continue
+            if status == "ERR":
+                st, blob = payload
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(cache, f)
+                sys.exit("上传 %s 失败 (%s): %s" % (rel, st, blob))
+            results[rel] = payload
+            if done % 40 == 0 or done == len(order):
+                print("  已上传 %d/%d（缓存命中 %d）" % (done, len(order), cache_hits[0]))
+
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(cache, f)
+
+    tree = [{"path": rel, "mode": "100644", "type": "blob", "sha": results[rel]}
+            for rel in order if rel in results]
 
     # 4.5) 删掉仓库里已经不该存在的文件
     #      用 base_tree 建树是"在旧树上打补丁"，本地删掉的文件不会跟着从仓库消失。

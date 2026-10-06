@@ -43,7 +43,7 @@
       10 倍约 9%、20 倍约 4.5%、50 倍约 1.8%、100 倍约 0.9%。
       按指数 1000 点算，100 倍只要反向 9 个点。
 
-   ⑥ **只画最近一屏**。一局 960 根（10 天），全塞进 1300px 的话一根才 1.3px，
+   ⑥ **只画最近一屏**。一局 672 根（15 分钟档、7 天），全塞进 1300px 的话一根才 1.9px，
       蜡烛会糊成一条线。所以按容器宽度算可视根数并跟着行情自动滑动 ——
       真实的操盘软件也是这么做的。
 */
@@ -91,16 +91,30 @@
   const JUMP_AT    = 0.9;
   const JUMP_K     = 34;
   const JUMP_DECAY = 0.78;
-  const PER_DAY    = 96;       // 一天 96 根 15 分钟 K
-  // 一局 960 根 = 10 天。原来是 480 根（5 天），但一局最长也就两分钟、
-  // 行情一秒钟跑 24 根，看着像在放快进而不是在盯盘 —— 现在放慢到 1.5~6 根/秒，
-  // 一局 2.7~10.7 分钟，一「天」大约 16~64 秒，节奏更像真的在看 15 分钟图。
-  const ROUND_BARS = 960;
-  // 速度档位单位是**每真实秒推进几根 15 分钟 K 线**；
-  // 界面上按用户要求换算成「几根 1 分钟 K 线/秒」显示（×15），因为那才是真软件的说法。
-  // 一局 960 根 15 分钟 = 14400 根 1 分钟；下面四档对应一局 960 / 640 / 320 / 160 秒。
-  const SPEEDS     = [1, 1.5, 3, 6];
+  const ROUND_DAYS = 7;        // 一局模拟 7 天（原来是 10 天）
+  /* K 线周期档位（分钟）。**15 分钟是数据源的真实粒度**：Open-Meteo 的 minutely_15
+     已经是最细的免费粒度了（minutely_1 / minutely 参数照收、HTTP 200，但 time 数组
+     长度是 0，只看状态码发现不了）。所以：
+       · ≥15 分钟（15/30/45/60）→ 把真数据**聚合**起来（30 = 2 根、45 = 3 根、60 = 4 根）
+       · <15 分钟（1/5）→ 把每根 15 分钟**插值展开**（1 分钟 = 展开成 15 根）
+     也就是说 1 分钟和 5 分钟档上那些细碎波动是**建模的、不是采到的**，README 写明了。 */
+  const BAR_MIN    = [1, 5, 15, 30, 45, 60];
+  const BAR_N      = ['1 分钟', '5 分钟', '15 分钟', '30 分钟', '45 分钟', '60 分钟'];
+  const SRC_MIN    = 15;       // 数据源粒度（Open-Meteo minutely_15）
+  /* 速度档位的单位是**每真实秒推进多少分钟的天气时间**（一局 = 7 天 = 10080 分钟）。
+     所以一局的墙钟时长 = 10080 ÷ 这个数，**与 K 线周期无关**：1 分钟档和 60 分钟档
+     看的是同一段天气、同样时长，只是一个看得细、一个看得粗。
+     四档对应一局约 11.2 / 7.6 / 3.7 / 1.9 分钟。
+     每根 K 线多长时间由 BAR_MIN 决定，所以「每秒几根 K 线」= 这个数 ÷ 周期分钟数，
+     1 分钟档 + 狂暴档能到 90 根/秒 —— 那是画不过来的，所以主循环按 TICK_HZ 批处理。 */
+  const SPEEDS     = [15, 22, 45, 90];
   const SPEED_N    = ['慢', '悠闲', '正常', '狂暴'];
+  const TICK_HZ    = 10;       // 重绘频率上限（Hz）；一次 tick 可以推进多根 K 线
+  function perDay()    { return 1440 / BAR_MIN[G.barIdx]; }   // 一天几根
+  function roundBars() { return ROUND_DAYS * perDay(); }      // 一局几根
+  function srcBars()   { return ROUND_DAYS * 1440 / SRC_MIN; } // 一局要几根 15 分钟源数据
+  function barMin()    { return BAR_MIN[G.barIdx]; }          // 当前周期（分钟）
+  function roundSecs() { return ROUND_DAYS * 1440 / SPEEDS[G.speedIdx]; } // 一局墙钟秒数
 
   /* ── 复合标的：标的不是一个城市的天气，而是「大盘 + 本地 + 湿度 + 盘子扰动」 ──
      群里那位说得对：只炒一个城市的对流，盯久了就那点花样。真实市场里你炒的东西
@@ -115,6 +129,40 @@
   const DEW_K      = 5;        // 露点（湿热）项
   const DISH_K     = 3;        // 盘子扰动的基准振幅（再乘 cityWeight 得到的倍率）
   const DISH_DECAY = 0.96;     // 盘子扰动衰减（半衰期约 17 根 ≈ 4 小时）
+
+  /* ── 四个「真数据」压力源：空气质量 / 地震 / 台风 / 预报偏离 ──
+     这四个都是群里点名要的，而且**每一项都接了真实数据源**，没有一个是编的：
+       空气  air   真数据：air-quality-api 的逐小时 PM2.5（小时级，按小时对齐回放窗口）
+       地震  quake 真数据：USGS 按城市半径筛出的真实事件（时刻 / 震级 / 震源深度）
+       台风  typh  真数据：中央气象台台风网的真实路径点（时刻 / 经纬度 / 风速 / 气压）
+       预报  fcst  真数据：previous-runs 的「事后实测」减去「提前 24 小时发出的预报」
+                     —— 也就是**当时那份预报错了多少**，报得越离谱行情越抖。
+     但要说清楚**哪部分是真、哪部分是建模**：
+       · 事件的**时刻、强度、位置**全部来自上面的真数据源；
+       · 「指数往上还是往下」是**建模决策** —— 游戏设定是"指数越高＝当地越糟"
+         （开场卡片原话：「打雷下雨 = 拉升，天气转好 = 回落」），
+         所以台风和地震都做成**向上**的衰减冲击：出事冲高、随后回落，
+         正好是"利好出尽"，玩家追高就要吃余波的亏。
+       · 任何一项取不到数据就整项退化成 0，**绝不编数据补位**。
+     每一个新项都先做稳健标准化再乘系数，所以叠加后基准仍然是 BASE = 1000。 */
+  const AIR_K      = 6;        // ① 空气质量 PM2.5 的慢变量偏置（小时级，整局缓慢推着走）
+  const QUAKE_M0   = 3.0;      // ② 低于这个震级不算压力（USGS 的查询下限也是 3.0）
+  const QUAKE_K    = 12;       //    每高出 M0 一级、按距离衰减后的冲击点数
+  const QUAKE_R    = 700;      //    震中到这个公里数之外就不计入了（与 api.js 的查询半径一致）
+  const QUAKE_DECAY = 0.90;    //    余波衰减（半衰期约 6.6 根 ≈ 1.7 小时）
+  const TYPHOON_R  = 900;      // ③ 台风中心影响到这个公里数以内才计入
+  const TYPHOON_K  = 40;       //    风速/30 × 距离衰减后的冲击点数（台风是持续过程，不额外加余波）
+  const FCST_K     = 2;        // ④ 预报偏离系数（实测 − 预报，已做稳健标准化）
+
+  /* 上面这几个系数是量出来的，不是拍的。标尺来自探针实测：
+     单根中位涨跌约 2.7 点（0.266%）、整局（672 根）振幅约 250 点（25%）。
+     据此定"一次压力事件该有多大"：
+       · 地震：M6 @ 400km → 峰值约 15 点；M7 @ 300km → 约 27 点；M4.6 @ 650km
+         （北京窗口里真实出现过的那次）→ 约 1.3 点。梯度合理：小震就该几乎看不出来。
+       · 台风：45m/s 从 300km 外压过来 → 峰值约 40 点，随距离自然涨落（不额外加余波）。
+         北京窗口里真实台风全在 900km 外，所以台风项是 0 —— 这是对的，台风不去北京。
+       · 空气：PM2.5 抬到 p90（123）→ +10 点左右；爆表（200+）→ +20 点。
+       · 预报：实测−预报落到 2σ → 约 ±16 点（first-cut 取 7 时到过 ±60，太猛，砍到 2）。 */
 
   const LEVS = [
     { v: 1,   n: '1×',   t: '稳健',   cls: '' },
@@ -131,12 +179,15 @@
     running: false,
     ended: false,
     city: null,
-    series: [],       // [{ t, o, h, l, c }]，长度 ROUND_BARS
+    series: [],       // [{ t, o, h, l, c }]，长度 roundBars()
     seeds: [],        // 每根的真实天气读数（CAPE / 阵风 / 降水 / 天气码 / 露点 / 盘子扰动）
     sev: null,        // 本局窗口的本地恶劣度序列（天气日历用）
-    regLine: null,    // 区域大盘线（整段 92 天里本局窗口那 960 根）；拿不到大盘时为 null
+    regLine: null,    // 区域大盘线（本局窗口那一截）；拿不到大盘时为 null
     regFrom: 0,       // 上面那条线在原始 92 天序列里的起点下标
     regCities: null,  // 组成大盘的城市名
+    base: null,       // 15 分钟原样序列（局中换 K 线周期时重采样用）
+    baseSeeds: null,
+    baseReg: null,
     i: 0,
     price: 0,
     cash0: DEF_CASH,  // 本局本金（开场卡片里可改，局中不可改）
@@ -146,7 +197,9 @@
     lev: 10,
     pct: 30,
     speedIdx: 1,
+    barIdx: 2,        // K 线周期档位下标（BAR_MIN / BAR_N），默认 15 分钟
     timer: null,
+    acc: 0,           // 帧间小数累加器：每帧推进不足一根时的余量（见 tick）
     peak: DEF_CASH,
     maxDD: 0,
     trades: 0,
@@ -453,15 +506,127 @@
     return o;
   }
 
-  /** 从 minutely_15 里随机截一段真实历史，做成带 OHLC 的 K 线 */
-  function pickSeries(mn, reg, city) {
+  /** 两点间大圆距离（公里）。台风/地震都按"离城市多远"折算影响。 */
+  function distKm(la1, lo1, la2, lo2) {
+    const R = 6371, rad = Math.PI / 180;
+    const dla = (la2 - la1) * rad, dlo = (lo2 - lo1) * rad;
+    const a = Math.sin(dla / 2) * Math.sin(dla / 2) +
+      Math.cos(la1 * rad) * Math.cos(la2 * rad) * Math.sin(dlo / 2) * Math.sin(dlo / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+
+  /** 确定性伪随机（[-1,1]）。用它而不是 Math.random()，是为了同一段行情
+   *  在同一个周期下每次都长得一样 —— 否则探针跑两次结果对不上，没法验收。 */
+  function zag(a, b) {
+    const x = Math.sin((a * 131 + b * 17) * 12.9898) * 43758.5453;
+    return (x - Math.floor(x)) * 2 - 1;
+  }
+  function fmtMin(ms) {
+    const d = new Date(ms);
+    return d.getFullYear() + '-' + U.pad2(d.getMonth() + 1) + '-' + U.pad2(d.getDate()) +
+      'T' + U.pad2(d.getHours()) + ':' + U.pad2(d.getMinutes());
+  }
+
+  /** 把几根 15 分钟的天气读数并成一根粗 K 线的读数。
+   *  取 max 的是"极值型"（阵风、CAPE、天气码），取平均的是"状态型"（PM2.5、露点、盘子），
+   *  降水求和。地震/台风取这一段里最强的那次，并把它的名字/距离/震级带上。 */
+  function aggSeed(g) {
+    if (g.length === 1) return g[0];
+    const o = {
+      cape: 0, gust: 0, precip: 0, wcode: 0, dew: null, dish: 0,
+      pm25: null, air: 0, quake: 0, qmag: 0, qplace: '', typh: 0, tname: '', tdist: 0, fcst: 0
+    };
+    let dp = 0, dn = 0, pm = 0, pn = 0, n = 0;
+    for (let i = 0; i < g.length; i++) {
+      const s = g[i]; n++;
+      o.cape = Math.max(o.cape, s.cape || 0);
+      o.gust = Math.max(o.gust, s.gust || 0);
+      o.precip = +(o.precip + (s.precip || 0)).toFixed(1);
+      o.wcode = Math.max(o.wcode, s.wcode || 0);
+      if (s.dew != null) { dp += s.dew; dn++; }
+      o.dish += s.dish || 0;
+      if (s.pm25 != null) { pm += s.pm25; pn++; }
+      o.air += s.air || 0;
+      o.fcst += s.fcst || 0;
+      if ((s.quake || 0) > o.quake) { o.quake = s.quake; o.qmag = s.qmag; o.qplace = s.qplace; }
+      if ((s.typh || 0) > o.typh) { o.typh = s.typh; o.tname = s.tname; o.tdist = s.tdist; }
+    }
+    o.dew = dn ? +(dp / dn).toFixed(1) : null;
+    o.dish = +(o.dish / n).toFixed(1);
+    o.pm25 = pn ? Math.round(pm / pn) : null;
+    o.air = +(o.air / n).toFixed(1);
+    o.fcst = +(o.fcst / n).toFixed(2);
+    o.quake = +(+o.quake).toFixed(2);
+    o.typh = +(+o.typh).toFixed(2);
+    o.qmag = +(+o.qmag || 0).toFixed(1);
+    return o;
+  }
+
+  /** 把 15 分钟的基准序列重采样成玩家选的 K 线周期。
+   *  **数据源只有 15 分钟**（Open-Meteo 的 minutely_15 就是最细的免费粒度了），所以：
+   *    · 周期 ≥ 15 分钟 → **聚合**真数据（15 原样、30 并 2 根、45 并 3 根、60 并 4 根）
+   *    · 周期 <  15 分钟 → **插值展开**（1 分钟 = 1 根摊成 15 根、5 分钟 = 摊成 3 根）
+   *  聚合只是"看粗一点"，丢的是细节；展开则是**建模** —— 两根 15 分钟之间到底
+   *  怎么走的没人知道，所以收盘价沿父根的开→收线性走、叠一个确定性小锯齿，
+   *  影线按父根振幅的比例分下去。**1 分钟/5 分钟档上那些细碎波动是画出来的、不是采到的**，
+   *  README 里写明了。展开时最后一根强制收在父根收盘价上，所以把 1 分钟聚合回
+   *  15 分钟能和真数据逐点对上。 */
+  function resample(series, seeds, regLine) {
+    const barMin = BAR_MIN[G.barIdx];
+    const out = [], sd = [], rg = [];
+    if (barMin >= SRC_MIN) {
+      const k = Math.round(barMin / SRC_MIN);
+      for (let i = 0; i < series.length; i += k) {
+        const g = series.slice(i, i + k);
+        const o = g[0].o, c = g[g.length - 1].c;
+        let hi = -Infinity, lo = Infinity;
+        for (let q = 0; q < g.length; q++) { if (g[q].h > hi) hi = g[q].h; if (g[q].l < lo) lo = g[q].l; }
+        out.push({ t: g[0].t, o: o, h: Math.max(hi, o, c), l: Math.min(lo, o, c), c: c });
+        sd.push(aggSeed(seeds.slice(i, i + k)));
+        if (regLine) rg.push(regLine[Math.min(regLine.length - 1, i + k - 1)]);
+      }
+      return { series: out, seeds: sd, regLine: regLine ? rg : null };
+    }
+    // ── 展开：每根 15 分钟摊成 m 根 ──
+    const m = Math.round(SRC_MIN / barMin);
+    const t0 = series.length ? Date.parse(series[0].t) : 0;
+    for (let i = 0; i < series.length; i++) {
+      const p = series[i], amp = Math.max(1e-6, p.h - p.l);
+      const base = t0 + i * SRC_MIN * 60000;
+      const r0 = regLine ? regLine[i] : 0;
+      const r1 = regLine ? regLine[Math.min(regLine.length - 1, i + 1)] : 0;
+      let prev = p.o;
+      for (let j = 0; j < m; j++) {
+        const f = (j + 1) / m;
+        let c = p.o + (p.c - p.o) * f + amp * 0.06 * zag(i, j);
+        if (j === m - 1) c = p.c;                 // 收在父根收盘，聚合回去才对得上
+        const o = prev;
+        const w = amp * 0.10 * Math.abs(zag(i, j + 977)) + Math.abs(c - o) * WICK_K;
+        out.push({
+          t: fmtMin(base + j * barMin * 60000),
+          o: o, h: Math.max(o, c) + w, l: Math.min(o, c) - w, c: c
+        });
+        sd.push(seeds[i]);                        // 子根共用父根那份天气读数
+        if (regLine) rg.push(+(r0 + (r1 - r0) * f).toFixed(2));
+        prev = c;
+      }
+    }
+    return { series: out, seeds: sd, regLine: regLine ? rg : null };
+  }
+
+  /** 从 minutely_15 里随机截一段真实历史，做成带 OHLC 的 K 线。
+   *  extra = { air, quake, typh, fcst } 四个压力源的数据（缺了就传 null，对应项退化成 0） */
+  function pickSeries(mn, reg, city, extra) {
     if (!mn || !mn.time || !mn.time.length) return null;
     const n = mn.time.length;
     let i0 = mn.time.findIndex(t => t >= nowLocalStr());
     if (i0 < 0) i0 = n;
     // 只用"现在"之前的：预报段不能拿来当已发生的行情
     const end = Math.max(2, Math.min(n, i0));
-    const need = ROUND_BARS;
+    // 一局 7 天 = 672 根 15 分钟**源**数据。基准序列永远按数据源粒度（15 分钟）算，
+    // 算完再按玩家选的周期重采样（见 resample）—— 这样价格模型只有一套，
+    // 不会出现"1 分钟档和 60 分钟档走势不一样"的怪事。
+    const need = srcBars();
     if (end < need + 1) return null;
 
     const sev = severity(mn);
@@ -498,6 +663,137 @@
     // ── 盘子扰动：带衰减的随机游走。小地方振幅更大（庄家操盘）──
     const dScale = dishScale(city) * DISH_K;
 
+    // ══ 四个压力源：时刻 / 强度 / 位置全部来自真数据，只做"怎么折成点数"的建模 ══
+    // 定位根号一律用**时间差**（barT0 与事件时刻都用同一个 Date.parse 口径），
+    // 所以浏览器把 mn.time 当本地时间还是 UTC 解释都不影响结果。
+    const BAR_MS = 900000;
+    const barT0 = mn.time.length ? Date.parse(mn.time[0]) : 0;
+    const idxOf = t => (barT0 && t) ? Math.round((t - barT0) / BAR_MS) : -1;
+
+    // ① 空气质量：小时级慢变量。PM2.5 按小时键对齐到每根 15 分钟 K。
+    let airN = null, airRaw = null;
+    if (extra && extra.air && extra.air.time && extra.air.time.length) {
+      const A = extra.air, am = {};
+      for (let k = 0; k < A.time.length; k++) if (A.pm25[k] != null) am[A.time[k]] = +A.pm25[k];
+      const hourOf = t => t.slice(0, 13) + ':00';      // "2026-10-05T13:45" → "2026-10-05T13:00"
+      const vals = [];
+      const raw = new Array(n).fill(null);
+      for (let k = 0; k < n; k++) {
+        const v = am[hourOf(mn.time[k])];
+        if (v != null) { raw[k] = v; vals.push(v); }
+      }
+      // 覆盖不到一半就不认 —— 否则拿零星半小时的 PM2.5 去推整局，等于编数据
+      if (vals.length > n * 0.5) {
+        const mA = median(vals), sA = robustScale(vals, mA) || 1;
+        airN = new Array(n).fill(0);
+        for (let k = 0; k < n; k++) airN[k] = raw[k] == null ? 0 : (raw[k] - mA) / sA;
+        airRaw = raw;
+      }
+    }
+
+    // ② 地震：事件型。每来一次就在对应根号上砸一记冲击，再按 QUAKE_DECAY 拖一段余波。
+    //    按震中到城市的真实大圆距离衰减；超过 QUAKE_R 不计（与 api.js 的查询半径一致）。
+    const qArr = new Array(n).fill(0);
+    const qMag = new Array(n).fill(0), qPlace = new Array(n).fill('');
+    if (extra && extra.quake && extra.quake.length && barT0 && city.lat != null) {
+      for (const e of extra.quake) {
+        const d = (e.mag || 0) - QUAKE_M0;
+        if (d <= 0) continue;
+        const i = idxOf(e.t);
+        if (i < -160 || i >= n) continue;
+        const dist = (e.lat != null) ? distKm(city.lat, city.lon, e.lat, e.lon) : 0;
+        const near = Math.max(0, 1 - dist / QUAKE_R);
+        if (near <= 0) continue;
+        const amp = QUAKE_K * d * near;
+        for (let j = Math.max(0, i); j < Math.min(n, i + 160); j++) {
+          qArr[j] += amp * Math.pow(QUAKE_DECAY, j - i);
+          // 播报要报"震级 + 震中"，所以顺手记下这一根上最强的那个事件
+          if (+e.mag > qMag[j]) { qMag[j] = +e.mag; qPlace[j] = e.place || ''; }
+        }
+      }
+    }
+
+    // ③ 台风：持续过程，所以不像地震那样"砸一记再衰减"，而是**逐根算台风中心有多近**。
+    //    路径点每 3~6 小时一个，按时间线性插值出中心位置，距离越近、风速越大，推得越高；
+    //    台风压过来自然涨、走过去自然落，不需要额外加余波。
+    const tArr = new Array(n).fill(0);
+    const tName = new Array(n).fill(''), tWind = new Array(n).fill(0), tDist = new Array(n).fill(0);
+    if (extra && extra.typh && extra.typh.length && barT0 && city.lat != null) {
+      const byNum = {};
+      for (const p of extra.typh) (byNum[p.num || '_'] = byNum[p.num || '_'] || []).push(p);
+      for (const key in byNum) {
+        const path = byNum[key].slice().sort((a, b) => a.t - b.t);
+        if (!path.length) continue;
+        const tA = +path[0].t, tB = +path[path.length - 1].t;
+        for (let k = 0; k < n; k++) {
+          const t = barT0 + k * BAR_MS;
+          if (t < tA - 6 * 3600000 || t > tB + 6 * 3600000) continue;
+          let lo = 0, hi = path.length - 1;
+          while (lo < hi - 1) { const mid = (lo + hi) >> 1; if (path[mid].t <= t) lo = mid; else hi = mid; }
+          const a = path[lo], b = path[hi] || path[lo];
+          const span = (b.t - a.t) || 1;
+          const u = Math.max(0, Math.min(1, (t - a.t) / span));
+          const la = a.lat + (b.lat - a.lat) * u, lo2 = a.lon + (b.lon - a.lon) * u;
+          const w = (a.wind || 0) + ((b.wind || 0) - (a.wind || 0)) * u;
+          const near = 1 - distKm(city.lat, city.lon, la, lo2) / TYPHOON_R;
+          if (near > 0) {
+            const add = TYPHOON_K * (w / 30) * near * near;   // 平方衰减，边缘影响小
+            tArr[k] += add;
+            if (add > tWind[k]) {                            // 播报取影响最大的那个台风
+              tWind[k] = add;
+              tName[k] = (path[lo].name || '') + (path[lo].num ? '' : '');
+              tDist[k] = Math.round(distKm(city.lat, city.lon, la, lo2));
+            }
+          }
+        }
+      }
+    }
+
+    // ④ 预报偏离：实测气温 − 提前 24 小时发出的预报。报得越离谱，这根 K 线越"意外"。
+    let fN = null;
+    if (extra && extra.fcst && extra.fcst.time && extra.fcst.time.length) {
+      const F = extra.fcst, fm = {};
+      for (let k = 0; k < F.time.length; k++) {
+        const a = F.act[k], f = F.fc1[k];
+        if (a != null && f != null) fm[F.time[k]] = +a - +f;
+      }
+      const vals = [];
+      const raw = new Array(n).fill(null);
+      for (let k = 0; k < n; k++) {
+        const v = fm[mn.time[k]];
+        if (v != null) { raw[k] = v; vals.push(v); }
+      }
+      if (vals.length > n * 0.5) {
+        const mF = median(vals), sF = robustScale(vals, mF) || 1;
+        fN = new Array(n).fill(0);
+        for (let k = 0; k < n; k++) fN[k] = raw[k] == null ? 0 : (raw[k] - mF) / sF;
+      }
+    }
+
+    /* 回放窗口的事件偏置。
+       纯随机会有个尴尬 —— 92 天里真来过台风、真震过，可随机截的那 7 天常常一个都没覆盖到，
+       于是这几个压力源常年看不见（实测北京/广州十局里台风项 0 覆盖）。
+       这里**不改成"每局必有事件"**（那就成安排好的剧情了，也就没有"你不知道这段是哪年月"），
+       而是：一半的局挑"事件分最高"的那十天，另一半纯随机。
+       事件分 = 这一窗里地震项 + 台风项贡献的总量。 */
+    function biasedStart(s, limit) {
+      if (Math.random() >= 0.5) return s;
+      let best = -1, bestSc = -1;
+      for (let t = 0; t < 40; t++) {
+        const c = Math.floor(Math.random() * (limit - need));
+        let ok = true;
+        for (let j = 0; j < need; j += 7) {           // 每 7 根抽一次就够判断有没有洞
+          if (mn.time[c + j] >= now || mn.gust[c + j] == null || mn.cape[c + j] == null) { ok = false; break; }
+        }
+        if (!ok) continue;
+        let sc = 0;
+        for (let j = 0; j < need; j += 4) sc += Math.abs(qArr[c + j]) + Math.abs(tArr[c + j]);
+        if (sc > bestSc) { bestSc = sc; best = c; }
+      }
+      // 没找到更好的（或者全都是 0）就退回原来那个
+      return (best >= 0 && bestSc > 0.5) ? best : s;
+    }
+
     for (let k = 0; k < 24; k++) {
       const s = Math.floor(Math.random() * (end - need));
       let ok = true;
@@ -506,15 +802,16 @@
         if (mn.time[s + j] >= now || mn.gust[s + j] == null || mn.cape[s + j] == null) { ok = false; break; }
       }
       if (!ok) continue;
+      const s2 = biasedStart(s, end - need);
 
-      const win = tr.slice(s, s + need);
+      const win = tr.slice(s2, s2 + need);
       const m = median(win);
       const series = [];
       const seeds = [];
       const regLine = [];          // 画在副图上的"大盘"（跟主图同一根数）
       let carry = 0, dish = 0;
       for (let j = 0; j < need; j++) {
-        const k2 = s + j;
+        const k2 = s2 + j;
         // 「突发行情」：某根 15 分钟里天气本身剧烈变化（CAPE 炸了、阵风猛增、开始下暴雨）时，
         // 除了常规的噪声项，再砸进去一记冲击 —— 这就是久留美里那种"蜡烛图突然拉到底"。
         //
@@ -541,8 +838,15 @@
         // 所以它是一条"能看出有人在推"的平滑曲线，而不是每根乱跳的雪花点。
         dish = dish * DISH_DECAY + (Math.random() - 0.5) * 2 * dScale;
 
+        // 四个压力源（缺数据的项 airN/fN 为 null、qArr/tArr 天然为 0）
+        const airTerm  = airN ? airN[k2] * AIR_K : 0;
+        const quakeTerm = qArr[k2];
+        const typhTerm = tArr[k2];
+        const fcstTerm = fN ? fN[k2] * FCST_K : 0;
+
         const px = BASE + (tr[k2] - m) * TREND_K + (sev[k2] - tr[k2]) * NOISE_K + carry
-          + regFast + dnorm * DEW_K + dish;
+          + regFast + dnorm * DEW_K + dish
+          + airTerm + quakeTerm + typhTerm + fcstTerm;
         series.push({ t: mn.time[k2], c: px });
         regLine.push(BASE + regFast * 3 + dish * 0.2);
         seeds.push({
@@ -551,7 +855,16 @@
           precip: +(+(mn.precip[k2] || 0)).toFixed(1),
           wcode: mn.wcode[k2] | 0,
           dew: D[k2] == null ? null : +(+D[k2]).toFixed(1),
-          dish: +dish.toFixed(1)
+          dish: +dish.toFixed(1),
+          pm25: (airRaw && airRaw[k2] != null) ? +airRaw[k2].toFixed(0) : null,
+          air: +airTerm.toFixed(1),
+          quake: +quakeTerm.toFixed(2),
+          qmag: qMag[k2] || 0,
+          qplace: qPlace[k2] || '',
+          typh: +typhTerm.toFixed(2),
+          tname: tName[k2] || '',
+          tdist: tDist[k2] || 0,
+          fcst: +fcstTerm.toFixed(2)
         });
       }
       // 补 OHLC：开 = 上一根收，收 = 本根指数（都是真采样）；
@@ -565,18 +878,24 @@
         series[j].l = Math.min(o, c) - w;
       }
       if (!series.every(b => isFinite(b.o) && isFinite(b.c))) continue;
+      // 按玩家选的 K 线周期重采样（15 分钟源 → 目标周期），价格模型本身不动。
+      const rs = resample(series, seeds, regSev ? regLine : null);
+      const raw = regSev ? regLine : null;
       return {
-        series, seeds, sevWin: sev.slice(s, s + need),
-        regLine: regSev ? regLine : null,
-        regFrom: s,
-        regCities: (reg && reg.cities) || null
+        series: rs.series, seeds: rs.seeds, sevWin: sev.slice(s2, s2 + need),
+        regLine: rs.regLine,
+        regFrom: s2,
+        regCities: (reg && reg.cities) || null,
+        // 15 分钟原样那一份也带出来 —— 局中换 K 线周期时不用重新取数据，
+        // 直接拿它重采样再把已推进的天气时间映射过去就行。
+        base: series, baseSeeds: seeds, baseReg: raw
       };
     }
     return null;
   }
 
   function labelAt(i) {
-    const day = Math.floor(i / PER_DAY) + 1, m = (i % PER_DAY) * 15;
+    const day = Math.floor(i / perDay()) + 1, m = (i % perDay()) * barMin();
     const hh = U.pad2(Math.floor(m / 60)), mm = U.pad2(m % 60);
     return (m === 0) ? ('第 ' + day + ' 天') : ('D' + day + ' ' + hh + ':' + mm);
   }
@@ -590,7 +909,7 @@
      触发门槛跟价格冲击用的同一个 JUMP_AT —— 日历上标了的，盘面上就真会动。 */
   function calendarAt(i, horizon) {
     if (!G.sev || !G.series.length) return [];
-    const end = Math.min(G.series.length - 1, i + (horizon || PER_DAY));
+    const end = Math.min(G.series.length - 1, i + (horizon || perDay()));
     const raw = [];
     for (let k = Math.max(1, i + 1); k <= end; k++) {
       const d = Math.abs(G.sev[k] - G.sev[k - 1]);
@@ -611,18 +930,48 @@
   function newsAt(i) {
     const s = G.seeds && G.seeds[i];
     if (!s) return null;
+    const prev = G.seeds && G.seeds[i - 1];
     const wc = s.wcode;
-    // 盘子扰动优先播 —— 它是"资金面"消息，比天气更能解释一根莫名的长阳/长阴
-    if (s.dish != null) {
-      if (s.dish >= DISH_K * 1.5) return { k: 'pump', t: '🏦 大单扫货', v: '盘子异动 +' + n1(s.dish) };
-      if (s.dish <= -DISH_K * 1.5) return { k: 'dump', t: '📉 有人出货', v: '盘子异动 ' + n1(s.dish) };
+    // 「状态类」消息只在**刚跨过门槛的那一下**播（上升沿），不然台风挨着 500 公里飘两天，
+    // 每根 K 线都要弹一次"🌀 台风" —— 那不是新闻，那是刷屏。
+    // （实测不加这个判断时：一局 672 根里播了 540 次台风。）
+    const rise = (f, th) => s[f] >= th && !(prev && prev[f] >= th);
+    const fall = (f, th) => s[f] <= th && !(prev && prev[f] <= th);
+
+    // 四个真数据压力源排在最前面 —— 它们是"外部消息"，比一根 K 线本身更能解释行情。
+    // 顺序 = 罕见到常见：地震 > 台风 > 预报失准 > 空气。
+    if (rise('quake', 1)) {
+      const pl = String(s.qplace || '').replace(/^\s*(near|about)\s+/i, '').split(',')[0];
+      return { k: 'quake', t: '🌋 地震', v: 'M' + n1(s.qmag) + (pl ? ' · ' + pl : '') + ' · 冲击 +' + n1(s.quake) };
     }
-    if (wc === 95 || wc === 96 || wc === 99) return { k: 'storm', t: '⚡ 雷暴', v: 'CAPE ' + s.cape };
-    if (s.gust >= 32) return { k: 'typhoon', t: '🌀 台风外围影响', v: '阵风 ' + n1(s.gust) + ' m/s' };
-    if (s.cape >= 3000) return { k: 'cape', t: '🌩 对流爆发', v: 'CAPE ' + s.cape };
-    if (s.gust >= 25) return { k: 'gust', t: '🌪 大风', v: '阵风 ' + n1(s.gust) + ' m/s' };
-    if (s.precip >= 3) return { k: 'rain', t: '🌧 短时强降水', v: s.precip + ' mm' };
-    if (s.cape <= 50 && s.gust <= 6) return { k: 'calm', t: '🌤 天气转好', v: 'CAPE ' + s.cape };
+    if (rise('typh', 6)) {
+      return { k: 'typhoon', t: '🌀 台风' + (s.tname ? ' ' + s.tname : ''),
+               v: (s.tdist ? s.tdist + ' 公里外' : '影响中') + ' · 冲击 +' + n1(s.typh) };
+    }
+    if (Math.abs(s.fcst) >= 6 && Math.abs(prev ? prev.fcst : 0) < 6) {
+      return s.fcst > 0
+        ? { k: 'fcstH', t: '🔥 比预报更热', v: '预报失准 +' + n1(s.fcst) }
+        : { k: 'fcstL', t: '❄️ 比预报更冷', v: '预报失准 ' + n1(s.fcst) };
+    }
+    // 空气是慢变量，只在真的"爆表"或真的干净时才播，且同样只播一次
+    if (rise('pm25', 200)) return { k: 'airBad', t: '😷 空气爆表', v: 'PM2.5 ' + s.pm25 };
+    if (s.pm25 != null && fall('pm25', 10)) return { k: 'airGood', t: '🍃 空气通透', v: 'PM2.5 ' + s.pm25 };
+    // 盘子扰动其次 —— 它是"资金面"消息，比天气更能解释一根莫名的长阳/长阴。
+    // 门槛 DISH_K × 2.5（约 p98）：实测 dish 的 p90 才 4.6，
+    // 按 1.5 倍设会让 17% 的 K 线都弹一次"大单扫货"，那就成了噪音而不是消息。
+    if (s.dish != null) {
+      if (rise('dish', DISH_K * 2.5)) return { k: 'pump', t: '🏦 大单扫货', v: '盘子异动 +' + n1(s.dish) };
+      if (fall('dish', -DISH_K * 2.5)) return { k: 'dump', t: '📉 有人出货', v: '盘子异动 ' + n1(s.dish) };
+    }
+    // 天气本身也是「状态」，同样只播上升沿 —— 一场雷暴持续两小时不该弹 8 次
+    const pwc = prev ? prev.wcode : 0;
+    const stormy = v => v === 95 || v === 96 || v === 99;
+    if (stormy(wc) && !stormy(pwc)) return { k: 'storm', t: '⚡ 雷暴', v: 'CAPE ' + s.cape };
+    if (rise('gust', 32)) return { k: 'gale', t: '🌀 阵风', v: '阵风 ' + n1(s.gust) + ' m/s' };
+    if (rise('cape', 3000)) return { k: 'cape', t: '🌩 对流爆发', v: 'CAPE ' + s.cape };
+    if (rise('gust', 25)) return { k: 'gust', t: '🌪 大风', v: '阵风 ' + n1(s.gust) + ' m/s' };
+    if (rise('precip', 3)) return { k: 'rain', t: '🌧 短时强降水', v: s.precip + ' mm' };
+    if (fall('cape', 50) && s.gust <= 6) return { k: 'calm', t: '🌤 天气转好', v: 'CAPE ' + s.cape };
     return null;
   }
 
@@ -685,7 +1034,7 @@
   /** 一屏能看清多少根：容器宽度 ÷ 每根 9px，两端都夹一下 */
   function visBars() {
     const cw = (G.main && G.main.getWidth && G.main.getWidth()) || 900;
-    return Math.max(36, Math.min(ROUND_BARS, Math.floor(cw / 9)));
+    return Math.max(36, Math.min(roundBars(), Math.floor(cw / 9)));
   }
 
   /** 简单移动平均。返回与 series 等长的数组，前 w−1 根是 null（线自然断开） */
@@ -754,7 +1103,7 @@
     const maVis = maAll.map(a => a.slice(from, n));
     maVis.forEach(a => a.forEach(v => { if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } }));
     // 大盘线：不进 Y 轴范围计算 —— 它是参考指标，把它算进去会把蜡烛压扁。
-    // 注意 regLine 已经是**本局窗口**那一截了（长度 = ROUND_BARS），不用再加 regFrom。
+    // 注意 regLine 已经是**本局窗口**那一截了（长度 = roundBars()），不用再加 regFrom。
     const regVis = G.regLine ? G.regLine.slice(from, n) : null;
     // 把 Y 轴拉开到能容纳「持仓均价」—— 否则入场线落在可视范围外时，
     // ECharts 会把它贴到坐标轴边缘，看起来像"价格就在最底下"，是骗人的。
@@ -965,10 +1314,10 @@
 
     const sub = $('#ggSub');
     if (sub) {
-      const mm = (G.i % PER_DAY) * 15;
+      const mm = (G.i % perDay()) * barMin();
       const when = G.series.length
-        ? ('第 ' + (Math.floor(G.i / PER_DAY) + 1) + ' 天 ' + U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60) +
-          '　·　' + (G.i + 1) + ' / ' + ROUND_BARS + ' 根　·　' + G.lev + ' 倍杠杆')
+        ? ('第 ' + (Math.floor(G.i / perDay()) + 1) + ' 天 ' + U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60) +
+          '　·　' + (G.i + 1) + ' / ' + roundBars() + ' 根　·　' + G.lev + ' 倍杠杆')
         : '—';
       sub.textContent = G.city ? (G.city.name + ' WXI 天气指数　·　' + when) : when;
     }
@@ -1045,7 +1394,7 @@
     // 注意别用 setT：它是在这个函数下面才 const 出来的，从这里调会踩 TDZ
     const calBox = $('#ggCal'), calTip = $('#ggCalTip');
     if (calBox) {
-      const evs = calendarAt(G.i, PER_DAY);
+      const evs = calendarAt(G.i, perDay());
       if (calTip) calTip.textContent = '未来 24 小时 · ' + (evs.length ? evs.length + ' 次变天' : '风平浪静');
       if (!evs.length) {
         calBox.innerHTML = '<div class="gg-empty">接下来一天没什么动静</div>';
@@ -1085,14 +1434,14 @@
       if (symEl) symEl.title = G.regCities && G.regCities.length
         ? ('区域大盘 = ' + G.regCities.join(' / ') + ' 的等权平均（15 分钟，同省最多 8 城）')
         : '这台设备的区域大盘取不到，本局是纯本地行情';
-      const mm = (G.i % PER_DAY) * 15;
-      setT('#ggTbTime', '第 ' + (Math.floor(G.i / PER_DAY) + 1) + ' 天 ' +
+      const mm = (G.i % perDay()) * barMin();
+      setT('#ggTbTime', '第 ' + (Math.floor(G.i / perDay()) + 1) + ' 天 ' +
         U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60));
       const cost = $('#ggTbSpread');
       if (cost) cost.title = '一手开+平的手续费，合计 ¥' + costYuan.toFixed(2);
       setT('#ggTbConn', G.ended ? '已收盘' : (G.running ? '行情推送中' : '已暂停'));
       // 「行情速度」那一行右边实时报一局大概要跑多久 —— 光看数字没有体感
-      const secs = ROUND_BARS / SPEEDS[G.speedIdx];
+      const secs = roundSecs();
       setT('#ggSpeedTip', '一局约 ' + (secs >= 90 ? (secs / 60).toFixed(1) + ' 分钟' : Math.round(secs) + ' 秒'));
       const lp2 = $('#ggLongPx'), sp2 = $('#ggShortPx');
       if (lp2) lp2.textContent = n1(px);
@@ -1131,50 +1480,74 @@
   }
 
   /* ═══════════════ 主循环 ═══════════════ */
+  /** 一帧推进多少根 K 线。
+   *  速度的单位是「每真实秒推进多少分钟天气」，换成根就是 SPEEDS/barMin()，
+   *  再除以帧率。**必须用小数累加器**：1 分钟档在「慢」速下只有
+   *  15/1/10 = 1.5 根/秒，每帧 0.15 根，取整就永远是 0 了。
+   *  一帧可能推进好几根（60 分钟档 + 狂暴 = 90/60/10 = 0.15 根/帧，不会；
+   *  但 1 分钟档 + 狂暴 = 90/1/10 = 9 根/帧），所以循环里逐根走、
+   *  只在整批结束后 render 一次。挂单/爆仓仍然**逐根**判定 —— 影线扫到
+   *  止损价就该在那一根成交，不能等这一批走完才看。 */
   function tick() {
     if (!G.running || G.ended) return;
-    if (G.i >= G.series.length - 1) { endRound('timeup'); return; }
+    G.acc += (SPEEDS[G.speedIdx] / barMin()) / TICK_HZ;
+    let step = Math.floor(G.acc);
+    if (step < 1) return;                       // 还没攒够一根
+    G.acc -= step;
 
-    const prev = equity();
-    const prevPx = G.price;
-    G.i++;
-    G.price = G.series[G.i].c;
+    const eqBefore = equity();
+    let news = null;
 
-    // 挂单 / 止损止盈先跑，再判爆仓 —— 顺序反了的话，止损单会因为
-    // "这一根已经先爆仓了"而永远来不及救你。
-    processOrders(prevPx);
+    for (let k = 0; k < step; k++) {
+      if (G.i >= G.series.length - 1) { endRound('timeup'); return; }
 
-    const mu = marginUsed();
-    if (mu > 0 && equity() <= mu * MAINTAIN) {
-      liquidate();
-      G.hist.push(G.cash);
-      G.peak = Math.max(G.peak, G.cash);
+      const prevPx = G.price;
+      G.i++;
+      G.price = G.series[G.i].c;
+
+      // 挂单 / 止损止盈先跑，再判爆仓 —— 顺序反了的话，止损单会因为
+      // "这一根已经先爆仓了"而永远来不及救你。
+      processOrders(prevPx);
+
+      const mu = marginUsed();
+      if (mu > 0 && equity() <= mu * MAINTAIN) {
+        liquidate();
+        G.hist.push(G.cash);
+        G.peak = Math.max(G.peak, G.cash);
+        trackDD();
+        if (global.navigator && navigator.vibrate) { try { navigator.vibrate([80, 60, 220]); } catch (e) { } }
+        beep(110, .5, 'sawtooth', .09);
+        render();
+        endRound('liquidated');
+        return;
+      }
+
+      const e = equity();
+      G.hist.push(e);
+      G.peak = Math.max(G.peak, e);
       trackDD();
-      if (global.navigator && navigator.vibrate) { try { navigator.vibrate([80, 60, 220]); } catch (e) { } }
-      beep(110, .5, 'sawtooth', .09);
-      render();
-      endRound('liquidated');
-      return;
+
+      // 天气事件闪报（数值全是真的）；一帧走多根时只留最后一条，
+      // 否则狂暴速下飘字会糊满屏幕
+      const nw = newsAt(G.i);
+      if (nw) news = nw;
     }
 
-    const e = equity();
-    G.hist.push(e);
-    G.peak = Math.max(G.peak, e);
-    trackDD();
+    if (news) flashNews(news);
 
-    // 天气事件闪报（数值全是真的）
-    flashNews(newsAt(G.i));
+    const mu = marginUsed(), e = equity();
     // 保证金告急的滴答声
     if (mu > 0 && e < mu * 1.6) beep(1180, .05, 'square', .022);
     // 里程碑音效
-    if (Math.floor(prev / 10000) !== Math.floor(e / 10000)) beep(e > prev ? 880 : 320, .09, 'triangle', .035);
+    if (Math.floor(eqBefore / 10000) !== Math.floor(e / 10000)) beep(e > eqBefore ? 880 : 320, .09, 'triangle', .035);
     render();
   }
   function trackDD() { const e = equity(); if (G.peak > 0) G.maxDD = Math.max(G.maxDD, (G.peak - e) / G.peak); }
 
   function startTimer() {
     stopTimer();
-    G.timer = setInterval(tick, 1000 / SPEEDS[G.speedIdx]);
+    G.acc = 0;
+    G.timer = setInterval(tick, 1000 / TICK_HZ);
   }
   function stopTimer() { if (G.timer) { clearInterval(G.timer); G.timer = null; } }
 
@@ -1201,17 +1574,24 @@
 
     if (cover) cover.innerHTML = '<div class="gg-card"><h2>取行情中…</h2><p>正在取 <b>' + city.name + '</b> 的 15 分钟天气行情</p><p class="dim">本地 92 天的对流能量 / 阵风 / 降水，外加同省城市的大盘，第一次要几秒。</p></div>';
 
-    // 本地行情与区域大盘并发取；大盘拿不到不算失败（退化成纯本地行情）
+    // 六个源并发取（本地 15 分钟行情 / 同省大盘 / 空气 / 地震 / 台风 / 预报偏离）。
+    // 除了本地行情，其余**任何一个拿不到都只是那一项退化成 0**，不影响开局。
     let mn = null, reg = null;
+    const extra = { air: null, quake: null, typh: null, fcst: null };
     try {
-      const both = await Promise.all([
+      const all = await Promise.all([
         API.OpenMeteo.minutely(city.lat, city.lon).catch(() => null),
-        API.OpenMeteo.regionIndex(city).catch(() => null)
+        API.OpenMeteo.regionIndex(city).catch(() => null),
+        API.OpenMeteo.airHistory(city.lat, city.lon).catch(() => null),
+        API.OpenMeteo.quakes(city.lat, city.lon).catch(() => null),
+        API.OpenMeteo.typhoons().catch(() => null),
+        API.OpenMeteo.previousRuns(city.lat, city.lon).catch(() => null)
       ]);
-      mn = both[0]; reg = both[1];
+      mn = all[0]; reg = all[1];
+      extra.air = all[2]; extra.quake = all[3]; extra.typh = all[4]; extra.fcst = all[5];
     } catch (e) { mn = null; reg = null; }
 
-    const picked = mn && pickSeries(mn, reg, city);
+    const picked = mn && pickSeries(mn, reg, city, extra);
     if (!picked) {
       if (cover) cover.innerHTML = '<div class="gg-card"><h2 class="lose">取不到行情</h2>' +
         '<p>15 分钟级天气数据没取回来（多半是 Open-Meteo 那边不通或额度用完了）。</p>' +
@@ -1229,6 +1609,9 @@
     G.regLine = picked.regLine;      // 大盘线（没有就是 null，图上也就不画）
     G.regFrom = picked.regFrom || 0;
     G.regCities = picked.regCities;  // 组成大盘的城市名，显示在副图标题上
+    G.base = picked.base;            // 15 分钟原样那一份，局中换周期时重采样用
+    G.baseSeeds = picked.baseSeeds;
+    G.baseReg = picked.baseReg;
     resetState();
     readTheme();
     ensureCharts();
@@ -1287,7 +1670,7 @@
         '<h2 class="' + (profit >= 0 ? 'win' : 'lose') + '">' + (liq ? '爆 仓' : profit >= 0 ? '收 盘 盈 利' : '收 盘 亏 损') + '</h2>' +
         '<div class="gg-grade">' + gr + '</div>' +
         '<div class="gg-final" style="color:' + colorOf(profit) + '">' + money(finalEq) + '</div>' +
-        '<p>' + (liq ? '权益跌破维持保证金，被强制平仓。' : '10 天走完，自动结算。') + '</p>' +
+        '<p>' + (liq ? '权益跌破维持保证金，被强制平仓。' : '7 天走完，自动结算。') + '</p>' +
         '<p style="color:' + colorOf(profit) + '">' + sgnMoney(profit) + '　（' + (profit >= 0 ? '+' : '') + ((ret - 1) * 100).toFixed(2) + '%）</p>' +
         '<div class="gg-tbl">' +
         '<div class="gg-row"><span>标的</span><span>' + (G.city ? G.city.name : '—') + ' WXI 天气指数</span></div>' +
@@ -1403,6 +1786,62 @@
     cashTip();
   }
 
+  /* K 线周期选择器。**局中也能换** —— 换的时候不重新取数据，而是拿开局留着的
+     那份 15 分钟原样序列重采样一遍，再把"已经推进到第几分钟天气"映射到新周期的
+     下标上。所以 1 分钟图看到第 3 天 12:00 切到 60 分钟图，还是第 3 天 12:00 附近，
+     行情不会跳。持仓、挂单、权益都原样保留（价格口径没变，只是画粗画细）。 */
+  function barRowHTML() {
+    const chips = BAR_MIN.map((m, i) =>
+      '<button type="button" class="gg-bbtn' + (i === G.barIdx ? ' on' : '') + '" data-bar="' + i + '">' +
+      BAR_N[i] + '</button>').join('');
+    return '<div class="gg-bar"><div class="gg-bar-head"><span>K 线周期</span>' +
+      '<b id="ggBarShow">' + BAR_N[G.barIdx] + '</b></div>' +
+      '<div class="gg-bar-row">' + chips + '</div>' +
+      '<p class="gg-bar-tip" id="ggBarTip"></p></div>';
+  }
+  /** 真实粒度只有 15 分钟，所以得跟玩家说清楚哪几档是采到的、哪几档是画出来的。 */
+  function barTip() {
+    const T = $('#ggBarTip');
+    if (!T) return;
+    const m = barMin();
+    const n = perDay();
+    const base = '一局 <b>' + ROUND_DAYS + '</b> 天 = <b>' + n0(roundBars()) + '</b> 根，' +
+      '每根 <b>' + m + '</b> 分钟（一天 ' + n0(n) + ' 根）。';
+    const src = m > SRC_MIN
+      ? 'Open-Meteo 的免费数据最细就是 <b>15 分钟</b>，这一档是把它 ' + (m / SRC_MIN) + ' 根并成 1 根，<b>全是真数据</b>。'
+      : (m === SRC_MIN
+        ? '这一档就是数据源<b>原样</b> —— Open-Meteo 最细只给到 15 分钟，<b>全是真数据</b>。'
+        : '数据源最细只有 <b>15 分钟</b>，所以这一档是<u>插值展开</u>的 —— 收盘价沿 15 分钟的开→收走、影线按比例分，' +
+          '细碎波动是<b>画出来的</b>，不是采到的。走势和 15 分钟档一致。');
+    T.innerHTML = base + src;
+  }
+  function setBar(idx) {
+    idx = Math.max(0, Math.min(BAR_MIN.length - 1, Math.round(+idx) || 0));
+    storeSet('wxgame_bar', idx);
+    if (idx === G.barIdx || !G.base) { G.barIdx = idx; syncBar(); return; }
+    // 已经推进到第几分钟天气：G.i 是**最后一根已经走完的** K 线，所以"现在"在
+    // 它的收盘时刻，也就是 (G.i + 1) × 旧周期。
+    const nowMin = (G.i + 1) * barMin();
+    const hist = G.hist.slice();
+    G.barIdx = idx;
+    const rs = resample(G.base, G.baseSeeds, G.baseReg);
+    G.series = rs.series; G.seeds = rs.seeds; G.regLine = rs.regLine;
+    // 只认"已经走完"的那些根 —— 下标 i 的 K 线**收于** (i+1)×周期，所以要
+    // G.i = floor(nowMin / 周期) - 1。用 ceil/round 会往前跳到一段**未来**天气的
+    // 收盘价上，白白扫掉止损；宁向往回退，退后不会超过一个周期。
+    G.i = Math.max(0, Math.min(G.series.length - 1, Math.floor(nowMin / barMin()) - 1));
+    G.price = G.series[G.i] ? G.series[G.i].c : G.price;
+    G.hist = hist;                            // 权益曲线照旧攒着，不因为换周期断掉
+    syncBar();
+    render();
+  }
+  function syncBar() {
+    const s = $('#ggBarShow'); if (s) s.textContent = BAR_N[G.barIdx];
+    // 注意选的是 #ggBar button 而不是某个类名 —— index.html 里那几个按钮没写类
+    U.$$('#ggBar button').forEach(b => b.classList.toggle('on', +b.dataset.bar === G.barIdx));
+    barTip();
+  }
+
   /* ═══════════════ 开关面板 ═══════════════ */
   function open() {
     readTheme();
@@ -1413,6 +1852,9 @@
     // 本金存的是"上次用过的"，第一次进来是默认值
     const saved = Math.round(+(storeGet('wxgame_cash', DEF_CASH) || DEF_CASH));
     G.cash0 = (isFinite(saved) && saved >= CASH_MIN && saved <= CASH_MAX) ? saved : DEF_CASH;
+    // K 线周期也存上次用过的
+    const sb = Math.round(+(storeGet('wxgame_bar', 2)));
+    G.barIdx = (isFinite(sb) && sb >= 0 && sb < BAR_MIN.length) ? sb : 2;
     const cover = $('#ggCover');
     if (cover) {
       const app = global.__APP;
@@ -1426,7 +1868,7 @@
         '打雷下雨 = 拉升，天气转好 = 回落。你不知道这段是哪年哪月 —— 只能靠盘感。</p>' +
         cashRowHTML() +
         '<ul class="gg-rules">' +
-        '<li>一局 <b>10 天</b>（960 根 15 分钟 K 线）。</li>' +
+        '<li>一局 <b>7 天</b>，K 线周期有 <b>1 / 5 / 15 / 30 / 45 / 60 分钟</b>六档，右下角随时换。</li>' +
         '<li>图上那条<b style="color:#c792ea">紫色虚线就是大盘</b>（同省 8 城等权平均）。' +
         '本地跑赢大盘 = 自己这块地在出事；本地跟着大盘走 = 一场天气过程路过。</li>' +
         '<li>合约：指数每动 <code>1 点</code>，每手盈亏 <code>¥10</code>。</li>' +
@@ -1434,8 +1876,8 @@
         '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
         '<li>手续费万分之五，开平都收。</li>' +
         '<li>右侧随时看得到<b>强平价</b>和<b>爆仓距离</b> —— 碰到就结束。</li>' +
-        '<li>行情速度 <b>15 / 22 / 45 / 90 根（1 分钟 K）每秒</b>，' +
-        '也就是 1 / 1.5 / 3 / 6 根 15 分钟 K 每秒，一局 <b>2.7 ~ 16 分钟</b>，随时能暂停。</li>' +
+        '<li>行情速度 <b>15 / 22 / 45 / 90 分钟天气每秒</b>，一局 <b>1.9 ~ 11.2 分钟</b>，随时能暂停。' +
+        '速度是"每秒推进多少天气时间"，所以跟 K 线周期无关 —— 挑 1 分钟只是看得更细，不会玩得更久。</li>' +
         '</ul>' +
         '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
         '<div class="gg-btns"><button class="gg-long" id="ggAgain">开始操盘</button>' +
@@ -1449,6 +1891,7 @@
       setSeg('#ggLev button', 'lev', G.lev);
       setSeg('#ggPct button', 'pct', G.pct);
       setSeg('#ggSpeed button', 'sp', G.speedIdx);
+      syncBar();
       render();
     }, 30);
   }
@@ -1516,6 +1959,8 @@
       G.speedIdx = +b.dataset.sp; setSeg('#ggSpeed button', 'sp', G.speedIdx);
       if (G.running) startTimer();
     }));
+    // K 线周期：局中也能换（setBar 会把已推进的天气时间映射到新周期上）
+    U.$$('#ggBar button').forEach(b => b.addEventListener('click', () => setBar(b.dataset.bar)));
     const snd = $('#ggSound');
     if (snd) snd.addEventListener('click', () => {
       G.sound = !G.sound; snd.textContent = G.sound ? '🔊' : '🔇';
@@ -1542,9 +1987,12 @@
       tolerablePct, placeLimit, setStop, cancelOrder, processOrders, calendarAt, freeEq,
       reservedMargin, JUMP_AT, setCash, cashTip, cityWeight, dishScale,
       slipOf, render, SLIP_K, SLIP_MAX, CAP_BASE, FEE_MIN,
-      LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, FEE_RATE, SPEEDS,
+      LEVS, LOT_MULT, MAINTAIN, FEE_RATE, SPEEDS,
       BASE, DEF_CASH, CASH_MIN, CASH_MAX, CASH_PRESETS,
-      REG_K, DEW_K, DISH_K, DISH_DECAY
+      REG_K, DEW_K, DISH_K, DISH_DECAY,
+      distKm, AIR_K, QUAKE_M0, QUAKE_K, QUAKE_R, QUAKE_DECAY, TYPHOON_R, TYPHOON_K, FCST_K,
+      ROUND_DAYS, BAR_MIN, BAR_N, SRC_MIN, SPEED_N, TICK_HZ,
+      perDay, roundBars, srcBars, barMin, roundSecs, resample, aggSeed, zag, fmtMin, setBar
     }
   };
 

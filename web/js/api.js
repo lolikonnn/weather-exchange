@@ -442,10 +442,23 @@
      */
     async regionIndex(city, maxCities) {
       const N = maxCities || 8;
-      const list = (Cities.all || []).filter(c =>
-        c && c.prov && c.prov === city.prov && c.lat != null && c.lon != null);
-      // 本市排第一，其余按 id 稳定排序取样 —— 顺序稳定的好处是缓存键和曲线都不会每次开一局就换
-      list.sort((a, b) => (a.id === city.id ? -1 : b.id === city.id ? 1 : String(a.id) < String(b.id) ? -1 : 1));
+      const all = (Cities.all || []).filter(c => c && c.lat != null && c.lon != null);
+      let list = all.filter(c => c.prov && c.prov === city.prov);
+      // 直辖市（北京市/上海市/天津市/重庆市）在自己省里只有一两个"城市"，
+      // 拿它做大盘就等于拿本地行情再做一遍 —— 那样的"大盘"既没意义，还会把快分量算两次。
+      // 所以同省凑不够时，退化成**按真实距离取最近的几个城市**，这才是"这一带"的天气。
+      let scope = city.prov;
+      if (list.length < 4) {
+        const near = all.filter(c => c.id !== city.id)
+          .map(c => ({ c: c, d: Math.abs(c.lat - city.lat) + Math.abs(c.lon - city.lon) }))
+          .sort((a, b) => (a.d - b.d) || (String(a.c.id) < String(b.c.id) ? -1 : 1))
+          .slice(0, N);
+        list = [city].concat(near.map(x => x.c));
+        scope = '附近';
+      } else {
+        // 本市排第一，其余按 id 稳定排序取样 —— 顺序稳定的好处是缓存键和曲线都不会每次开一局就换
+        list.sort((a, b) => (a.id === city.id ? -1 : b.id === city.id ? 1 : String(a.id) < String(b.id) ? -1 : 1));
+      }
       const pick = list.slice(0, N);
       if (!pick.length) return null;
       const q = '?latitude=' + pick.map(c => c.lat).join(',') +
@@ -464,7 +477,7 @@
           // 逐个时刻、逐个变量求平均，缺测的坐标跳过（不拿 0 去拉低平均）
           const VARS = { temp: 'temperature_2m', gust: 'wind_gusts_10m', precip: 'precipitation',
                          wcode: 'weather_code', cape: 'cape', dew: 'dew_point_2m' };
-          const out = { time: t, cities: pick.map(c => c.name) };
+          const out = { time: t, cities: pick.map(c => c.name), scope: scope };
           for (const alias in VARS) {
             const src = VARS[alias];
             const col = new Array(t.length);
@@ -486,6 +499,115 @@
       }
       if (global.console) console.warn('[regionIndex] 取不到区域大盘，退化为纯本地行情:', lastErr && lastErr.message);
       return null;
+    },
+
+    /* ───────── 下面四个是「复合标的」的加成项，全部是真实数据源 ─────────
+     * 共同点：都返回**带时间轴**的序列，让 game.js 能对齐到它随机截取的那段窗口。
+     * 任何一项取不到都返回 null / []，游戏那边退化成 0，绝不编数据补位。
+     */
+
+    /** ① 空气质量：逐小时 PM2.5，覆盖 past_days=92（与回放窗口同源同龄）。
+     *  为什么不用 current：current 只有一个"现在"的值，对不上历史回放窗口。
+     *  为什么是小时级：air-quality 的 minutely_15 返回 0 点（实测），小时是它的最细粒度。
+     *  空气质量本来就变得慢，小时级反而比硬凑 15 分钟更诚实。 */
+    async airHistory(lat, lon) {
+      const q = '?latitude=' + lat + '&longitude=' + lon +
+        '&hourly=pm2_5&past_days=92&forecast_days=1&timezone=' + encodeURIComponent(TZ);
+      const d = await getJSON('https://air-quality-api.open-meteo.com/v1/air-quality' + q,
+        { ttl: 3600000, key: 'airh|' + lat + ',' + lon });
+      const h = (d && d.hourly) || {};
+      return { time: h.time || [], pm25: h.pm2_5 || [] };
+    },
+
+    /** ④ 预报偏离：**当时发出来的预报** vs 事后实况。
+     *  previous-runs-api 的写法是「变量名后缀」而不是 models 参数 ——
+     *  temperature_2m_previous_day1 = 提前 24 小时发出的预报（实测 864/864 非空，
+     *  且与 historical-forecast 时间轴逐点相同，所以可以直接做差）。
+     *  注意 previous-runs 同样给 temperature_2m（实况），一份请求两样都有。 */
+    async previousRuns(lat, lon) {
+      const q = '?latitude=' + lat + '&longitude=' + lon +
+        '&minutely_15=temperature_2m,precipitation,temperature_2m_previous_day1' +
+        '&past_days=92&forecast_days=1&timezone=' + encodeURIComponent(TZ);
+      const d = await getJSON('https://previous-runs-api.open-meteo.com/v1/forecast' + q,
+        { ttl: 3600000, key: 'prev|' + lat + ',' + lon });
+      const m = (d && d.minutely_15) || {};
+      return { time: m.time || [], act: m.temperature_2m || [], fc1: m.temperature_2m_previous_day1 || [] };
+    },
+
+    /** ② 地震：USGS，免 key、CORS 全开、支持按城市半径筛。
+     *  用 maxradiuskm 让"附近的地震"才有意义 —— 智利 8 级对广州的天气没影响，
+     *  但对"当地压力源"的设定来说，它也不该推动广州的指数。
+     *  返回 [{ t: epoch_ms, mag, place, depth }]，按时间升序。 */
+    async quakes(lat, lon, radiusKm, days) {
+      const R = radiusKm || 700, D = days || 130;
+      const iso = t => new Date(t).toISOString().slice(0, 10);
+      const now = Date.now();
+      const q = '?format=geojson&starttime=' + iso(now - D * 86400000) + '&endtime=' + iso(now) +
+        '&minmagnitude=3.0&limit=400&latitude=' + lat + '&longitude=' + lon + '&maxradiuskm=' + R;
+      const d = await getJSON('https://earthquake.usgs.gov/fdsnws/event/1/query' + q,
+        { ttl: 1800000, key: 'eq|' + lat + ',' + lon + ',' + R + '|' + iso(now) });
+      const out = ((d && d.features) || []).map(f => {
+        const p = (f && f.properties) || {}, g = f && f.geometry;
+        if (p.mag == null || !p.time) return null;
+        const c = (g && g.coordinates) || [];
+        return { t: p.time, mag: p.mag, place: p.place || '',
+                 lat: +c[1], lon: +c[0], depth: (c.length > 2 ? +c[2] : null) };
+      }).filter(Boolean);
+      out.sort((a, b) => a.t - b.t);
+      return out;
+    },
+
+    /** ③ 台风：中央气象台台风网（typhoon.nmc.cn）。
+     *  HTTPS 可用、CORS 是 *，返回是 JSONP —— getJSON 里的 JSONP 兜底会剥掉外层。
+     *  列表按**新→旧**排序，条目形如
+     *    [3346033, 'KOGUMA', '小熊', '2629', '2629', null, '小熊星座', 'start']
+     *  路径点在第 8 项，每个点形如
+     *    [id, '202601140000', <epoch_ms>, 'TD', 经度, 纬度, 气压, 风速, ...]
+     *  列表本身不带日期，只能把 view_ 拉下来才知道有没有落在窗口里 —— 所以取**最近 30 个**，
+     *  并且**并发限流**、TTL 放长到 6 小时。
+     *
+     *  ⚠️ 一开始只取了 12 个，结果 92 天窗口里的台风几乎全被切掉：列表按新→旧排，
+     *     前 12 个最新的是 9 月底~10 月初那几个，而真正逼近华南的（沙德尔 211km、
+     *     美莎克 477km、紫檀 350km）都在 7~8 月 —— 离城市最近的反而被丢掉了。
+     *     30 个足够覆盖 past_days=92 的整段窗口。 */
+    async typhoons(maxN) {
+      const N = maxN || 30;
+      const year = new Date().getFullYear();
+      let list;
+      try {
+        const d = await getJSON('https://typhoon.nmc.cn/weatherservice/typhoon/jsons/list_' + year,
+          { ttl: 21600000, key: 'tyl|' + year });
+        list = (d && d.typhoonList) || [];
+      } catch (e) {
+        // 跨年时会落到去年
+        try {
+          const d = await getJSON('https://typhoon.nmc.cn/weatherservice/typhoon/jsons/list_' + (year - 1),
+            { ttl: 21600000, key: 'tyl|' + (year - 1) });
+          list = (d && d.typhoonList) || [];
+        } catch (e2) { return []; }
+      }
+      const pick = list.slice(0, N);
+      const pts = [];
+      let at = 0;
+      const worker = async () => {
+        while (at < pick.length) {
+          const a = pick[at++];
+          try {
+            const d = await getJSON('https://typhoon.nmc.cn/weatherservice/typhoon/jsons/view_' + a[0],
+              { ttl: 21600000, key: 'tyv|' + a[0] });
+            const tr = (d && d.typhoon && d.typhoon[8]) || [];
+            for (const p of tr) {
+              if (!p || p[2] == null) continue;
+              pts.push({ t: +p[2], lat: +p[5], lon: +p[4], wind: +p[7] || 0,
+                         pres: +p[6] || null, grade: p[3] || '',
+                         name: (a[2] || a[1] || '').replace(/\s+/g, ''), num: a[3] || '' });
+            }
+          } catch (e) { /* 单个台风拉不到就跳过，不影响别的 */ }
+        }
+      };
+      await Promise.all([worker(), worker(), worker(), worker()]);   // 并发 4
+      pts.sort((x, y) => x.t - y.t);
+      return pts;
     },
 
     /** 仅取最近 24 小时温度，用于指数条 sparkline */    async mini(lat, lon) {
