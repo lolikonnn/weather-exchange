@@ -13,13 +13,20 @@
       阵风能从 2 m/s 冲到 60 m/s、降水绝大多数时刻是 0、打雷时才爆。
       所以指数由这几项加权而成，**打雷下雨 = 拉升，天气转好 = 回落**。
 
-   ② **价格是「趋势 + 噪声」的组合**，不是原始指数：
+   ② **价格是「趋势 + 噪声 + 突发行情」的组合**，不是原始指数：
           trend = EMA(sev, 0.05)                       // 慢分量，给方向
+          shock = (|Δsev| − 0.9) × 34,  仅当 |Δsev| > 0.9 // 单根剧烈变化 → 一记冲击
+          carry = carry × 0.78 + shock                 // 冲击的余波，顺着惯性再走几根
           price = 1000 + (trend − median(trend)) × 50  // 趋势放大，走得出行情
                        + (sev − trend) × 16            // 快分量，给盘中抖动
-      两个系数是拿真数据调出来的（广州 / 哈尔滨 92 天实测）：
-      单根 15 分钟中位涨跌 0.17%、p99 约 2~3%、单日振幅中位 9~11%、
-      最猛的一天振幅能到 60%。既走得动，又不会变成纯随机数。
+                       + carry                         // 突发行情
+      系数是拿真数据调出来的（广州 / 哈尔滨 92 天实测）：
+      单根 15 分钟中位涨跌 0.17%、p99 约 5~6%、单日振幅中位 9~11%、
+      连续 3 根的最大跌幅中位 7.8%（哈尔滨能到 15%）。既走得动，又不会变成纯随机数。
+
+      **`shock` 不是随机数** —— 触发条件是真实观测到的剧烈变化（CAPE 炸了、
+      阵风猛增、开始下暴雨）。没有真实天气过程的时候，盘面就是平静的；
+      久留美里那种「蜡烛图突然拉到底」，背后是真有一次对流爆发。
 
    ③ **行情是真的，但只有「K 线实体」是真采样出来的**。
       数据是 Open-Meteo 的 minutely_15（15 分钟一个点，92 天历史）。
@@ -54,6 +61,11 @@
   const NOISE_K    = 16;       // 快分量放大倍数
   const EMA_A      = 0.05;     // 趋势 EMA 系数（半衰期约 14 根 = 3.5 小时）
   const WICK_K     = 0.30;     // 影线 = |本根涨跌| × 这个系数
+  // 突发行情：单根 15 分钟里 severity 变化超过 JUMP_AT 个稳健标准差才算"剧烈变化"，
+  // 超出的部分乘 JUMP_K 变成冲击，再按 JUMP_DECAY 衰减出余波（见 pickSeries）。
+  const JUMP_AT    = 0.9;
+  const JUMP_K     = 34;
+  const JUMP_DECAY = 0.78;
   const PER_DAY    = 96;       // 一天 96 根 15 分钟 K
   const ROUND_BARS = 480;      // 一局 480 根 = 5 天
   const SPEEDS     = [4, 10, 24]; // 每个真实秒推进几根 K
@@ -271,9 +283,23 @@
       const m = median(win);
       const series = [];
       const seeds = [];
+      let carry = 0;
       for (let j = 0; j < need; j++) {
         const k2 = s + j;
-        const px = BASE + (tr[k2] - m) * TREND_K + (sev[k2] - tr[k2]) * NOISE_K;
+        // 「突发行情」：某根 15 分钟里天气本身剧烈变化（CAPE 炸了、阵风猛增、开始下暴雨）时，
+        // 除了常规的噪声项，再砸进去一记冲击 —— 这就是久留美里那种"蜡烛图突然拉到底"。
+        //
+        // shock 是「这一刻打多狠」，carry 是「余波还走多远」。只有 shock 的话就出一根长阴、
+        // 下一根立刻回弹，不像崩盘；加上 carry（按 JUMP_DECAY 衰减的动量）才有连续几根
+        // 顺势砸下去的样子。系数是拿广州/哈尔滨 92 天的真实 minutely_15 调出来的：
+        // 单根中位涨跌仍是 0.167%（平时盘感不变），但每局会出现几次连续 3 根跌 8~15% 的段。
+        // 注意它**不是随机数** —— 触发条件是真实观测到的剧烈变化。
+        const dsev = k2 > 0 ? (sev[k2] - sev[k2 - 1]) : 0;
+        const shock = Math.abs(dsev) > JUMP_AT
+          ? (Math.abs(dsev) - JUMP_AT) * JUMP_K * (dsev > 0 ? 1 : -1)
+          : 0;
+        carry = carry * JUMP_DECAY + shock;
+        const px = BASE + (tr[k2] - m) * TREND_K + (sev[k2] - tr[k2]) * NOISE_K + carry;
         series.push({ t: mn.time[k2], c: px });
         seeds.push({
           cape: mn.cape[k2] | 0,
