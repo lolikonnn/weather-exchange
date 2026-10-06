@@ -423,20 +423,43 @@
 }
 
 /* ───────── 手机竖屏 ───────── */
+/* 手机上原来的做法是让 .gg-body 整块竖着滚 —— 结果就是"看图"和"操作"只能二选一：
+   往下滚到下单区，图已经滚出屏幕了。现在改成**图表钉在顶部、右侧控件区自己滚**：
+   主图占屏幕上方约 38vh，无论你滚到哪一步，图一直在那儿。 */
 @media (max-width: 860px) {
   .game-mask { padding: 0; }
   .game-panel { width: 100%; height: 100%; border-radius: 0; border: 0; }
-  .gg-body { flex-direction: column; overflow-y: auto; }
+  .gg-body { flex-direction: column; overflow: hidden; }
   .gg-left { border-right: 0; flex: none; }
-  .gg-chart { height: 206px; flex: none; }
-  .gg-eq { height: 112px; }
-  /* #ggEqChart 同时挂着 .gg-chart 和 .gg-chart-sm，上面那条 206px 会盖掉 .gg-eq 的 112px，
-     于是权益图画布比容器高 94px、压到右边的账户明细上。这里把嵌套那张还给自己的容器。 */
+  .gg-chart { height: 36vh; min-height: 168px; flex: none; }
+  /* 权益曲线压薄（不压没，它还是判断"要不要加仓"最快的那个数）。
+     别压到 104px 以下 —— 左边那串 30 万 / 25 万 / 20 万 刻度会互相压在一起看不清。 */
+  .gg-eq { height: 124px; flex: none; }
+  /* #ggEqChart 同时挂着 .gg-chart 和 .gg-chart-sm，上面那条 38vh 会盖掉 .gg-eq 的 88px，
+     于是权益图画布比容器高、压到右边的账户明细上。这里把嵌套那张还给自己的容器。 */
   .gg-chart-sm { height: auto; flex: 1; min-height: 0; }
-  .gg-right { width: 100%; flex: none; overflow: visible; border-top: 1px solid var(--line, #262b36); }
+  /* 控件区是唯一的滚动容器。下面留 84px，因为做多/做空那排按钮是固定在屏幕底部的 */
+  .gg-right { width: 100%; flex: 1 1 auto; min-height: 0; overflow-y: auto;
+              padding-bottom: 84px;
+              border-top: 1px solid var(--line, #262b36); -webkit-overflow-scrolling: touch; }
   .gg-eq-big { font-size: 28px; }
   .gg-head strong { font-size: 13px; }
   .gg-sub { display: none; }
+  /* 账户明细挤成两列 —— 它有 8 行，不压的话下单键要被顶到很远 */
+  .gg-stat { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .gg-stat .gg-row { font-size: 11.5px; }
+  .gg-stat .gg-hr { grid-column: 1 / -1; }
+  /* 做多 / 做空常驻屏幕底部：滚控件区的时候手不用来回找按钮。
+     用 fixed 而不是 sticky —— .gg-btns 的父级 .gg-trade 只包了"下单区"这一段，
+     sticky 一旦滚出父级盒子就会被带着一起滚走（实测滚到底时按钮跑到屏幕顶上去了）。
+     ⚠ 选择器必须写 `.gg-trade > .gg-btns`：封面卡里的"开始操盘 / 算了"也是 .gg-btns，
+       写成 .gg-btns 会把封面卡的两个按钮也钉到屏幕底下去。 */
+  .gg-trade > .gg-btns {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 12;
+    margin: 0; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel, #12151c); border-top: 1px solid var(--line, #262b36);
+  }
+  /* 内容不要被那排常驻按钮盖住（.gg-right 已经在上面留了 padding-bottom） */
   /* 窄屏放不下开高低收 + 两条均线，只留最有用的几个数 */
   .gg-ohlc { left: 60px; top: 3px; font-size: 10px; }
   .gg-ohlc em, .gg-ohlc .gg-ma20 { display: none; }

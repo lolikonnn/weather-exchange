@@ -584,8 +584,10 @@
    * 光看收盘价的话，插针把你止损扫掉的情形就永远模拟不出来。
    * 同一根里有好几个价位被碰到时，按「离上一根收盘的距离」排序逐个成交：
    * 价格是从上一根收盘一路走过来的，先碰到的先成交，这才符合直觉。
+   *
+   * `silent` 是给离线追赶用的（见 stepBars）：补推几十根的时候不能每笔都飘字、都响一声。
    */
-  function processOrders(prevPx) {
+  function processOrders(prevPx, silent) {
     if (!G.orders.length || !G.series[G.i]) return;
     const bar = G.series[G.i];
     const lo = Math.min(prevPx, G.price, bar.l);
@@ -598,14 +600,18 @@
       if (o.kind === 'limit') {
         // 限价单不吃滑点：要么按我的价成交，要么别成交
         applyFillAt(o.dir * o.lots, o.price, false);
-        floatText('限价成交 ' + (o.dir > 0 ? '多' : '空') + ' ' + o.lots + ' 手 @ ' + n1(o.price), o.dir > 0 ? THEME.up : THEME.down, 12);
-        beep(o.dir > 0 ? 660 : 440, .08, 'triangle', .04);
+        if (!silent) {
+          floatText('限价成交 ' + (o.dir > 0 ? '多' : '空') + ' ' + o.lots + ' 手 @ ' + n1(o.price), o.dir > 0 ? THEME.up : THEME.down, 12);
+          beep(o.dir > 0 ? 660 : 440, .08, 'triangle', .04);
+        }
       } else if (G.pos) {
         const q = -G.pos;
         // 止损止盈本质是市价单，滑点照吃 —— 插针时被扫得最惨的就是它们
         applyFillAt(q, o.price);
-        floatText((o.kind === 'sl' ? '止损触发 @ ' : '止盈触发 @ ') + n1(o.price), o.kind === 'sl' ? THEME.down : THEME.up, 13);
-        beep(o.kind === 'sl' ? 300 : 900, .16, 'sine', .05);
+        if (!silent) {
+          floatText((o.kind === 'sl' ? '止损触发 @ ' : '止盈触发 @ ') + n1(o.price), o.kind === 'sl' ? THEME.down : THEME.up, 13);
+          beep(o.kind === 'sl' ? 300 : 900, .16, 'sine', .05);
+        }
       }
       G.orders = G.orders.filter(x => x.id !== o.id);
     }
@@ -2616,11 +2622,30 @@
       return;
     }
 
+    const r = stepBars(step, false);
+    if (r.why) return;                       // 已经 endRound 了，画面交给它
+    if (r.news) flashNews(r.news);
+
+    const mu = marginUsed(), e = equity();
+    // 保证金告急的滴答声
+    if (mu > 0 && e < mu * 1.6) beep(1180, .05, 'square', .022);
+    // 里程碑音效
+    if (Math.floor(r.eqBefore / 10000) !== Math.floor(e / 10000)) beep(e > r.eqBefore ? 880 : 320, .09, 'triangle', .035);
+    render();
+    autoSave();
+  }
+
+  /** 把行情往前推 `step` 根 K 线。逐根判定挂单与爆仓 —— 影线扫到止损价就该在那一根成交，
+   *  不能等这一批走完才看。返回 `{ why, eqBefore, news }`：`why` 非空表示这一局已经结束。
+   *
+   *  `silent` 给**离线追赶**用（见 catchUp）：补推几十上百根的时候不能每笔都飘字、都响一声，
+   *  也不能逐根重绘。行情本身的推进和判定完全一样 —— 只是不出声、不画面。 */
+  function stepBars(step, silent) {
     const eqBefore = equity();
     let news = null;
 
     for (let k = 0; k < step; k++) {
-      if (G.i >= G.series.length - 1) { endRound('timeup'); return; }
+      if (G.i >= G.series.length - 1) { endRound('timeup'); return { why: 'timeup', eqBefore: eqBefore, news: news }; }
 
       const prevPx = G.price;
       G.i++;
@@ -2632,7 +2657,7 @@
 
       // 挂单 / 止损止盈先跑，再判爆仓 —— 顺序反了的话，止损单会因为
       // "这一根已经先爆仓了"而永远来不及救你。
-      processOrders(prevPx);
+      processOrders(prevPx, silent);
 
       const mu = marginUsed();
       if (mu > 0 && equity() <= mu * MAINTAIN) {
@@ -2640,11 +2665,13 @@
         G.hist.push(G.cash);
         G.peak = Math.max(G.peak, G.cash);
         trackDD();
-        if (global.navigator && navigator.vibrate) { try { navigator.vibrate([80, 60, 220]); } catch (e) { } }
-        beep(110, .5, 'sawtooth', .09);
-        render();
+        if (!silent) {
+          if (global.navigator && navigator.vibrate) { try { navigator.vibrate([80, 60, 220]); } catch (e) { } }
+          beep(110, .5, 'sawtooth', .09);
+          render();
+        }
         endRound('liquidated');
-        return;
+        return { why: 'liquidated', eqBefore: eqBefore, news: news };
       }
 
       // 权益曲线的采样点仍然**逐根**落（保持和蜡烛一一对应、数组长度不变），
@@ -2660,14 +2687,7 @@
       if (nw) news = nw;
     }
 
-    if (news) flashNews(news);
-
-    const mu = marginUsed(), e = equity();
-    // 保证金告急的滴答声
-    if (mu > 0 && e < mu * 1.6) beep(1180, .05, 'square', .022);
-    // 里程碑音效
-    if (Math.floor(eqBefore / 10000) !== Math.floor(e / 10000)) beep(e > eqBefore ? 880 : 320, .09, 'triangle', .035);
-    render();
+    return { why: null, eqBefore: eqBefore, news: news };
   }
   function trackDD() { const e = equity(); if (G.peak > 0) G.maxDD = Math.max(G.maxDD, (G.peak - e) / G.peak); }
 
@@ -2974,6 +2994,176 @@
     barTip();
   }
 
+  /* ═══════════════ 存档：退了也能接着玩 ═══════════════ */
+  /** 这一块要解决的是「我关掉页面，行情还得自己走」。
+   *
+   *  存的是 `base` 而不是 `series`：`series` 是 `base` 按当前周期重采样出来的，
+   *  1 分钟档一局有 5 万多根，JSON 一下直接顶爆 localStorage 那 5MB。
+   *  `base` 永远只有 3552 根 15 分钟原样数据，恢复时重采样一次就全回来了 ——
+   *  这也正是 setBar() 换周期时干的事。 */
+  const SAVE_KEY = 'wxgame_save';
+  const SAVE_V = 1;
+
+  function saveRound() {
+    if (!G.running || G.ended || !G.base || !G.city) return;
+    try {
+      storeSet(SAVE_KEY, {
+        v: SAVE_V, at: Date.now(),
+        city: G.city, barIdx: G.barIdx, speedIdx: G.speedIdx,
+        lev: G.lev, pct: G.pct, cash0: G.cash0, sound: G.sound,
+        base: G.base, baseSeeds: G.baseSeeds, baseReg: G.baseReg,
+        sev: G.sev, regFrom: G.regFrom, regCities: G.regCities,
+        i: G.i, acc: G.acc, price: G.price,
+        cash: G.cash, pos: G.pos, avg: G.avg,
+        peak: G.peak, maxDD: G.maxDD, trades: G.trades,
+        slipPaid: G.slipPaid, feePaid: G.feePaid,
+        fills: G.fills, orders: G.orders, orderSeq: G.orderSeq,
+        hist: G.hist, lastNews: G.lastNews
+      });
+    } catch (e) { /* 存不下就算了，别把游戏搞崩 */ }
+  }
+  function loadSaved() {
+    let s = null;
+    try { s = storeGet(SAVE_KEY, null); } catch (e) { s = null; }
+    if (!s || s.v !== SAVE_V || !s.base || !s.city || !s.sev || !s.base.length) return null;
+    return s;
+  }
+  function clearSave() { try { storeSet(SAVE_KEY, null); } catch (e) { } }
+  /** 自动存盘：3 秒最多落一次 —— 每一帧都 JSON.stringify 那 3552 根太贵了。 */
+  let saveAt = 0;
+  function autoSave() {
+    const now = Date.now();
+    if (now - saveAt < 3000) return;
+    saveAt = now;
+    saveRound();
+  }
+
+  /** 离线追赶。速度的定义本来就是「每真实秒推进多少分钟天气」（见 SPEEDS），
+   *  所以补多少根是算得出来的：
+   *      离开多少秒 × SPEEDS[speedIdx] = 这段时间天气走了多少分钟 → 再除以当前周期。
+   *  这就是「股票不会因为你没打开同花顺就不动」那句要求的落点。 */
+  function catchUp(s) {
+    const gapSec = Math.max(0, (Date.now() - (+s.at || Date.now())) / 1000);
+    const weatherMin = gapSec * SPEEDS[G.speedIdx];
+    const want = Math.floor(weatherMin / barMin());
+    if (want < 1) return { bars: 0, min: weatherMin, why: null };
+    fbReset();
+    const i0 = G.i;
+    const r = stepBars(want, true);          // silent：补推不飘字、不响、不逐根重绘
+    return { bars: G.i - i0, min: weatherMin, why: r.why, at: i0 };
+  }
+
+  function gapText(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + ' 秒';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + ' 分钟';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + ' 小时' + (m % 60 ? (m % 60) + ' 分钟' : '');
+    return Math.floor(h / 24) + ' 天' + (h % 24 ? (h % 24) + ' 小时' : '');
+  }
+  /** 已经推进到第几天（1 起算），用来在存档提示里说"你停在哪"。 */
+  function dayAt(i) { return Math.floor(((i + 1) * barMin()) / 1440) + 1; }
+
+  /** 从存档恢复一局。`base` 重采样回当前周期，再把离线那段时间的 K 线补上。 */
+  function resumeRound(s) {
+    readTheme();
+    G.city = s.city;
+    G.sev = s.sev; G.regFrom = s.regFrom; G.regCities = s.regCities || [];
+    G.base = s.base; G.baseSeeds = s.baseSeeds; G.baseReg = s.baseReg;
+    G.lev = (+s.lev) || 10;
+    G.pct = (+s.pct) || 30;
+    G.cash0 = (+s.cash0) || DEF_CASH;
+    G.sound = s.sound !== false;
+    const bi = Math.round(+(s.barIdx)); const si = Math.round(+(s.speedIdx));
+    G.barIdx = (isFinite(bi) && bi >= 0 && bi < BAR_MIN.length) ? bi : 2;
+    G.speedIdx = (isFinite(si) && si >= 0 && si < SPEEDS.length) ? si : 2;
+    // 重建这一档的 series（和 setBar 走的是同一条路）
+    const rs = resample(G.base, G.baseSeeds, G.baseReg);
+    G.series = rs.series; G.seeds = rs.seeds; G.regLine = rs.regLine;
+    G.i = Math.max(0, Math.min(G.series.length - 1, Math.round(+(s.i)) || 0));
+    G.acc = Math.max(0, Math.min(1, +s.acc || 0));
+    G.price = (+s.price) || (G.series[G.i] ? G.series[G.i].c : BASE);
+    G.cash = (+s.cash) || 0;
+    G.pos = (+s.pos) || 0;
+    G.avg = (+s.avg) || 0;
+    G.peak = (+s.peak) || G.cash;
+    G.maxDD = (+s.maxDD) || 0;
+    G.trades = (+s.trades) || 0;
+    G.slipPaid = (+s.slipPaid) || 0;
+    G.feePaid = (+s.feePaid) || 0;
+    G.fills = s.fills || [];
+    G.orders = s.orders || [];
+    G.orderSeq = (+s.orderSeq) || 0;
+    G.hist = s.hist || [];
+    G.lastNews = s.lastNews || null;
+    G.liqAt = 0; G.liqPrice = 0; G.hoverIdx = -1;
+    G.ended = false; G.running = true; G.open = true;
+    fbReset();
+
+    const cover = $('#ggCover');
+    if (cover) { cover.hidden = true; cover.innerHTML = ''; }
+
+    ensureCharts();
+    readTheme();
+    setSeg('#ggLev button', 'lev', G.lev);
+    setSeg('#ggPct button', 'pct', G.pct);
+    setSeg('#ggSpeed button', 'sp', G.speedIdx);
+    syncBar();
+
+    // 先把离线那段行情补上，再开计时器 —— 顺序反了会先把新的一根走掉
+    const cu = catchUp(s);
+    render();
+    if (cu.why) return;      // 补的过程中爆仓/到期了，endRound 已经把结算卡显示出来
+
+    startTimer();
+    G.acc = (+s.acc) || 0;   // startTimer 会把 acc 清零，这里把"半根"的进度还回来
+    if (cu.bars > 0) {
+      U.toast('你不在的时候行情走了 ' + gapText(Date.now() - (+s.at || Date.now())) +
+        '，自动补了 ' + n0(cu.bars) + ' 根 K 线', 4200);
+    }
+  }
+
+  /** 复用封面卡片做一个选择框（不引原生 confirm —— 它会阻塞、也没法定制文案）。 */
+  function askChoice(o) {
+    return new Promise(resolve => {
+      const cover = $('#ggCover');
+      if (!cover) { resolve(null); return; }
+      const btns = o.buttons.map((b, k) =>
+        '<button class="' + (b.cls || 'gg-short') + '" data-k="' + k + '">' + b.label + '</button>').join('');
+      cover.innerHTML = '<div class="gg-card">' +
+        '<h2 style="font-size:19px;letter-spacing:1px">' + o.title + '</h2>' +
+        '<p>' + o.body + '</p>' +
+        '<div class="gg-btns">' + btns + '</div></div>';
+      cover.hidden = false;
+      U.$$('#ggCover .gg-btns button').forEach(b => {
+        b.onclick = () => {
+          const v = o.buttons[+b.dataset.k].value;
+          cover.hidden = true; cover.innerHTML = '';
+          resolve(v);
+        };
+      });
+    });
+  }
+
+  /** 点 ✕ / 点遮罩 / 按返回键都走这里。 */
+  async function exitFlow() {
+    if (!G.running || G.ended) { close(); return; }
+    const v = await askChoice({
+      title: '要离开吗',
+      body: '行情<b>不会</b>因为你离开就停下 —— 选「保留进度」的话，下次进来它会按真实流逝的时间' +
+        '把这段时间的 K 线自己补上，就像你没关过一样。',
+      buttons: [
+        { label: '保留进度', value: 'keep', cls: 'gg-long' },
+        { label: '结束本局', value: 'end', cls: 'gg-short' },
+        { label: '取消', value: null, cls: 'gg-short' }
+      ]
+    });
+    if (v === 'keep') { saveRound(); close(); U.toast('进度已保留，下次进来可以接着玩', 2600); }
+    else if (v === 'end') { clearSave(); close(); }
+    // v === null（取消）：卡片已经被 askChoice 收掉了，局还在跑，什么都不用做
+  }
+
   /* ═══════════════ 开关面板 ═══════════════ */
   function open() {
     readTheme();
@@ -2987,39 +3177,10 @@
     // K 线周期也存上次用过的
     const sb = Math.round(+(storeGet('wxgame_bar', 2)));
     G.barIdx = (isFinite(sb) && sb >= 0 && sb < BAR_MIN.length) ? sb : 2;
-    const cover = $('#ggCover');
-    if (cover) {
-      const app = global.__APP;
-      const cityName = (app && app.S && app.S.cur && app.S.cur.name) || '当前城市';
-      cover.hidden = false;
-      cover.innerHTML =
-        '<div class="gg-card">' +
-        '<h2 style="font-size:22px;letter-spacing:2px">🎮 点击做空天气</h2>' +
-        '<p>标的：<b>WXI 复合天气指数</b> —— <b>' + cityName + '</b> 本地的对流能量 / 阵风 / 降水 / 露点，' +
-        '<b>外加同省城市平均出来的「大盘」</b>，再叠一层盘子扰动。<br>' +
-        '打雷下雨 = 拉升，天气转好 = 回落。你不知道这段是哪年哪月 —— 只能靠盘感。</p>' +
-        cashRowHTML() +
-        '<ul class="gg-rules">' +
-        '<li>进来先白送 <b>' + WARM_DAYS + ' 天</b>历史 K 线（已经走完，只能看不能交易），' +
-        '你从第 <b>' + (WARM_DAYS + 1) + '</b> 天开始交易，再走 <b>' + TRADE_DAYS + ' 天</b>结算。</li>' +
-        '<li>K 线周期有 <b>1 分 / 5 分 / 15 分 / 30 分 / 1 时 / 4 时 / 1 日</b>七档，右下角随时换' +
-        '（1/5 分是插值展开的，其余是真数据聚合）。</li>' +
-        '<li>图上那条<b style="color:#c792ea">紫色虚线就是大盘</b>（同省 8 城等权平均）。' +
-        '本地跑赢大盘 = 自己这块地在出事；本地跟着大盘走 = 一场天气过程路过。</li>' +
-        '<li>合约：指数每动 <code>1 点</code>，每手盈亏 <code>¥10</code>。</li>' +
-        '<li>杠杆决定保证金：满仓时反向走 <code>(1−10%)÷杠杆</code> 就<u>爆仓</u>。' +
-        '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
-        '<li>手续费万分之五、开平都收，另有<b>滑点</b>（单子越大越贵）—— 本金越大、城市越小，成本越肉疼。</li>' +
-        '<li>右侧随时看得到<b>强平价</b>和<b>爆仓距离</b> —— 碰到就结束。</li>' +
-        '<li>行情速度 <b>15 / 30 / 60 / 120 / 240 分钟天气每秒</b>，30 天交易约 <b>3 ~ 48 分钟</b>，随时能暂停。' +
-        '速度是"每秒推进多少天气时间"，所以跟 K 线周期无关 —— 挑 1 分钟只是看得更细，不会玩得更久。</li>' +
-        '</ul>' +
-        '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
-        '<div class="gg-btns"><button class="gg-long" id="ggAgain">开始操盘</button>' +
-        '<button class="gg-short" id="ggQuit">算了</button></div>' +
-        '</div>';
-      bindCoverOnce();
-    }
+
+    const sv = loadSaved();
+    if (sv) resumeCard(sv); else startCard();
+
     setTimeout(() => {
       ensureCharts();
       readTheme();
@@ -3031,7 +3192,77 @@
     }, 30);
   }
 
+  /** 上次那局还在 —— 问一句是接着玩还是重开。注意"从该城市重新开始"用的是
+   *  **当前页面的城市**，所以换个城市点进来就能开新局，这正是需求里要的那条。 */
+  async function resumeCard(s) {
+    const app = global.__APP;
+    const curName = (app && app.S && app.S.cur && app.S.cur.name) || '当前城市';
+    const oldName = (s.city && s.city.name) || '上次的城市';
+    const eq = equityOfSave(s);
+    const v = await askChoice({
+      title: '上次那局还在',
+      body: '<b>' + oldName + '</b> WXI · 停在第 <b>' + dayAt(s.i) + '</b> 天 · 权益 <b>' + money(eq) +
+        '</b>（' + ((eq / (s.cash0 || DEF_CASH) - 1) * 100 >= 0 ? '+' : '') +
+        ((eq / (s.cash0 || DEF_CASH) - 1) * 100).toFixed(2) + '%）<br>' +
+        '<span class="dim">离开 ' + gapText(Date.now() - (+s.at || Date.now())) +
+        ' —— 这段时间行情是照走的，接着玩的话会把缺的 K 线补上。</span>',
+      buttons: [
+        { label: '继续 ' + oldName, value: 'resume', cls: 'gg-long' },
+        { label: '从 ' + curName + ' 重新开始', value: 'new', cls: 'gg-short' },
+        { label: '算了', value: null, cls: 'gg-short' }
+      ]
+    });
+    if (v === 'resume') { resumeRound(s); return; }
+    if (v === 'new') { clearSave(); startCard(); return; }
+    close();
+  }
+  /** 存档里的权益（现金 + 浮动盈亏），不依赖 G 已经填好。 */
+  function equityOfSave(s) {
+    const px = (+s.price) || 0, pos = (+s.pos) || 0, avg = (+s.avg) || 0;
+    return ((+s.cash) || 0) + (pos ? pos * (px - avg) * LOT_MULT : 0);
+  }
+
+  /** 开场封面。 */
+  function startCard() {
+    const cover = $('#ggCover');
+    if (!cover) return;
+    const app = global.__APP;
+    const cityName = (app && app.S && app.S.cur && app.S.cur.name) || '当前城市';
+    cover.hidden = false;
+    cover.innerHTML =
+      '<div class="gg-card">' +
+      '<h2 style="font-size:22px;letter-spacing:2px">🎮 Climate Create Bet</h2>' +
+      '<p>标的：<b>WXI 复合天气指数</b> —— <b>' + cityName + '</b> 本地的对流能量 / 阵风 / 降水 / 露点，' +
+      '<b>外加同省城市平均出来的「大盘」</b>，再叠一层盘子扰动。<br>' +
+      '打雷下雨 = 拉升，天气转好 = 回落。你不知道这段是哪年哪月 —— 只能靠盘感。</p>' +
+      cashRowHTML() +
+      '<ul class="gg-rules">' +
+      '<li>进来先白送 <b>' + WARM_DAYS + ' 天</b>历史 K 线（已经走完，只能看不能交易），' +
+      '你从第 <b>' + (WARM_DAYS + 1) + '</b> 天开始交易，再走 <b>' + TRADE_DAYS + ' 天</b>结算。</li>' +
+      '<li>K 线周期有 <b>1 分 / 5 分 / 15 分 / 30 分 / 1 时 / 4 时 / 1 日</b>七档，右下角随时换' +
+      '（1/5 分是插值展开的，其余是真数据聚合）。</li>' +
+      '<li>图上那条<b style="color:#c792ea">紫色虚线就是大盘</b>（同省 8 城等权平均）。' +
+      '本地跑赢大盘 = 自己这块地在出事；本地跟着大盘走 = 一场天气过程路过。</li>' +
+      '<li>合约：指数每动 <code>1 点</code>，每手盈亏 <code>¥10</code>。</li>' +
+      '<li>杠杆决定保证金：满仓时反向走 <code>(1−10%)÷杠杆</code> 就<u>爆仓</u>。' +
+      '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
+      '<li>手续费万分之五、开平都收，另有<b>滑点</b>（单子越大越贵）—— 本金越大、城市越小，成本越肉疼。</li>' +
+      '<li>右侧随时看得到<b>强平价</b>和<b>爆仓距离</b> —— 碰到就结束。</li>' +
+      '<li>行情速度 <b>15 / 30 / 60 / 120 / 240 分钟天气每秒</b>，30 天交易约 <b>3 ~ 48 分钟</b>，随时能暂停。' +
+      '速度是"每秒推进多少天气时间"，所以跟 K 线周期无关 —— 挑 1 分钟只是看得更细，不会玩得更久。</li>' +
+      '<li><b>中途退出不会作废</b>：选「保留进度」下次回来接着玩，而且你不在的时候<b>行情照走</b>。</li>' +
+      '</ul>' +
+      '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
+      '<div class="gg-btns"><button class="gg-long" id="ggAgain">开始操盘</button>' +
+      '<button class="gg-short" id="ggQuit">算了</button></div>' +
+      '</div>';
+    bindCoverOnce();
+  }
+
   function close() {
+    // 走之前先落一次盘 —— close() 有好几个入口（✕、遮罩、封面上的"算了"、结算卡的"退出"），
+    // 统一在这里兜住，免得漏掉某条路径把一局丢了。
+    if (G.running && !G.ended) saveRound();
     stopTimer();
     G.running = false; G.open = false;
     const mask = $('#game');
@@ -3044,9 +3275,17 @@
     const btn = $('#btnGame');
     if (btn) btn.addEventListener('click', open);
     const x = $('#ggExit');
-    if (x) x.addEventListener('click', close);
+    if (x) x.addEventListener('click', exitFlow);
     const mask = $('#game');
-    if (mask) mask.addEventListener('click', e => { if (e.target === mask) close(); });
+    if (mask) mask.addEventListener('click', e => { if (e.target === mask) exitFlow(); });
+    // 网页版直接关标签页 / 手机端切后台被杀，都要把这一局留住
+    global.addEventListener('beforeunload', () => { if (G.running && !G.ended) saveRound(); });
+    global.addEventListener('pagehide', () => { if (G.running && !G.ended) saveRound(); });
+    // 手机上还有一条"返回"路径：系统后退。开着面板时先拦下来走同一个提示。
+    global.addEventListener('popstate', () => {
+      if (!G.open) return;
+      if (G.running && !G.ended) exitFlow(); else close();
+    });
 
     const L = $('#ggLong'), S = $('#ggShort'), C = $('#ggClosePos');
     if (L) L.addEventListener('click', () => trade(1));
@@ -3134,6 +3373,8 @@
       liveAt, livePrice, liveNote, volNote, barAt,
       setDbgComp: v => { DBG_COMP = !!v; },
       fbReset,
+      stepBars, saveRound, loadSaved, clearSave, resumeRound, catchUp, autoSave,
+      equityOfSave, gapText, dayAt, exitFlow, SAVE_KEY,
       P, cityAmp, cityWeight, dishScale
     }
   };
