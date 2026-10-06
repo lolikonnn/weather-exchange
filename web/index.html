@@ -22,7 +22,7 @@
   <div class="search-wrap">
     <span class="search-ico">🔍</span>
     <input id="search" type="text" autocomplete="off" spellcheck="false"
-           placeholder="搜索城市 / 拼音 / 城市代码  如：杭州、hangzhou、101210101">
+           placeholder="搜索城市 / 拼音 / 城市代码  如：广州、guangzhou、101280101">
     <div id="searchResults" class="search-results" hidden></div>
   </div>
 
@@ -79,17 +79,6 @@
   <span class="wx-bar-hint" id="wxHint"></span>
 </div>
 
-<!-- ══════════════════════ 预警滚动条 ══════════════════════
-     炒股软件顶上那条一直往左滚的提示条，滚的是**当前所在地**的预警信号。
-     全国同时有几百条生效中的预警，全滚出来是噪音，所以只取离当前城市最近的几条，
-     按距离升序；附近一条都没有时标签会写成"全国最近"，让人知道不是坏了。
-     点整条打开预警信号面板。 -->
-<div class="ticker" id="warnTicker" hidden title="点开看全部生效中的预警信号">
-  <span class="ticker-tag" id="tickerTag">⚠ 预警</span>
-  <div class="ticker-view"><div class="ticker-run" id="tickerRun"></div></div>
-  <span class="ticker-more">全部预警 ›</span>
-</div>
-
 <!-- ══════════════════════ 指数条 ══════════════════════ -->
 <div class="index-strip" id="indexStrip">
   <div class="strip-title">天气指数</div>
@@ -142,6 +131,15 @@
         </div>
       </div>
       <div class="qh-stats" id="qStats"></div>
+      <!-- 预警滚动条：炒股软件里那条一直往左滚的提示条。
+           只滚**当前所在地**那个市/区的预警 —— 全国同时有几百条生效中，
+           全滚出来是噪音。本区市一条都没有时整条收起来（不占位置、不留"暂无预警"占位）。
+           放在行情头这一块的底部，也就是主图正上方。点整条打开预警信号面板。 -->
+      <div class="ticker" id="warnTicker" hidden title="点开看全部生效中的预警信号">
+        <span class="ticker-tag" id="tickerTag">⚠ 本地预警</span>
+        <div class="ticker-view"><div class="ticker-run" id="tickerRun"></div></div>
+        <span class="ticker-more">全部预警 ›</span>
+      </div>
     </div>
 
     <div class="tabbar" id="periodTabs">

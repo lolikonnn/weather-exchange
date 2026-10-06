@@ -228,6 +228,9 @@
       lat: g.lat, lon: g.lon,
       cma: '',                 // 没有气象局站号 → 自动全走 Open-Meteo
       path: '',
+      // 区/市要跟着走：行情头那行编号要显示「天河区 · 广东省」，
+      // 预警滚动条也要拿它去筛"本区市的预警"。丢了它就只能显示到省。
+      district: g.district || '', city: g.city || '',
       loc: true
     };
     c.search = (c.name + c.prov + 'dingwei' + LOC_ID).toLowerCase();
@@ -400,6 +403,54 @@
   }
 
   /* ═══════════ 行情头 ═══════════ */
+  /** 逐小时数组里"当前这个小时"的下标。找不到就取最后一个不晚于现在的，
+   *  一个都没有返回 -1（调用方显示 `--`，绝不拿数组第 0 项冒充当前）。 */
+  function hourIndexAt(times) {
+    if (!times || !times.length) return -1;
+    const now = new Date(), p = x => (x < 10 ? '0' + x : '' + x);
+    const key = now.getFullYear() + '-' + p(now.getMonth() + 1) + '-' + p(now.getDate()) +
+      'T' + p(now.getHours());
+    let i = times.findIndex(t => String(t).slice(0, 13) === key);
+    if (i >= 0) return i;
+    i = -1;
+    for (let k = 0; k < times.length; k++) if (String(times[k]).slice(0, 13) <= key) i = k;
+    return i;
+  }
+  /** 云量百分数 → 天气话。抬头看一眼天，和这个数对得上才有用。 */
+  function cloudWord(v) {
+    if (v == null) return '';
+    if (v < 10) return '晴';
+    if (v < 30) return '少云';
+    if (v < 70) return '多云';
+    if (v < 90) return '阴';
+    return '阴沉';
+  }
+  /** 紫外线指数分级（WHO 标准：0-2 弱 / 3-5 中等 / 6-7 强 / 8-10 很强 / 11+ 极强） */
+  function uvWord(v) {
+    if (v == null) return '';
+    if (v < 3) return '弱';
+    if (v < 6) return '中等';
+    if (v < 8) return '强';
+    if (v < 11) return '很强';
+    return '极强';
+  }
+  /** 月相。没有任何数据源直接给这个，只能自己按朔望月算：
+   *  以 2000-01-06 18:14 UTC 那次新月为基准，除以 29.530588853 天取余就是相位。
+   *  相位 0 = 新月、0.5 = 满月，八等分取名字。这是近似算法（真实朔望月长度有 ±0.3 天波动），
+   *  但对"今晚月亮圆不圆"这个问题足够了 —— 显示到"满月 98%"这个精度，不会指错一整档。 */
+  function moonPhaseTxt(dt) {
+    const SYN = 29.530588853;
+    const ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000;
+    const days = (dt instanceof Date ? dt.getTime() : Number(dt)) / 86400000;
+    if (!isFinite(days)) return '--';
+    const p = (((days - ref) % SYN) + SYN) % SYN / SYN;
+    const names = ['新月', '蛾眉月', '上弦月', '盈凸月', '满月', '亏凸月', '下弦月', '残月'];
+    const idx = Math.floor(p * 8 + 0.5) % 8;
+    const illum = Math.round((1 - Math.cos(2 * Math.PI * p)) / 2 * 100);
+    return names[idx] + ' ' + illum + '%';
+  }
+  const moonTxt = moonPhaseTxt(new Date());
+
   function renderQuoteHead() {
     const c = S.cur, d = S.data;
     if (!c || !d) return;
@@ -412,7 +463,11 @@
     const col = U.trendColor(chg);
 
     $('#qName').textContent = c.name;
-    $('#qCode').textContent = (c.cma ? c.cma + ' · ' : '') + c.id + (c.prov ? ' · ' + c.prov : '');
+    // 定位城市是合成出来的记录（id 是 '__loc__' 这个内部占位），
+    // 把它当城市编号打出来就是「__loc__ · 广东省」—— 用户截图里就是这么显示错的。
+    $('#qCode').textContent = (c.id === LOC_ID)
+      ? (c.district ? c.district + ' · ' + (c.prov || '') : (c.prov || '定位'))
+      : (c.cma ? c.cma + ' · ' : '') + c.id + (c.prov ? ' · ' + c.prov : '');
     $('#qPrice').textContent = q.temp == null ? '--' : fx(q.temp, 1);
     $('#qPrice').style.color = col;
     $('#qChange').textContent = chg == null ? '--' : sgn(chg, 1);
@@ -445,6 +500,25 @@
     // 统计格
     const n = d.now || {};
     const om = d.omDaily[curBar ? curBar.d : ''] || {};
+
+    // ── 天文与日照那四格的数据 ──
+    // 云量 / 紫外线取"当前这个小时"的值：抬头看一眼天，和这个数对得上才有用，
+    // 拿今天的平均值反而对不上。
+    const hi = hourIndexAt(d.hourly && d.hourly.time);
+    const cloudNow = (hi >= 0 && d.hourly.cloud) ? d.hourly.cloud[hi] : null;
+    const uvNow = (hi >= 0 && d.hourly.uv) ? d.hourly.uv[hi] : null;
+    // 昼长优先用 Open-Meteo 的 daylight_duration（秒）；它没给就自己拿日出日落相减。
+    let daySec = (om.daylight != null && isFinite(om.daylight)) ? om.daylight : null;
+    if (daySec == null && om.sunrise && om.sunset) {
+      const a = Date.parse(String(om.sunrise).replace(' ', 'T'));
+      const b = Date.parse(String(om.sunset).replace(' ', 'T'));
+      if (isFinite(a) && isFinite(b) && b > a) daySec = (b - a) / 1000;
+    }
+    const daylightTxt = daySec == null ? '--'
+      : Math.floor(daySec / 3600) + ' 时 ' + Math.round((daySec % 3600) / 60) + ' 分';
+    const cloudTxt = cloudNow == null ? '--' : Math.round(cloudNow) + '% ' + cloudWord(cloudNow);
+    const uvTxt = uvNow == null ? '--' : fx(uvNow, 1) + ' ' + uvWord(uvNow);
+
     const items = [
       // 标签刻意用天气话写，不用"今开/昨收"这类炒股词 —— 保留炒股软件的"长相"就够了，
       // 不该要求用户会炒股才能看懂（用户反馈："那些炒股软件术语我不炒股看不懂"）。
@@ -465,10 +539,16 @@
       ['日落', om.sunset ? String(om.sunset).slice(11, 16) : '--', null],
       // 标签写短一点：统计格只有 ~107px 宽，"历史今日" + "32.7 / 22.9" 会被省略号截掉
       ['同期', prevBar ? fx(prevBar.h, 1) + '/' + fx(prevBar.l, 1) : '--', null],
-      ['观测点', curBar ? curBar.n + ' 个' : '--', null]
+      ['观测点', curBar ? curBar.n + ' 个' : '--', null],
+      // ── 天文与日照（用户要的"月相、昼长等天文数据"）──
+      // 云量取"当前这个小时"的值，而不是今天的平均 —— 抬头看一眼天，和这个数对得上才有用。
+      ['云量', cloudTxt, null],
+      ['紫外线', uvTxt, null],
+      ['昼长', daylightTxt, null],
+      ['月相', moonTxt, null]
     ];
     const box = $('#qStats'); box.innerHTML = '';
-    items.forEach(([k, v, c2]) => box.appendChild(el('div', { class: 'qs' }, [
+    items.forEach(([k, v, c2]) => box.appendChild(el('div', { class: 'qs', title: k + ' ' + v }, [
       el('b', { text: k }), el('span', { style: c2 ? { color: c2 } : null, text: String(v) })
     ])));
   }

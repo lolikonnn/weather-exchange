@@ -508,9 +508,12 @@
       return { n: '严重污染', c: '#8e44ad' };
     },
 
-    /* 风向：角度 -> 16 方位中文 */
-    DIR16: ['北', '北北东', '东北', '东北东', '东', '东南东', '东南', '南南东',
-            '南', '南南西', '西南', '西南西', '西', '西北西', '西北', '北北西'],
+    /* 风向：角度 -> 16 方位中文。
+       用的是气象上通行的 16 方位名（北 / 北东北 / 东北 / 东东北 …），
+       不要写成「北北东」那种 —— 虽然意思对得上，但中文预报里没人这么说，
+       拼出来是「北北东风」，用户会以为显示错了（报过一次）。 */
+    DIR16: ['北', '北东北', '东北', '东东北', '东', '东东南', '东南', '南东南',
+            '南', '南西南', '西南', '西西南', '西', '西西北', '西北', '北西北'],
     dirName(deg) {
       if (deg == null) return '--';
       return this.DIR16[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16] + '风';
@@ -588,7 +591,7 @@
         const out0 = {
           mode: 'hour', span: '今天 · 逐小时', key: [], label: [], temp: [], precip: [], prob: [],
           wind: [], gust: [], windDir: [], cloud: [], cloudLow: [], cloudMid: [], cloudHigh: [],
-          pm25: [], aqi: []
+          uv: [], pm25: [], aqi: []
         };
         for (let i = 0; i < T.length; i++) {
           if (dayStr(T[i]) !== today) continue;
@@ -599,6 +602,7 @@
           out0.gust.push(hourly.gust[i]); out0.windDir.push(hourly.windDir[i]);
           out0.cloud.push(hourly.cloud[i]); out0.cloudLow.push(hourly.cloudLow[i]);
           out0.cloudMid.push(hourly.cloudMid[i]); out0.cloudHigh.push(hourly.cloudHigh[i]);
+          out0.uv.push(hourly.uv[i]);
           const ai = air && air.time ? air.time.indexOf(T[i]) : -1;
           out0.pm25.push(ai >= 0 ? (air.pm25 || [])[ai] : null);
           out0.aqi.push(ai >= 0 ? (air.aqi || [])[ai] : null);
@@ -669,6 +673,8 @@
           wind: hourly.wind[i], gust: hourly.gust[i], windDir: hourly.windDir[i],
           cloud: hourly.cloud[i], cloudLow: hourly.cloudLow[i],
           cloudMid: hourly.cloudMid[i], cloudHigh: hourly.cloudHigh[i],
+          // 紫外线也跟着一起分桶：它和云量强相关，放在「空气」那一组的第二条线上看最顺
+          uv: hourly.uv[i],
           pm25: airP('pm25', T[i]), aqi: airP('aqi', T[i])
         });
       }
@@ -691,7 +697,7 @@
       const out = {
         mode: mode, span: span, key: [], label: [], temp: [], precip: [], prob: [],
         wind: [], gust: [], windDir: [], cloud: [], cloudLow: [], cloudMid: [],
-        cloudHigh: [], pm25: [], aqi: []
+        cloudHigh: [], uv: [], pm25: [], aqi: []
       };
       buckets.forEach(b => {
         out.key.push(b.key);
@@ -706,6 +712,9 @@
         out.cloudLow.push(agg(b.rows, 'cloudLow', 'mean'));
         out.cloudMid.push(agg(b.rows, 'cloudMid', 'mean'));
         out.cloudHigh.push(agg(b.rows, 'cloudHigh', 'mean'));
+        // 紫外线按窗口取**最大**值：平均值会把正午的强紫外摊薄成一个温和的数字，
+        // 而"今天要不要防晒"问的就是峰值。
+        out.uv.push(agg(b.rows, 'uv', 'max'));
         out.pm25.push(agg(b.rows, 'pm25', 'mean'));
         out.aqi.push(agg(b.rows, 'aqi', 'mean'));
       });
@@ -718,7 +727,7 @@
       { k: 'precip', n: '降水',   tip: '降水量（柱子）和下雨概率（黄线）。跟着上面的周期走：分时看小时、日K看天、周K看周' },
       { k: 'wind',   n: '风',     tip: '风速（柱子）、阵风（虚线）和风向（箭头）。跟着周期走：日K取当天最大风，周K取当周最大风' },
       { k: 'cloud',  n: '云量',   tip: '总云量（白线）以及低云/中云/高云各占多少。跟着周期走，按窗口取平均' },
-      { k: 'air',    n: '空气',   tip: '空气质量指数 AQI 与 PM2.5 浓度。跟着周期走，按窗口取平均' }
+      { k: 'air',    n: '空气',   tip: '空气质量指数 AQI 与 PM2.5 浓度，外加紫外线强度。跟着周期走，AQI/PM2.5 按窗口取平均，紫外线取窗口内最大值' }
     ],
 
     isWeatherSub(k) { return this.SUBS.some(s => s.k === k); }

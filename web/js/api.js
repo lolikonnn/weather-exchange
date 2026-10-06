@@ -355,8 +355,8 @@
     /** 近期逐小时（含过去 92 天）+ 16 日预报 */
     async forecast(lat, lon, pastDays, fcstDays) {
       const q = '?latitude=' + lat + '&longitude=' + lon +
-        '&hourly=temperature_2m,precipitation,relative_humidity_2m,wind_speed_10m,weather_code' +
-        '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,sunrise,sunset' +
+        '&hourly=temperature_2m,precipitation,relative_humidity_2m,wind_speed_10m,weather_code,cloud_cover,uv_index' +
+        '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,sunrise,sunset,uv_index_max,daylight_duration' +
         // Open-Meteo 的风速默认单位是 km/h，而中国气象局给的是 m/s。
         // 不显式指定的话，"平均风速"会显示成 17.6 m/s（其实是 17.6 km/h ≈ 4.9 m/s），
         // 和一墙之隔的实况风速 5.0 m/s 自相矛盾。
@@ -369,6 +369,8 @@
       h.humidity = (d.hourly && d.hourly.relative_humidity_2m) || [];
       h.wind = (d.hourly && d.hourly.wind_speed_10m) || [];
       h.wcode = (d.hourly && d.hourly.weather_code) || [];
+      h.cloud = (d.hourly && d.hourly.cloud_cover) || [];
+      h.uv = (d.hourly && d.hourly.uv_index) || [];
       h.daily = d.daily || null;
       h.utcOffset = d.utc_offset_seconds;
       return h;
@@ -896,6 +898,7 @@
         return a;
       };
       const humids = padTo(recent.humidity), winds = padTo(recent.wind), wcodes = padTo(recent.wcode);
+      const clouds = padTo(recent.cloud), uvs = padTo(recent.uv);
       const daily = toDailyBars(times, temps, precs, { humidity: humids, wind: winds, wcode: wcodes });
 
       // 用 Open-Meteo daily 补/覆盖更可靠的最高最低温
@@ -907,7 +910,10 @@
             low: recent.daily.temperature_2m_min[i],
             precip: recent.daily.precipitation_sum[i],
             code: recent.daily.weather_code[i],
-            sunrise: recent.daily.sunrise[i], sunset: recent.daily.sunset[i]
+            sunrise: recent.daily.sunrise[i], sunset: recent.daily.sunset[i],
+            // 紫外线最大指数、昼长（秒）；老版本 Open-Meteo 可能不给，允许缺
+            uvMax: (recent.daily.uv_index_max || [])[i],
+            daylight: (recent.daily.daylight_duration || [])[i]
           };
         });
       }
@@ -946,7 +952,7 @@
 
       const out = {
         city, now, fcst, official, cnFcst, calDaily,
-        hourly: { time: times, temp: temps, precip: precs, humidity: humids, wind: winds, wcode: wcodes },
+        hourly: { time: times, temp: temps, precip: precs, humidity: humids, wind: winds, wcode: wcodes, cloud: clouds, uv: uvs },
         daily, week, month, intraday, five,
         omDaily, lastDay, todayIndex: ti, today,
         base: ti > 0 ? daily[ti - 1].c : (ti === 0 ? daily[0].o : null)

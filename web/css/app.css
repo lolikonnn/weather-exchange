@@ -30,7 +30,10 @@ html,body{height:100%}
 body{
   background:var(--bg);color:var(--txt);
   font:13px/1.4 "Microsoft YaHei UI","PingFang SC","Hiragino Sans GB",system-ui,sans-serif;
-  display:grid;grid-template-rows:46px 30px auto 34px minmax(0,1fr) 24px 22px;
+  /* 每一行按位置对应一个 body 的直接子元素：顶栏 / 天气功能条 / 指数条 / 主体 / 状态条 / 免责。
+     往这一层加东西必须同时改这一行（以及下面两个媒体查询里的同名声明），
+     否则后面的子元素整体错位一格 —— 加预警滚动条时就踩过一次，见 docs/NOTES.md。 */
+  display:grid;grid-template-rows:46px 30px 34px minmax(0,1fr) 24px 22px;
   height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;
   user-select:none;
 }
@@ -184,9 +187,12 @@ body{
 
 /* ───────────────── 行情头 ───────────────── */
 .quote-head{
-  flex:none;display:flex;align-items:flex-start;gap:20px;
+  /* 换行是为了让底部的预警滚动条能独占一整行（它 flex:1 0 100%） */
+  flex:none;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;
   padding:9px 14px 10px;background:var(--bg2);border-bottom:1px solid var(--line);
 }
+/* 主图正上方那条跑马灯。order 把它压到最后一行，不管它插在 DOM 的哪个位置。 */
+.quote-head > .ticker{flex:1 0 100%;order:9;margin:7px 0 0}
 .qh-left{flex:none}
 .qh-name{display:flex;align-items:baseline;gap:8px;margin-bottom:2px;flex-wrap:wrap}
 .qh-name h1{font-size:19px;font-weight:700;color:var(--txt-hi);letter-spacing:.5px}
@@ -202,13 +208,15 @@ body{
 .qh-unit{font-size:14px;color:var(--dim);margin-left:-4px}
 .qh-chg,.qh-pct{font-family:var(--mono);font-size:17px;font-weight:600}
 .qh-stats{
-  flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));
-  gap:2px 12px;align-content:start;padding-top:2px;min-width:0;
+  flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));
+  gap:2px 10px;align-content:start;padding-top:2px;min-width:0;
 }
 .qs{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:1.5px 0;border-bottom:1px dashed #1f242e;min-width:0}
-.qs b{font-weight:400;color:var(--dim);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* 标签**不能**被省略号截掉 —— "风速" 被截成 "风..." 就是这一条造成的（用户报过）。
+   列宽的下限（108px）保证正常情况下两者都放得下；万一还是挤，宁可让数值那一侧收窄。 */
+.qs b{font-weight:400;color:var(--dim);white-space:nowrap;flex:0 0 auto;overflow:visible;text-overflow:clip}
 /* 数值必须整块不换行：否则 "17.6 m/s" 会在空格处折成两行，把整行统计格撑歪 */
-.qs span{font-family:var(--mono);font-weight:600;color:var(--txt-hi);white-space:nowrap}
+.qs span{font-family:var(--mono);font-weight:600;color:var(--txt-hi);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
 
 /* ───────────────── 图表 ───────────────── */
 .tabbar{
@@ -387,9 +395,8 @@ body{
        会被最宽子项的 max-content 撑破视口（实测 429 > 390）。显式钉一列并禁横向滚动。 */
     grid-template-columns:minmax(0,1fr);
     /* body 是 grid，行数必须跟直接子元素一一对上，多一个少一个都会整体错位。
-       顺序：顶栏 / 天气条 / 预警滚动条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签。
-       预警滚动条那一行写 auto：它没数据时是 [hidden]（display:none），auto 会塌成 0，不留空档。 */
-    grid-template-rows:auto auto auto auto minmax(0,1fr) 22px 24px 54px;  /* 顶栏 / 天气条 / 预警滚动条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签 */
+       顺序：顶栏 / 天气条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签。 */
+    grid-template-rows:auto auto auto minmax(0,1fr) 22px 24px 54px;  /* 顶栏 / 天气条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签 */
     overflow-x:hidden;
     font-size:13px;
     -webkit-text-size-adjust:100%;
@@ -479,7 +486,7 @@ body{
 /* 横屏手机 / 小平板：回到两栏（自选 + 图表），盘口折到下面 */
 @media (max-width:860px) and (orientation:landscape){
   .mtabs{display:none}
-  body{grid-template-rows:auto auto auto auto minmax(0,1fr) 22px 24px}
+  body{grid-template-rows:auto auto auto minmax(0,1fr) 22px 24px}
   .layout{grid-template-columns:170px minmax(0,1fr)}
   .pane-left,.pane-center,.pane-right{display:flex;grid-area:auto}
   .pane-right{display:none}
@@ -516,14 +523,16 @@ body{
    滚动用 CSS 动画（`translateX(0 → -50%)`）：JS 把内容**铺两遍**，
    滚过一半时正好接上开头，所以看不出接缝，也不需要 JS 逐帧改 scrollLeft。 */
 .ticker{
-  display:flex;align-items:center;height:26px;overflow:hidden;cursor:pointer;
+  display:flex;align-items:center;height:24px;overflow:hidden;cursor:pointer;
   background:linear-gradient(90deg,rgba(255,77,79,.13),rgba(255,77,79,.035) 60%,transparent);
-  border-bottom:1px solid var(--line);font-size:11.5px;color:var(--txt);
+  border:1px solid rgba(255,77,79,.30);border-radius:3px;
+  font-size:11.5px;color:var(--txt);
 }
 .ticker:hover{background:linear-gradient(90deg,rgba(255,77,79,.20),rgba(255,77,79,.06) 60%,transparent)}
 .ticker-tag{
   flex:none;display:flex;align-items:center;height:100%;padding:0 9px;
   background:#c62828;color:#fff;font-weight:600;letter-spacing:.5px;
+  border-radius:2px 0 0 2px;
 }
 .ticker-view{flex:1 1 auto;min-width:0;height:100%;overflow:hidden;position:relative}
 .ticker-run{
@@ -726,7 +735,8 @@ body.fullchart .pane-right{display:none!important}
 body.fullchart .pane-center{display:flex!important;min-height:0}
 body.fullchart .topbar,
 body.fullchart .wx-bar,
-body.fullchart .ticker,
+/* 滚动条现在住在 .quote-head 里面（主图正上方），所以全屏看主图时要单独点名它 */
+body.fullchart .quote-head .ticker,
 body.fullchart .index-strip,
 body.fullchart .statusbar,
 body.fullchart .disclaimer,

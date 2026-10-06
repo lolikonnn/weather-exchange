@@ -43,8 +43,10 @@
      同一个日期仍旧落在不同的 x 像素上。所以副图不再自己定横轴，直接吃主图的。
      主图有、逐小时覆盖不到的时段填 null：柱子不画、线自然断开 —— 这是数据可得性的
      诚实反映，不是 bug；要让它变满只能换更长的数据源（归档 API），不是这里能补的。 */
+  // 这份名单就是"对齐时要逐字段搬过去的列"—— Weather.series() 里新增一个字段，
+  // 忘了往这儿加，它在副图上就会**静默消失**（不报错、也不为空，就是没有）。
   const ALIGN_FIELDS = ['temp', 'precip', 'prob', 'wind', 'gust', 'windDir',
-    'cloud', 'cloudLow', 'cloudMid', 'cloudHigh', 'pm25', 'aqi'];
+    'cloud', 'cloudLow', 'cloudMid', 'cloudHigh', 'uv', 'pm25', 'aqi'];
 
   function alignSeries(cats, s) {
     if (!cats || !cats.length) return s;
@@ -220,6 +222,18 @@
   }
 
   /** 空气：柱子＝PM2.5，线＝AQI。吃 series() 的输出，所以跟着周期走 */
+  // 紫外线强度的口语说法。app.js 里有一份一样的，但两个文件是各自独立的 IIFE，
+  // 谁也看不见谁，所以这里再写一份（改阈值时两边都要动）。
+  function uvWord(v) {
+    if (v == null) return '--';
+    return v < 3 ? '弱' : v < 6 ? '中等' : v < 8 ? '强' : v < 11 ? '很强' : '极强';
+  }
+  /** 紫外线等级对应的颜色（越强越红，跟气象上的分级一致）。 */
+  function uvColor(v) {
+    if (v == null) return '#7f8fa6';
+    return v < 3 ? '#2bd6a0' : v < 6 ? '#ffd666' : v < 8 ? '#ffb74d' : v < 11 ? '#ff7043' : '#d16dff';
+  }
+
   function optAir(s, TH, period, view) {
     // 横轴要用原始键（主图的刻度函数认这个），tooltip 里仍旧写给人看的 label
     const xs = (s && s.label) || [], keys = (s && (s.key || s.label)) || [];
@@ -232,12 +246,16 @@
       return o0;
     }
     const pm = s.pm25 || [], aq = s.aqi || [];
+    // 紫外线：数据来自 Open-Meteo 的 uv_index，和 PM2.5 一个来源、一条时间轴，
+    // 所以直接当第三条线挂在这张图上（"今天该不该防晒"和"今天空气行不行"是同一类问题）。
+    const uv = s.uv || [], uvOk = uv.some(v => v != null);
     const o = base(TH, keys, 'AQI', period, view);
     o.tooltip.formatter = ps => {
       const i = ps[0].dataIndex;
       const lv = W.aqiLevel(aq[i]);
       return xs[i] + '<br/>AQI ' + (aq[i] == null ? '--' : Math.round(aq[i])) + '（' + lv.n + '）' +
-        '<br/>PM2.5 ' + fx1(pm[i]) + ' μg/m³';
+        '<br/>PM2.5 ' + fx1(pm[i]) + ' μg/m³' +
+        (uvOk ? '<br/>紫外线 ' + fx1(uv[i]) + (uv[i] == null ? '' : '（' + uvWord(uv[i]) + '）') : '');
     };
     o.yAxis = [o.yAxis, {
       type: 'value', name: 'μg/m³', nameTextStyle: { color: TH.dim, fontSize: 10 },
@@ -260,6 +278,21 @@
         }
       }
     ];
+    // 紫外线单开一根右轴：AQI 是 0~500、PM2.5 是 μg/m³，跟 UV 指数（0~11+）放同一根轴上，
+    // 要么把 UV 压成一条贴地的直线，要么把 AQI 顶出画面。固定 0~12 好读。
+    if (uvOk) {
+      o.yAxis.push({
+        type: 'value', name: 'UV', min: 0, max: 12, position: 'right', offset: 38,
+        nameTextStyle: { color: TH.dim, fontSize: 10 },
+        axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10 }, splitLine: { show: false }
+      });
+      o.series.push({
+        name: '紫外线', type: 'line', yAxisIndex: 2, smooth: true, showSymbol: false, z: 4,
+        // 逐点着色让"今天什么时候晒"一眼看出来，而不用回头去看右边那根刻度
+        data: uv.map(v => ({ value: v, itemStyle: { color: uvColor(v) } })),
+        lineStyle: { width: 1.5, color: '#ffb74d' }, itemStyle: { color: '#ffb74d' }
+      });
+    }
     return o;
   }
 
@@ -305,7 +338,8 @@
         precip: { label: '降水量', unit: 'mm', color: '#4fc3f7', raw: 'precip', agg: 'precip' },
         wind:   { label: '风速',   unit: 'm/s', color: '#2bd6a0', raw: 'wind',   agg: 'wind' },
         cloud:  { label: '云量',   unit: '%',   color: '#9fb3c8', raw: 'cloud',  agg: 'cloud' },
-        air:    { label: 'PM2.5',  unit: 'µg/m³', color: '#d16dff', raw: 'pm25', agg: 'pm25' }
+        air:    { label: 'PM2.5',  unit: 'µg/m³', color: '#d16dff', raw: 'pm25', agg: 'pm25' },
+        uv:     { label: '紫外线', unit: '',      color: '#ffb74d', raw: 'uv',   agg: 'uv' }
       }[name];
       if (!M) return null;
 
@@ -572,7 +606,7 @@
 
        动画走 CSS（`translateX(0 → -50%)`），内容**铺两遍**，滚过一半正好接上开头，所以看不出接缝；
        跑的时长按内容实际宽度算（`TICK_PPS` 像素/秒），内容长短不影响观感速度。 */
-    _tk: { R: 200, MAX: 10, PPS: 26, PERIOD: 300000 },
+    _tk: { MAX: 10, PPS: 26, PERIOD: 300000 },
     _tkTimer: 0,
     _tkSig: '',
 
@@ -580,52 +614,69 @@
       const bar = $('#warnTicker'), run = $('#tickerRun'), tag = $('#tickerTag');
       if (!bar || !run) return;
       const app = global.__APP;
-      const c = (app && app.S && app.S.cur) || null;
-      const hasLL = !!(c && isFinite(c.lat) && isFinite(c.lon));
+      const S = (app && app.S) || null;
+      const geo = (S && S.geo) || null;
+      const cur = (S && S.cur) || null;
+
+      // 「当前所在地」优先用定位结果。定位只知道到区/市，没有定位就退成正在看的那个城市，
+      // 这时候标签会写清是哪座城市，免得让人以为滚的是自己家门口的预警。
+      const keys = [];
+      if (geo) {
+        if (geo.district) keys.push(geo.district);
+        if (geo.city) keys.push(geo.city);
+      }
+      if (!keys.length && cur && cur.name) keys.push(cur.name);
+      const place = geo ? '本地' : (cur ? cur.name : '');
 
       let ws;
       try { ws = await W.warnings(); }
       catch (e) { bar.hidden = true; return; }
-      if (!ws || !ws.length) { bar.hidden = true; return; }
+      if (!ws || !ws.length || !keys.length) { bar.hidden = true; return; }
 
-      if (hasLL) {
-        ws.forEach(w => {
-          w.d = (isFinite(w.lat) && isFinite(w.lon)) ? qkDist(c.lat, c.lon, w.lat, w.lon) : Infinity;
-        });
-        ws.sort((x, y) => x.d - y.d);
-      }
+      // 气象局的预警标题自己就点了地名：「广东省韶关市发布森林火险黄色预警信号」
+      // 「广州市天河区发布暴雨橙色预警信号」—— 所以按地名把标题筛一遍就是"本区市的预警"，
+      // 不需要额外请求，也不用猜坐标半径（半径法会把隔壁市的预警一起卷进来，用户要的是本区市）。
+      const hit = ws.filter(w => {
+        const t = w.title || '';
+        return keys.some(k => k && k.length >= 2 && t.indexOf(k) >= 0);
+      });
+      // 本区市一条都没有 —— 整条收起来（用户选的行为），不留"暂无预警"占位。
+      if (!hit.length) { bar.hidden = true; return; }
 
-      const near = hasLL ? ws.filter(w => isFinite(w.d) && w.d <= this._tk.R) : [];
-      const local = near.length > 0;
-      const list = (local ? near : ws).slice(0, this._tk.MAX);
+      // 区级预警（点名了区）比市级更贴近"我家门口"，排前面；同级按发布时间新的在前。
+      const spec = w => (geo && geo.district && (w.title || '').indexOf(geo.district) >= 0) ? 0 : 1;
+      hit.sort((a, b) => (spec(a) - spec(b)) || String(b.time || '').localeCompare(String(a.time || '')));
+      const list = hit.slice(0, this._tk.MAX);
 
       // 数据没变就别重画 —— 重画会把动画打回开头，看着像一直在闪。
-      const sig = (hasLL ? c.id : '-') + '|' + local + '|' + ws.length + '|' +
-        list.map(w => w.title).join('~');
+      const sig = keys.join(',') + '|' + hit.length + '|' + list.map(w => w.title).join('~');
       if (sig === this._tkSig) return;
       this._tkSig = sig;
 
       const txt = w => {
-        const d = (w.d != null && isFinite(w.d)) ? ' · ' + Math.round(w.d) + ' 公里' : '';
+        // 同一座城市的预警，距离没有信息量（都在你家附近），改成显示发布时间。
+        const d = shortWarnTime(w.time);
         const col = warnColor(w.title), t = w.title || '气象预警';
         return '<span class="ticker-it" title="' + esc(t) + '">' +
           '<b style="color:' + col + '">【' + esc(shortWarn(t)) + '】</b>' +
-          esc(t) + '<i>' + d + '</i></span>';
+          esc(t) + (d ? '<i> · ' + esc(d) + '</i>' : '') + '</span>';
       };
       const once = list.map(txt).join('');
-      run.innerHTML = once + once;                 // 铺两遍，-50% 正好接上
-      run.classList.remove('rolling');
-      if (tag) tag.textContent = local ? '⚠ 本地预警' : '⚠ 全国最近';
-
-      // 内容比可视区还短就没必要滚，静态摆着更清楚。
-      const half = run.scrollWidth / 2;
       const view = run.parentNode;
+      // 先铺一遍量宽度：够宽才需要"铺两遍 + -50%"那套无缝滚动，
+      // 否则静态摆着更清楚 —— 而且不滚的时候铺两遍会让人看见同一条预警并排出现两次。
+      run.classList.remove('rolling');
+      run.innerHTML = once;
+      void run.offsetWidth;
+      const half = run.scrollWidth;
       if (half > (view ? view.clientWidth : 0) + 4) {
+        run.innerHTML = once + once;
         run.style.setProperty('--tk-dur', Math.max(8, Math.round(half / this._tk.PPS)) + 's');
         // 先把它挪回起点再开动画，否则下一次重算时长时会从半路跳一下。
         void run.offsetWidth;
         run.classList.add('rolling');
       }
+      if (tag) tag.textContent = '⚠ ' + place + '预警';
       bar.hidden = false;
     },
 
@@ -805,6 +856,14 @@
     if (/黄色/.test(s)) return '#f0c419';
     if (/蓝色/.test(s)) return '#3498db';
     return '#7f8c9a';
+  }
+  /** 「2026年10月05日16时23分」→「10-05 16:23」。气象局的时间戳是中文写法，
+   *  滚动条里那一格塞不下原文。认不出来就返回空串，宁可少显示也不写错。 */
+  function shortWarnTime(s) {
+    const m = String(s || '').match(/(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2})时(\d{1,2})分/);
+    if (!m) return '';
+    const p = n => (n < 10 ? '0' + n : '' + n);
+    return p(+m[2]) + '-' + p(+m[3]) + ' ' + p(+m[4]) + ':' + p(+m[5]);
   }
 
   /* ── 地震面板用的小工具 ──
