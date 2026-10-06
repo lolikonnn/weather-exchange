@@ -52,16 +52,34 @@
   const { $, el, storeGet, storeSet, toast } = U;
 
   /* ═══════════════ 合约与规则 ═══════════════ */
-  // 本金可以在开场卡片里改。注意它**不改变难度**：仓位是按百分比开的，
-  // 本金翻 10 倍，手数也翻 10 倍，盈亏比例一模一样。
-  // 真正变的是两件事：① 数字看着像那么回事了 ② 手数是整张开的，
-  // 本金越小取整误差越大（1 万本金开 30% 仓只有 6 手，凑不出更细的仓位）。
+  // 本金可以在开场卡片里改，而且**真的会改变难度**（见 cashTip 的注释）：
+  // 手续费有 5 元保底、滑点随名义金额上涨、小城市盘子更小。
+  // 本金翻 10 倍，手数也翻 10 倍，**仓位盈亏比例**那条仍然成立 ——
+  // 但成本占本金的比例会随本金一起涨，所以"钱多"是把双刃剑。
   const DEF_CASH   = 300000;   // 默认本金（群里说"久留美都有三十万"，那就三十万）
   const CASH_MIN   = 1000;
   const CASH_MAX   = 100000000;
   const CASH_PRESETS = [100000, 300000, 1000000, 3000000, 10000000];
   const LOT_MULT   = 10;       // 1 手 × 指数每动 1 点 = 10 元
   const FEE_RATE   = 0.0005;   // 单边手续费，万分之五
+  const FEE_MIN    = 5;        // 单笔最低手续费（对齐参考软件那句"单笔不足 5 元按 5 元收"）
+  // 滑点：名义金额越大越难在你要的价位成交。
+  // `slipOf()` 里 滑点(点) = SLIP_K × 名义金额 ÷ (CAP_BASE ÷ dishScale(城市))。
+  // CAP_BASE = 300 万是「广州这类城市的盘子容量」的基准；小城市 capacity 更小、滑点更大。
+  // 典型值：30 万本金 / 30% 仓 / 10 倍 → 名义 90 万 → 约 0.09%；300 万本金 → 约 0.9%。
+  //
+  // **SLIP_MAX 这个上限是必须有的。** 滑点按名义金额算，而 名义金额 = 本金 × 仓位% × 杠杆，
+  // 所以滑点随杠杆**平方**增长：30 万本金、满仓、100 倍时名义 3 亿，滑点会算到 300 点 ——
+  // 比 100 倍那条 0.9% 的爆仓线还远，等于"一开仓必爆"。截图真的逮到过
+  // 「本金 30 万 · 滑点 ¥896,939」这种荒唐数字。
+  //
+  // 上限取 **10 点（指数的 1%）** 是折中：300 万本金 / 30% 仓 / 10 倍算出来是 9.54 点，
+  // 刚好没被削到，所以**设计工作区间内「本金 ×10 → 成本占本金 ×10」这条线性还在**；
+  // 再往上（1000 万，或任何 100 倍满仓）就被封在 10 点，
+  // 表现为"一开仓就归零"而不是"欠下比本金还多的滑点"。
+  const SLIP_K     = 3;
+  const SLIP_MAX   = 10;
+  const CAP_BASE   = 3000000;
   const MAINTAIN   = 0.10;     // 维持保证金率：权益 ≤ 占用保证金 × 10% 就强平
   const BASE       = 1000;     // 指数基准
   const TREND_K    = 50;       // 趋势分量放大倍数
@@ -78,7 +96,11 @@
   // 行情一秒钟跑 24 根，看着像在放快进而不是在盯盘 —— 现在放慢到 1.5~6 根/秒，
   // 一局 2.7~10.7 分钟，一「天」大约 16~64 秒，节奏更像真的在看 15 分钟图。
   const ROUND_BARS = 960;
-  const SPEEDS     = [1.5, 3, 6]; // 每个真实秒推进几根 K
+  // 速度档位单位是**每真实秒推进几根 15 分钟 K 线**；
+  // 界面上按用户要求换算成「几根 1 分钟 K 线/秒」显示（×15），因为那才是真软件的说法。
+  // 一局 960 根 15 分钟 = 14400 根 1 分钟；下面四档对应一局 960 / 640 / 320 / 160 秒。
+  const SPEEDS     = [1, 1.5, 3, 6];
+  const SPEED_N    = ['慢', '悠闲', '正常', '狂暴'];
 
   /* ── 复合标的：标的不是一个城市的天气，而是「大盘 + 本地 + 湿度 + 盘子扰动」 ──
      群里那位说得对：只炒一个城市的对流，盯久了就那点花样。真实市场里你炒的东西
@@ -128,6 +150,8 @@
     peak: DEF_CASH,
     maxDD: 0,
     trades: 0,
+    slipPaid: 0,      // 本局累计滑点成本（元）—— 本金越大、城市越小，这个数越肉疼
+    feePaid: 0,       // 本局累计手续费（元）
     fills: [],        // 最近 5 笔成交，新的在前
     orders: [],       // 挂单：限价 { kind:'limit', dir, price, lots } / 止损止盈 { kind:'sl'|'tp', price }
     orderSeq: 0,
@@ -205,13 +229,56 @@
 
   /* ═══════════════ 成交 ═══════════════ */
   /**
-   * 按指定价成交。`p` 默认是最新价，但挂单必须按"挂的那个价"成交 —— 那正是挂单的意义。
+   * 这一单要吃掉多少滑点（指数点）。
+   *
+   * 这是我给"本金"加的第一根真杠杆 —— 在那之前，本金翻 10 倍只是手数翻 10 倍，
+   * 盈亏**比例**一模一样，换句话说改本金等于没改。加上滑点之后就变了：
+   * 单子的名义金额越大，越难在你要的价位全部成交。
+   *
+   *   名义金额 = 手数 × 价格 × LOT_MULT
+   *   盘子容量 = CAP_BASE × (1 / dishScale(城市))      ← 小地方盘子小
+   *   滑点(点) = SLIP_K × 名义金额 / 盘子容量
+   *
+   * 因为名义金额 ∝ 本金，所以**滑点占本金的比例随本金线性上升** ——
+   * 30 万本金在广州市价约 0.09%，300 万就是约 0.9%，而且换到惠州还要再乘 2.6。
+   * 钱多不等于好做，这一点是真券商天天在教的。
+   *
+   * `dishScale` 复用"盘子扰动"那套行政层级分档（见 cityWeight），不再单独造一个。
    */
-  function applyFillAt(q, p) {
+  function slipOf(lots, px) {
+    // 开场卡片上算这笔账时一局还没开始、G.price 还是 0，这时按基准点数估 ——
+    // 不兜住的话 tip 会算出「滑点 ¥0」，把成本说小一大截（真踩过）。
+    const p = (px > 0) ? px : (G.price > 0 ? G.price : BASE);
+    // 没有城市时盘子按"中等"算。**不能直接 dishScale(null)** ——
+    // cityWeight(null) 返回 1，dishScale 于是给出 1.6，开场卡片上的预估就凭空胖 60%。
+    const ds = G.city ? (dishScale(G.city) || 1) : 1;
+    const cap = CAP_BASE / ds;
+    const raw = SLIP_K * Math.abs(lots) * p * LOT_MULT / cap;
+    return Math.min(SLIP_MAX, raw);
+  }
+
+  /**
+   * 按指定价成交。`p` 默认是最新价，但挂单必须按"挂的那个价"成交 —— 那正是挂单的意义。
+   *
+   * `useSlip` 决定这一单吃不吃滑点：
+   *   - **市价单**（做多 / 做空 / 一键平仓）吃 —— 你是在向市场要流动性；
+   *   - **止损止盈也吃** —— 止损触发时本质就是市价单，"插针时滑点最狠"正是真券商的日常抱怨；
+   *   - **限价单不吃** —— 限价单的意义是"要么按我的价成交，要么别成交"，
+   *     真实世界里的代价是**可能根本不成交**，这里如实照搬。
+   *
+   * 手续费有两档（对齐参考软件里那句"单笔不足 5 元按 5 元收取"）：
+   * 名义金额 × 万分之五，但**不足 FEE_MIN 就按 FEE_MIN 收**。
+   * 大资金感觉不到，小资金会明显更贵 —— 这是本金第二根真杠杆。
+   */
+  function applyFillAt(q, p, useSlip) {
     if (!q) return;
-    p = (p > 0) ? p : G.price;
+    const raw = (p > 0) ? p : G.price;
+    const slip = (useSlip === false) ? 0 : slipOf(q);
+    // 买入吃在更高的价、卖出砸在更低的价 —— 方向永远对自己不利
+    p = raw + (q > 0 ? slip : -slip);
     const old = G.pos;
-    const fee = Math.abs(q) * p * LOT_MULT * FEE_RATE;
+    const notional = Math.abs(q) * p * LOT_MULT;
+    const fee = Math.max(FEE_MIN, notional * FEE_RATE);
     if (old === 0) {
       G.avg = p;
     } else if ((old > 0) === (q > 0)) {
@@ -226,6 +293,8 @@
     G.pos = old + q;
     if (!G.pos) G.avg = 0;
     G.trades++;
+    G.slipPaid = (G.slipPaid || 0) + Math.abs(q) * slip * LOT_MULT;
+    G.feePaid = (G.feePaid || 0) + fee;
     // 仓位平掉之后，挂在它上面的止损止盈就没意义了
     if (!G.pos) G.orders = G.orders.filter(o => o.kind === 'limit');
     // 成交记录（最近 5 笔，新的在上）
@@ -283,11 +352,13 @@
     for (const o of hits) {
       if (G.orders.indexOf(o) < 0) continue;   // 前面的成交可能已经把它带走了
       if (o.kind === 'limit') {
-        applyFillAt(o.dir * o.lots, o.price);
+        // 限价单不吃滑点：要么按我的价成交，要么别成交
+        applyFillAt(o.dir * o.lots, o.price, false);
         floatText('限价成交 ' + (o.dir > 0 ? '多' : '空') + ' ' + o.lots + ' 手 @ ' + n1(o.price), o.dir > 0 ? THEME.up : THEME.down, 12);
         beep(o.dir > 0 ? 660 : 440, .08, 'triangle', .04);
       } else if (G.pos) {
         const q = -G.pos;
+        // 止损止盈本质是市价单，滑点照吃 —— 插针时被扫得最惨的就是它们
         applyFillAt(q, o.price);
         floatText((o.kind === 'sl' ? '止损触发 @ ' : '止盈触发 @ ') + n1(o.price), o.kind === 'sl' ? THEME.down : THEME.up, 13);
         beep(o.kind === 'sl' ? 300 : 900, .16, 'sine', .05);
@@ -911,12 +982,22 @@
     const calc = $('#ggCalc');
     if (calc) {
       const notional = lots * G.price * LOT_MULT;
-      const openFee = notional * FEE_RATE;
+      const openFee = Math.max(FEE_MIN, notional * FEE_RATE);
+      // 预估滑点：这一单开进去要吃掉多少点、折成钱是多少、占本金几个百分点。
+      // 把它明明白白摆出来，玩家才能感觉到「钱多不等于好做」——
+      // 这个数与本金成正比，而且小城市还要再乘 dishScale。
+      const slip = lots ? slipOf(lots) : 0;
+      const slipYuan = lots ? Math.abs(lots) * slip * LOT_MULT : 0;
+      const slipOnCap = (lots && G.cash0) ? (slipYuan / G.cash0 * 100) : 0;
+      const slipCls = slipOnCap >= 1 ? ' gg-danger' : (slipOnCap >= 0.3 ? '' : ' gg-safe');
       const keyCls = tPct == null ? '' : (tPct < 3 ? ' gg-danger' : (tPct > 12 ? ' gg-safe' : ''));
       calc.innerHTML =
         '<div class="gg-crow"><span>名义仓位</span><b>' + (lots ? money(notional) : '—') + '</b></div>' +
         '<div class="gg-crow"><span>开仓手续费</span><b>' +
         (lots ? '¥' + openFee.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—') +
+        '</b></div>' +
+        '<div class="gg-crow gg-key' + slipCls + '"><span>预估滑点</span><b>' +
+        (lots ? (slip.toFixed(2) + ' 点 · ¥' + slipYuan.toFixed(0) + ' · 本金 ' + slipOnCap.toFixed(2) + '%') : '—') +
         '</b></div>' +
         '<div class="gg-crow gg-key' + keyCls + '"><span>约可承受反向波动</span><b>' +
         (tPct == null ? '—' : tPct.toFixed(2) + '%') + '</b></div>';
@@ -1010,7 +1091,7 @@
       const cost = $('#ggTbSpread');
       if (cost) cost.title = '一手开+平的手续费，合计 ¥' + costYuan.toFixed(2);
       setT('#ggTbConn', G.ended ? '已收盘' : (G.running ? '行情推送中' : '已暂停'));
-      // 「行情速度」那一行右边实时报一局大概要跑多久 —— 1.5×/3×/6× 光看数字没有体感
+      // 「行情速度」那一行右边实时报一局大概要跑多久 —— 光看数字没有体感
       const secs = ROUND_BARS / SPEEDS[G.speedIdx];
       setT('#ggSpeedTip', '一局约 ' + (secs >= 90 ? (secs / 60).toFixed(1) + ' 分钟' : Math.round(secs) + ' 秒'));
       const lp2 = $('#ggLongPx'), sp2 = $('#ggShortPx');
@@ -1105,6 +1186,7 @@
     G.pos = 0; G.avg = 0;
     G.peak = G.cash0; G.maxDD = 0; G.trades = 0;
     G.fills = [];
+    G.slipPaid = 0; G.feePaid = 0;
     G.orders = []; G.orderSeq = 0;
     G.hist = [G.cash0];
     G.liqPrice = null; G.liqAt = 0; G.lastNews = '';
@@ -1214,6 +1296,8 @@
         '<div class="gg-row"><span>爆仓时点</span><span>' + (liq ? (labelAt(G.liqAt) + '　@ ' + n1(G.liqPrice)) : '—') + '</span></div>' +
         '<div class="gg-row"><span>最大回撤</span><span>' + (G.maxDD * 100).toFixed(1) + '%</span></div>' +
         '<div class="gg-row"><span>下单次数</span><span>' + G.trades + '</span></div>' +
+        '<div class="gg-row"><span>累计成本</span><span>手续费 ¥' + (G.feePaid || 0).toFixed(0) +
+        ' · 滑点 ¥' + (G.slipPaid || 0).toFixed(0) + '</span></div>' +
         '<div class="gg-row"><span>本机最佳</span><span>' + (bestShow >= 0 ? '+' : '') + (+bestShow).toFixed(2) + '%' +
         '<span class="dim" style="font-weight:400">　（本金 ' + money(bestCash) + '）</span></span></div>' +
         '</div>' +
@@ -1286,15 +1370,26 @@
     if (v >= 10000) { const w = v / 10000; return (w % 1 ? w.toFixed(1) : w) + ' 万'; }
     return n0(v);
   }
-  // 本金能改，但**难度不变**：仓位按百分比开，本金翻 10 倍手数也翻 10 倍。
-  // 真正变的是取整精度和数字观感 —— 这条必须写清楚，否则等于骗人。
+  // 本金能改，而且**真的会改变难度** —— 这一点以前写错了，现在靠三样东西成立：
+  //   ① 最低手续费 5 元：本金越小，手续费占本金的比例越高，小资金被磨得更狠；
+  //   ② 滑点与名义金额成正比：钱越多、单子越大，越难在你要的价位全部成交；
+  //   ③ 小地方的盘子更小：同样的单子下到县城，滑点要乘上 dishScale（最大 2.6 倍）。
+  // 当然仓位百分比那条仍然成立（本金翻 10 倍手数也翻 10 倍），
+  // 所以文案里要把①②讲清楚，而不是笼统地说"更难"。
   function cashTip() {
     const T = $('#ggCashTip');
     if (!T) return;
     const lots = Math.floor(G.cash0 / (BASE * LOT_MULT / G.lev));
+    const notional = lots * BASE * LOT_MULT;
+    const fee = Math.max(FEE_MIN, notional * FEE_RATE);
+    const slipYuan = lots * slipOf(lots) * LOT_MULT;
+    const pct = G.cash0 ? ((fee + slipYuan) / G.cash0 * 100) : 0;
+    const capped = slipOf(lots) >= SLIP_MAX - 1e-9;
     T.innerHTML = '按基准 <b>' + BASE + '</b> 点、当前 <b>' + G.lev + '×</b> 杠杆，满仓约 <b>' + n0(lots) +
-      '</b> 手。<br>本金<b>不改变难度</b>：仓位按百分比开，本金翻 10 倍手数也翻 10 倍，盈亏比例一样。' +
-      '变的只是取整精度 —— 本金越小越难开出想要的仓位。';
+      '</b> 手。<br>满仓<b>开一次 + 平一次</b>的手续费 + 滑点约 <b>¥' + n0((fee + slipYuan) * 2) +
+      '（本金的 ' + (pct * 2).toFixed(2) + '%）</b>。本金越大、城市越小，这个数越肉疼：' +
+      '手续费有 <b>¥' + FEE_MIN + ' 保底</b>，滑点随名义金额上涨' +
+      (capped ? '（已触到 <b>' + SLIP_MAX + ' 点</b>上限）' : '') + ' —— 钱多不等于好做。';
   }
   function setCash(v) {
     v = Math.round(+v);
@@ -1339,7 +1434,8 @@
         '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
         '<li>手续费万分之五，开平都收。</li>' +
         '<li>右侧随时看得到<b>强平价</b>和<b>爆仓距离</b> —— 碰到就结束。</li>' +
-        '<li>行情速度 <b>1.5× / 3× / 6×</b> 根每秒，一局约 <b>2.7 ~ 10.7 分钟</b>，随时能暂停。</li>' +
+        '<li>行情速度 <b>15 / 22 / 45 / 90 根（1 分钟 K）每秒</b>，' +
+        '也就是 1 / 1.5 / 3 / 6 根 15 分钟 K 每秒，一局 <b>2.7 ~ 16 分钟</b>，随时能暂停。</li>' +
         '</ul>' +
         '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
         '<div class="gg-btns"><button class="gg-long" id="ggAgain">开始操盘</button>' +
@@ -1445,7 +1541,8 @@
       liqPriceOf, maxLots, beginRound, endRound, tick, beep, labelAt, newsAt, visBars,
       tolerablePct, placeLimit, setStop, cancelOrder, processOrders, calendarAt, freeEq,
       reservedMargin, JUMP_AT, setCash, cashTip, cityWeight, dishScale,
-      LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, FEE_RATE,
+      slipOf, render, SLIP_K, SLIP_MAX, CAP_BASE, FEE_MIN,
+      LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, FEE_RATE, SPEEDS,
       BASE, DEF_CASH, CASH_MIN, CASH_MAX, CASH_PRESETS,
       REG_K, DEW_K, DISH_K, DISH_DECAY
     }
