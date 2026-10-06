@@ -5,11 +5,32 @@
   'use strict';
   const { fx, sgn, parseDate, weekday } = U;
 
+  /** 聚合柱（周K / 月K）上缺的字段从 `raw` 里补算平均。
+      `indicators.js` 的 aggregate() 造出来的柱子只有 `{d,o,h,l,c,v,n,raw}` ——
+      **没有 range / windAvg / humAvg**。所以这几个口径在周K / 月K 下不能直接读字段，
+      否则拿到一堆 undefined：柱子画不出来，而且**不报错**（ECharts 收到 undefined 就是空柱）。 */
+  function aggMean(b, field) {
+    if (b[field] != null) return b[field];
+    const r = b.raw || [];
+    let s = 0, c = 0;
+    for (let i = 0; i < r.length; i++) {
+      const v = r[i] && r[i][field];
+      if (v != null && isFinite(v)) { s += v; c++; }
+    }
+    return c ? +(s / c).toFixed(2) : null;
+  }
+
   const METRICS = {
-    range: { label: '日内温差', unit: '℃', get: b => b.range },
+    /* ⚠ 温差在周K / 月K 下要**现算 h − l**：聚合柱上没有 range 字段。
+       定义跟日K 完全一致（这段时间的最高 − 最低），只是因为柱子变粗了，
+       区间从"一天"变成"一周 / 一个月"。 */
+    range: {
+      label: '日内温差', unit: '℃',
+      get: b => (b.range != null ? b.range : ((b.h != null && b.l != null) ? +(b.h - b.l).toFixed(1) : null))
+    },
     precip: { label: '降水量', unit: 'mm', get: b => b.v },
-    wind: { label: '平均风速', unit: 'm/s', get: b => b.windAvg },
-    humid: { label: '平均湿度', unit: '%', get: b => b.humAvg },
+    wind: { label: '平均风速', unit: 'm/s', get: b => aggMean(b, 'windAvg') },
+    humid: { label: '平均湿度', unit: '%', get: b => aggMean(b, 'humAvg') },
     /* 逐小时那两档（分时 / 7日）的「温差」用的口径：这一小时的气温比**当天平均**冷暖多少。
        为什么不用 range：日内温差是"每天"的量，一天一个数，摊到 24 个小时上就是一条平线
        （分时档下整幅图只有一根柱子，等于没信息）。见 app.js 的 renderVolSub。 */
@@ -584,7 +605,11 @@
       dataZoom: zoom
     };
 
-    const metric = METRICS[S.metric] || METRICS.range;
+    let metric = METRICS[S.metric] || METRICS.range;
+    // 周K / 月K 的温差是"这一周 / 这一月"的最高最低之差，写「日内温差」是骗人的
+    if (S.metric === 'range' && (S.period === 'week' || S.period === 'month')) {
+      metric = Object.assign({}, metric, { label: S.period === 'week' ? '本周温差' : '本月温差' });
+    }
     if (S.indName === 'vol') {
       const d = bars.map(b => metric.get(b));
       // ⚠ MA5/MA10 必须**跟着画出来的那个口径现算**，不能再用 ind.volMa5 / ind.volMa10。
