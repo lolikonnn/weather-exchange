@@ -595,16 +595,24 @@
 
     /* ── 预警滚动条 ──
        用户问："炒股网站上是不是有时候会有滚动的提示条？那当前所在地最新的预警信号能不能像这样做一个滚动？"
-       炒股软件那条滚的是公告，这里滚的是**离当前所在地最近的预警**。
+       炒股软件那条滚的是公告，这里滚的是**当前正在看的那个城市**的预警。
 
-       两个刻意的取舍：
+       三次改动的结论（越靠后越新）：
 
-       1. **不是把全国几百条都滚一遍。** 那里面绝大多数跟自己无关，滚久了就成了没人看的背景。
-          只取离当前城市 `R` 公里以内的，按距离升序；**附近一条都没有时**退成"全国最近"，并把
-          标签改成「全国最近」—— 直接藏起来用户会以为坏了，直接滚全国又会让人以为本地有预警。
-       2. **整条可以点**，点开预警信号面板看全部。滚动条只负责"让你知道有这回事"。
+       1. 一开始滚的是"离当前所在地 R 公里以内的预警"，还带距离。问题是半径法会把隔壁市的
+          预警一起卷进来 —— 用户要的是"这个区市的"，不是"附近一片的"。
+       2. 改成按**地名筛标题**：气象局的预警标题自己就点了地名（「广东省韶关市发布森林火险
+          黄色预警信号」），所以拿地名去标题里找就够了，不用猜坐标半径，也不用额外请求。
+          但那时候筛的是**定位所在**的区市。
+       3. 现在筛的是**当前查看的**区市（`S.cur`）：换了自选里的哪一座，条子就跟着换。
+          以前按定位筛，人切到北京看行情，条子还停在"我家门口"的那座城市，
+          跟上面那块行情头说的根本不是同一个地方。
+
+       一个刻意的取舍：**这个区市一条都没有就整条收起来**，不留"暂无预警"占位 ——
+       横在行情头下面的条子宁可不出现，也不要变成一行常驻的废话。
 
        动画走 CSS（`translateX(0 → -50%)`），内容**铺两遍**，滚过一半正好接上开头，所以看不出接缝；
+       只有内容确实比可视区宽才铺第二遍（否则静态摆着更清楚，不至于看见同一条并排出现两次）；
        跑的时长按内容实际宽度算（`TICK_PPS` 像素/秒），内容长短不影响观感速度。 */
     _tk: { MAX: 10, PPS: 26, PERIOD: 300000 },
     _tkTimer: 0,
@@ -615,41 +623,43 @@
       if (!bar || !run) return;
       const app = global.__APP;
       const S = (app && app.S) || null;
-      const geo = (S && S.geo) || null;
       const cur = (S && S.cur) || null;
 
-      // 「当前所在地」优先用定位结果。定位只知道到区/市，没有定位就退成正在看的那个城市，
-      // 这时候标签会写清是哪座城市，免得让人以为滚的是自己家门口的预警。
+      // 滚的是**当前正在看的那个城市**的预警（不是定位所在的城市）：
+      // 自选里换了哪一座，条子就跟着换。以前按定位筛，人切到别的城市看行情时，
+      // 条子还停在"我家门口"，和上面那块行情头说的不是同一个地方。
       const keys = [];
-      if (geo) {
-        if (geo.district) keys.push(geo.district);
-        if (geo.city) keys.push(geo.city);
+      if (cur && cur.name) {
+        keys.push(cur.name);
+        // 在看的是「区 / 定位到的那一块」时把上级市也带上：区一级常常没有自己的预警，
+        // 气象局的标题写的是「广东省广州市发布…」。地级市自己不带上（会串到隔壁）。
+        if ((cur.loc || cur.lev === 3) && cur.city && cur.city !== cur.name) keys.push(cur.city);
       }
-      if (!keys.length && cur && cur.name) keys.push(cur.name);
-      const place = geo ? '本地' : (cur ? cur.name : '');
+      if (!keys.length) { bar.hidden = true; return; }
 
       let ws;
       try { ws = await W.warnings(); }
       catch (e) { bar.hidden = true; return; }
-      if (!ws || !ws.length || !keys.length) { bar.hidden = true; return; }
+      if (!ws || !ws.length) { bar.hidden = true; return; }
 
       // 气象局的预警标题自己就点了地名：「广东省韶关市发布森林火险黄色预警信号」
-      // 「广州市天河区发布暴雨橙色预警信号」—— 所以按地名把标题筛一遍就是"本区市的预警"，
-      // 不需要额外请求，也不用猜坐标半径（半径法会把隔壁市的预警一起卷进来，用户要的是本区市）。
+      // 「广东省广州市天河区发布暴雨橙色预警信号」—— 所以按地名把标题筛一遍就是"这个区市的预警"，
+      // 不需要额外请求，也不用猜坐标半径（半径法会把隔壁市的预警一起卷进来）。
       const hit = ws.filter(w => {
         const t = w.title || '';
         return keys.some(k => k && k.length >= 2 && t.indexOf(k) >= 0);
       });
-      // 本区市一条都没有 —— 整条收起来（用户选的行为），不留"暂无预警"占位。
+      // 这个区市一条都没有 —— 整条收起来（用户选的行为），不留"暂无预警"占位。
       if (!hit.length) { bar.hidden = true; return; }
 
-      // 区级预警（点名了区）比市级更贴近"我家门口"，排前面；同级按发布时间新的在前。
-      const spec = w => (geo && geo.district && (w.title || '').indexOf(geo.district) >= 0) ? 0 : 1;
+      // 在看区一级时，点名了那个区的那条更贴近"我家门口"，排前面；同级按发布时间新的在前。
+      const deep = (cur && (cur.loc || cur.lev === 3)) ? cur.name : '';
+      const spec = w => (deep && (w.title || '').indexOf(deep) >= 0) ? 0 : 1;
       hit.sort((a, b) => (spec(a) - spec(b)) || String(b.time || '').localeCompare(String(a.time || '')));
       const list = hit.slice(0, this._tk.MAX);
 
       // 数据没变就别重画 —— 重画会把动画打回开头，看着像一直在闪。
-      const sig = keys.join(',') + '|' + hit.length + '|' + list.map(w => w.title).join('~');
+      const sig = keys.join(',') + '|' + ((cur && cur.name) || '') + '|' + hit.length + '|' + list.map(w => w.title).join('~');
       if (sig === this._tkSig) return;
       this._tkSig = sig;
 
@@ -676,7 +686,8 @@
         void run.offsetWidth;
         run.classList.add('rolling');
       }
-      if (tag) tag.textContent = '⚠ ' + place + '预警';
+      // 标签上写清是哪座城市 —— 「本地」在切到别的城市去看行情时是骗人的。
+      if (tag) tag.textContent = '⚠ ' + ((cur && cur.name) || '') + '预警';
       bar.hidden = false;
     },
 

@@ -138,11 +138,12 @@
         <span id="qMoreTxt">展开全部</span><i id="qMoreIco">▾</i>
       </button>
       <!-- 预警滚动条：炒股软件里那条一直往左滚的提示条。
-           只滚**当前所在地**那个市/区的预警 —— 全国同时有几百条生效中，
-           全滚出来是噪音。本区市一条都没有时整条收起来（不占位置、不留"暂无预警"占位）。
+           只滚**当前正在看的那座城市**的预警 —— 全国同时有几百条生效中，
+           全滚出来是噪音。这个区市一条都没有时整条收起来（不占位置、不留"暂无预警"占位）。
+           标签由 tickerRefresh() 写成「⚠ <城市名>预警」；这里的初始文案只是没填之前的占位。
            放在行情头这一块的底部，也就是主图正上方。点整条打开预警信号面板。 -->
       <div class="ticker" id="warnTicker" hidden title="点开看全部生效中的预警信号">
-        <span class="ticker-tag" id="tickerTag">⚠ 本地预警</span>
+        <span class="ticker-tag" id="tickerTag">⚠ 预警</span>
         <div class="ticker-view"><div class="ticker-run" id="tickerRun"></div></div>
         <span class="ticker-more">全部预警 ›</span>
       </div>
