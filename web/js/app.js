@@ -261,7 +261,13 @@
     storeSet('geo', g);
     registerGeo(g);
     renderGeo(); renderWatchlist();
+    // ★ 定位结果必须**立刻**有价，所以这里别写成一个条件。
+    //   原来只有 `if (S.cur && S.cur.id !== LOC_ID) warmQuotes()`：开机时定位和首次加载
+    //   是并行的，`S.cur` 很可能还没准备好 —— 这条就会被静默跳过，
+    //   而默认刷新间隔是 **15 分钟**。结果就是「当前所在地」那一格挂着灰 `--` 等一刻钟。
+    //   报价按 id 缓存（`API.Store.quotes` 有 ttl），重复调只是命中缓存，代价可以忽略。
     if (S.cur && S.cur.id !== LOC_ID) warmQuotes();
+    else if (S.geo) warmQuotes();
     return g;
   }
 
