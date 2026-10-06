@@ -617,6 +617,7 @@
     _tk: { MAX: 10, PPS: 26, PERIOD: 300000 },
     _tkTimer: 0,
     _tkSig: '',
+    _tkSeq: 0,
 
     async tickerRefresh() {
       const bar = $('#warnTicker'), run = $('#tickerRun'), tag = $('#tickerTag');
@@ -624,6 +625,14 @@
       const app = global.__APP;
       const S = (app && app.S) || null;
       const cur = (S && S.cur) || null;
+
+      // 每次刷新领一个号：网络回来得晚的那一趟如果发现自己已经过期，就什么都别动。
+      // 切城市切得快的时候，先发的那一趟完全可能后回来，把新城市刚画好的结果盖掉 ——
+      // 表现就是"快速切城市时条子显示不出来"。
+      const token = ++this._tkSeq;
+      // 收起来的**同时把签名清掉**：签名留着的话，下次切回同一座城市会算出同样的
+      // 签名 → 走到"数据没变"那条提前 return → 可见性再也补不回来，条子永远藏着。
+      const hide = () => { bar.hidden = true; this._tkSig = ''; };
 
       // 滚的是**当前正在看的那个城市**的预警（不是定位所在的城市）：
       // 自选里换了哪一座，条子就跟着换。以前按定位筛，人切到别的城市看行情时，
@@ -635,12 +644,13 @@
         // 气象局的标题写的是「广东省广州市发布…」。地级市自己不带上（会串到隔壁）。
         if ((cur.loc || cur.lev === 3) && cur.city && cur.city !== cur.name) keys.push(cur.city);
       }
-      if (!keys.length) { bar.hidden = true; return; }
+      if (!keys.length) { hide(); return; }
 
       let ws;
       try { ws = await W.warnings(); }
-      catch (e) { bar.hidden = true; return; }
-      if (!ws || !ws.length) { bar.hidden = true; return; }
+      catch (e) { ws = null; }
+      if (token !== this._tkSeq) return;          // 这一趟过期了，交给后来那趟
+      if (!ws || !ws.length) { hide(); return; }
 
       // 气象局的预警标题自己就点了地名：「广东省韶关市发布森林火险黄色预警信号」
       // 「广东省广州市天河区发布暴雨橙色预警信号」—— 所以按地名把标题筛一遍就是"这个区市的预警"，
@@ -650,7 +660,7 @@
         return keys.some(k => k && k.length >= 2 && t.indexOf(k) >= 0);
       });
       // 这个区市一条都没有 —— 整条收起来（用户选的行为），不留"暂无预警"占位。
-      if (!hit.length) { bar.hidden = true; return; }
+      if (!hit.length) { hide(); return; }
 
       // 在看区一级时，点名了那个区的那条更贴近"我家门口"，排前面；同级按发布时间新的在前。
       const deep = (cur && (cur.loc || cur.lev === 3)) ? cur.name : '';
@@ -660,7 +670,12 @@
 
       // 数据没变就别重画 —— 重画会把动画打回开头，看着像一直在闪。
       const sig = keys.join(',') + '|' + ((cur && cur.name) || '') + '|' + hit.length + '|' + list.map(w => w.title).join('~');
-      if (sig === this._tkSig) return;
+      if (sig === this._tkSig) {
+        // 但**可见性要补上**：上一次可能是被"这个城市没预警"收起来的，
+        // 只比签名就 return 的话，条子永远回不来。
+        bar.hidden = false;
+        return;
+      }
       this._tkSig = sig;
 
       const txt = w => {
@@ -673,22 +688,63 @@
       };
       const once = list.map(txt).join('');
       const view = run.parentNode;
-      // 先铺一遍量宽度：够宽才需要"铺两遍 + -50%"那套无缝滚动，
+      if (tag) tag.textContent = '⚠ ' + ((cur && cur.name) || '') + '预警';
+      // ⚠ 量宽度之前**必须先让它可见**：条子收起来的时候是 `display:none`，
+      //   这时 `scrollWidth` / `clientWidth` 全是 0，下面那条"内容比可视区宽才滚"
+      //   的判据永远不成立 → 长预警被 24px 的高度切掉半截，看着就是"文字显示不完全"。
+      bar.hidden = false;
+      // 先铺一遍量宽度：够宽才需要"铺两遍 + 自己往左推"那套无缝滚动，
       // 否则静态摆着更清楚 —— 而且不滚的时候铺两遍会让人看见同一条预警并排出现两次。
-      run.classList.remove('rolling');
       run.innerHTML = once;
       void run.offsetWidth;
       const half = run.scrollWidth;
-      if (half > (view ? view.clientWidth : 0) + 4) {
-        run.innerHTML = once + once;
-        run.style.setProperty('--tk-dur', Math.max(8, Math.round(half / this._tk.PPS)) + 's');
-        // 先把它挪回起点再开动画，否则下一次重算时长时会从半路跳一下。
-        void run.offsetWidth;
-        run.classList.add('rolling');
-      }
-      // 标签上写清是哪座城市 —— 「本地」在切到别的城市去看行情时是骗人的。
-      if (tag) tag.textContent = '⚠ ' + ((cur && cur.name) || '') + '预警';
-      bar.hidden = false;
+      const over = half > (view ? view.clientWidth : 0) + 4;
+      if (over) run.innerHTML = once + once;
+      if (view) view.scrollLeft = 0;
+      this._tkHalf = over ? half : 0;
+      this.tickerRun();
+    },
+
+    /* 预警条"自己往左走" + 让人随时接管。
+       走的是 `.ticker-view` 的 scrollLeft（不是 CSS transform）：内容在普通流里，
+       所以手指一划 / 滚轮一滚随时能拖，接管期间自动走让位，松手几秒后接着走。
+       铺了两遍内容，推过半截就绕回开头，接缝看不出来。
+       `_tkHalf === 0`（内容放得下）就完全不动。 */
+    _tkHalf: 0,
+    _tkHold: 0,
+    _tkRaf: 0,
+    _tkLast: 0,
+    _tkDown: 0,
+
+    // 单独拎出来是为了能在探针里直接喂 dt 验"推得动、会绕回"
+    tickAdvance(dt) {
+      const view = $('#tickerView');
+      if (!view || !this._tkHalf) return 0;
+      if (Date.now() < this._tkHold) return view.scrollLeft;
+      let x = view.scrollLeft + this._tk.PPS * dt;
+      if (x >= this._tkHalf) x -= this._tkHalf;
+      view.scrollLeft = x;
+      return x;
+    },
+    tickHold(ms) { this._tkHold = Date.now() + (ms == null ? 4000 : ms); },
+    tickStop() {
+      if (this._tkRaf) { global.cancelAnimationFrame(this._tkRaf); this._tkRaf = 0; }
+    },
+    tickerRun() {
+      this.tickStop();
+      if (!this._tkHalf) return;
+      // 系统里开了"减少动态效果"就别自己走 —— 但内容还在普通流里，手指照样能拖。
+      if (global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      this._tkLast = 0;
+      const step = ts => {
+        this._tkRaf = global.requestAnimationFrame(step);
+        if (!this._tkLast) { this._tkLast = ts; return; }
+        // 标签页切回来时 ts 会跳一大截，夹一下免得一下冲过头
+        const dt = Math.min(0.1, (ts - this._tkLast) / 1000);
+        this._tkLast = ts;
+        this.tickAdvance(dt);
+      };
+      this._tkRaf = global.requestAnimationFrame(step);
     },
 
     /* 定时刷新 + 点整条打开预警面板。
@@ -697,7 +753,25 @@
     tickerInit() {
       const bar = $('#warnTicker');
       if (!bar) return;
-      bar.addEventListener('click', () => WXUI.open('wxWarn'));
+      const view = $('#tickerView');
+      // 点整条打开预警信号面板 —— 但**横向拖动过就不算点**，否则想拖一下看看
+      // 后面几条预警，手一松就跳进面板了。
+      bar.addEventListener('click', () => {
+        if (view && Math.abs(view.scrollLeft - this._tkDown) > 4) return;
+        WXUI.open('wxWarn');
+      });
+      if (view) {
+        const hold = ms => this.tickHold(ms);
+        // 手指/滚轮一碰就先让位，松手几秒后自己接着走
+        view.addEventListener('pointerdown', () => { this._tkDown = view.scrollLeft; hold(6000); }, { passive: true });
+        view.addEventListener('touchstart', () => { this._tkDown = view.scrollLeft; hold(6000); }, { passive: true });
+        view.addEventListener('wheel', () => hold(6000), { passive: true });
+        view.addEventListener('pointerup', () => hold(2500), { passive: true });
+        view.addEventListener('touchend', () => hold(2500), { passive: true });
+        // 鼠标悬停时别自己走（跟以前 `animation-play-state:paused` 一个意思）
+        view.addEventListener('mouseenter', () => hold(1e9), { passive: true });
+        view.addEventListener('mouseleave', () => hold(1200), { passive: true });
+      }
       this.tickerRefresh();
       if (this._tkTimer) return;
       this._tkTimer = setInterval(() => WXUI.tickerRefresh(), this._tk.PERIOD);

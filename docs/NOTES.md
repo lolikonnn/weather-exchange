@@ -2149,3 +2149,131 @@ G.cash = 0; t.endRound('liquidated');         // 爆仓
 原因很实际：**结局收场白只在 B 档以上出现，不指定倍数的话随手一拍多半拍到"没有那句"的版本**，
 文档截图看起来就像功能没做。**文档截图要拍的是"这个功能长什么样"，不是"随便跑一局长什么样"。**
 
+
+## 预警条：为什么滚动从 CSS 动画改成了 JS 推 scrollLeft
+
+这一轮用户连着报了四个现象，前三个其实是同一段代码的四种翻车方式。
+
+### 一、量宽度的时候，条子可能还是 `display:none`
+
+判据是"内容比可视区宽才滚"：
+
+```js
+const half = run.scrollWidth;
+if (half > (view ? view.clientWidth : 0) + 4) { /* 铺两遍 + 开始滚 */ }
+```
+
+问题出在**这一段跑在 `bar.hidden = false` 之前**。条子收起来时是 `display:none`，
+里面所有盒子的宽度都是 0 —— `half = 0`，`view.clientWidth = 0`，判据 `0 > 4` 永远不成立。
+于是条子虽然被 `bar.hidden = false` 显示出来了，却**永远不滚**，长预警被 `.ticker` 那
+24px 的固定高度切掉后半句。用户看到的就是"竖屏预警文字显示不完全"。
+
+**教训：拿 `scrollWidth` / `getBoundingClientRect()` 当判据之前，先问一句"它现在是不是
+被 `display:none` 藏起来了"。** 隐藏元素的一切几何量都是 0，而 0 会让"大于阈值"这类
+判据静默地走 else 分支 —— 不报错，只是永远不做那件事。
+
+### 二、`if (缓存命中) return;` 之前，要先把"状态"补齐
+
+"数据没变就不重画"这条本身是对的（重画会把滚动打回开头），但它只挡住了重画：
+
+```js
+if (sig === this._tkSig) return;   // ← 可见性没补
+```
+
+而"这个城市没有预警"那条路径会把条子 `hidden = true`，**却没有清 `_tkSig`**。
+于是「广州（有预警）→ 北京（没有）→ 切回广州」时：广州的签名和上次一模一样，
+走到 `return`，条子就一直藏着回不来。用户看到的就是"快速切换城市时预警条幅显示不出来"。
+
+修法是两件事一起：收起时 `this._tkSig = ''`，提前 `return` 之前补 `bar.hidden = false`。
+
+**教训：`return` 之前问一句"我到这儿是省了一次重绘，还是跳过了某个必须发生的副作用"。**
+
+### 三、并发刷新要发号，不能只看"最新一次调用的结果"
+
+`tickerRefresh()` 是 `async`，切城市切得快时会重叠：先发的那一趟完全可能后回来。
+它拿着**旧城市**的结果去设 `bar.hidden`，把新城市刚画好的覆盖掉。
+
+```js
+const token = ++this._tkSeq;
+...
+const ws = await W.warnings();
+if (token !== this._tkSeq) return;      // 过期了，什么都别动
+```
+
+**教训：只要 `await` 之后还会写 DOM，就要问一句"我等的这段时间里，有没有更新的调用"。**
+
+### 四、横幅"能左右滚"和"会自己滚"是两回事，得同时给
+
+用户的原话是"是不是没加左右滚动，当同时有多条预警的时候没办法查看"。
+原来的实现是 **CSS 动画 + `position:absolute`**：`transform: translateX(0 → -50%)`。
+
+- 好处：不写 JS 逐帧代码，浏览器自己合成。
+- 坏处：**元素不在普通流里，`.ticker-view` 的 `scrollWidth` 根本不包含它** ——
+  你没法用 `overflow-x:auto` 把它拖出来，只能等动画转一圈。手机上一条一条等 14 秒，
+  想专门看某一条是做不到的。
+
+所以改成 JS 每帧推 `scrollLeft`：内容回到普通流（`position:static; width:max-content`），
+`.ticker-view` 就是真的滚动容器了 —— **同一份布局同时满足"自己走"和"手指拖"**。
+
+```js
+.ticker-view{overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.ticker-run{display:flex;align-items:center;width:max-content;white-space:nowrap}
+```
+
+推进与绕回（铺了两遍内容，推过半截减去半截，接缝看不见）：
+
+```js
+tickAdvance(dt) {
+  const view = $('#tickerView');
+  if (!view || !this._tkHalf) return 0;
+  if (Date.now() < this._tkHold) return view.scrollLeft;   // 用户正在接管
+  let x = view.scrollLeft + this._tk.PPS * dt;
+  if (x >= this._tkHalf) x -= this._tkHalf;
+  view.scrollLeft = x;
+  return x;
+}
+```
+
+把推进单独拆成 `tickAdvance(dt)` 而不是塞进 `requestAnimationFrame` 回调里，是为了
+**探针能直接喂 dt**：无头 Chrome 里 `prefers-reduced-motion` 恒为 `true`，rAF 那套
+根本不会启动，只有把算术拎出来才验得了"推得动、会绕回、px/秒对不对"。
+
+还顺手修了一个小地方：**横向拖过就不算点**。整条是可以点开预警面板的，但拖完手一松
+`click` 照样会来：
+
+```js
+bar.addEventListener('click', () => {
+  if (view && Math.abs(view.scrollLeft - this._tkDown) > 4) return;
+  WXUI.open('wxWarn');
+});
+```
+
+### 五、窄屏的统计格：宁可折行，也别用省略号
+
+`风速 2.1 m/s 2级` 这种值在 96px 的格子里放不下，原来给它配了 `text-overflow:ellipsis`，
+于是显示成 `2.1 m/s …` —— 用户报的是"风速那里的等级显示不完全"。
+现在值那一侧不写省略号了：
+
+```css
+.qs span{overflow:visible;text-overflow:clip;white-space:normal;text-align:right}
+```
+
+**取舍：标签（"这个数是什么"）永远不截；值放不下就折成两行。** 多出来的十几像素，
+换的是这一格还有信息量。一个笼统的"…"看上去很整齐，但它把这格变成了没有用的一格。
+
+### 怎么验的
+
+探针 `tmp/tk3.js` 用 **407×760 的 iframe** 拿真机视口（Windows 无头 Chrome 窗口最小
+约 500 CSS px，量不到 407），父页同源直接驱动 iframe 里的 `__APP` / `WXUI`：
+
+| 验什么 | 结果 |
+| --- | --- |
+| 横向可滚（"手指能拖"的前提） | `view.scrollWidth 719 > clientWidth 303` → `true` |
+| 铺了两遍（无缝绕回的前提） | `719 ≈ 359 × 2` → `true` |
+| 内容在普通流里（能被拖的前提） | `run` 的 `position = static` |
+| 手动拖 | 设 `scrollLeft = 120` → 读回 120 |
+| 自动推进速度 | `tickAdvance(0.5)` ×2 → `13 → 26`（26 px/秒） |
+| 过半绕回 | 推到 354 → 再推一次 → `8` |
+| 切城市后条子回得来 | 广州 → 北京 → 广州，`hidden = false` |
+| 并发刷新不被旧结果盖掉 | 广州 →(150ms)→ 北京 → 广州，最终 `hidden = false` |
+| 统计格有没有被截 | 20 格，被截 **0** 个 |
