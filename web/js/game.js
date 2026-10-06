@@ -2765,7 +2765,7 @@
     resetState();
     readTheme();
     ensureCharts();
-    if (cover) cover.hidden = true;
+    hideCover();
 
     G.running = true;
     startTimer();
@@ -2792,12 +2792,12 @@
     else if (ret >= 1.0) gr = 'D';
 
     const verdict = liq
-      ? (G.lev >= 50 ? '百倍杠杆，反向一两个点就没了 —— 这正是久留美的下场。'
-        : G.lev >= 20 ? '天台档 + 满仓，气象台都没你亏得快。'
-          : G.lev >= 10 ? '十倍杠杆下，天气反向走一点点就清零了。'
-            : '不是你方向错了，是你仓位太大了。')
-      : profit > 0 ? (ret >= 2 ? '这波对流被你吃干净了。' : '见好就收，也是一种本事。')
-        : '没亏就是赢，天气这东西本来就不好赌。';
+      ? (G.lev >= 50 ? '本局使用了 50 倍以上杠杆，价格反向不到 1% 即触发强制平仓。'
+        : G.lev >= 20 ? '本局使用了 20 倍杠杆并满仓，权益对反向波动极为敏感。'
+          : G.lev >= 10 ? '本局使用了 10 倍杠杆，约 9% 的反向波动即足以清零权益。'
+            : '方向判断偏差有限，但仓位过重放大了损失。')
+      : profit > 0 ? (ret >= 2 ? '本局把握住了主要的一段行情，收益翻倍以上。' : '本局在结算前保住了收益，及时止盈。')
+        : '本局以小幅亏损结束，未跌破本金。';
 
     // 最佳记录存**收益率**而不是金额 —— 本金能改了，拿「赚了多少万」比大小没意义
     // （本金 1000 万赚 5 万和本金 1 万赚 5 万完全不是一回事）。
@@ -2814,7 +2814,7 @@
 
     const cover = $('#ggCover');
     if (cover) {
-      cover.innerHTML =
+      showCover(
         '<div class="gg-card">' +
         (liq ? '<div class="gg-flash"></div>' : '') +
         '<h2 class="' + (profit >= 0 ? 'win' : 'lose') + '">' + (liq ? '爆 仓' : profit >= 0 ? '收 盘 盈 利' : '收 盘 亏 损') + '</h2>' +
@@ -2836,8 +2836,7 @@
         '</div>' +
         '<p class="dim" style="font-size:12px">' + verdict + '</p>' +
         btns +
-        '</div>';
-      cover.hidden = false;
+        '</div>');
     }
     if (liq) { floatText('爆 仓', '#ff4d4f', 34); beep(90, .7, 'sawtooth', .1); }
     bindCoverOnce();
@@ -3102,7 +3101,7 @@
     fbReset();
 
     const cover = $('#ggCover');
-    if (cover) { cover.hidden = true; cover.innerHTML = ''; }
+    hideCover();
 
     ensureCharts();
     readTheme();
@@ -3119,9 +3118,27 @@
     startTimer();
     G.acc = (+s.acc) || 0;   // startTimer 会把 acc 清零，这里把"半根"的进度还回来
     if (cu.bars > 0) {
-      U.toast('你不在的时候行情走了 ' + gapText(Date.now() - (+s.at || Date.now())) +
-        '，自动补了 ' + n0(cu.bars) + ' 根 K 线', 4200);
+      U.toast('离开期间行情推进了 ' + gapText(Date.now() - (+s.at || Date.now())) +
+        '，已补齐 ' + n0(cu.bars) + ' 根 K 线。', 4200);
     }
+  }
+
+  /** 显示封面 / 选择卡片。
+   *  窄屏上"做多 / 做空"那两个键是 `position: fixed` 钉在屏幕底部的（不然看图时下不了单），
+   *  而封面卡自己的「开始操盘 / 算了」也在底部 —— 不处理的话 fixed 的那两个会盖在封面上。
+   *  所以这里同时给 `#game` 挂一个 `cover-on`，窄屏 CSS 靠它把固定的下单键藏起来。 */
+  function showCover(html) {
+    const cover = $('#ggCover'), mask = $('#game');
+    if (cover) {
+      if (html != null) cover.innerHTML = html;
+      cover.hidden = false;
+    }
+    if (mask) mask.classList.add('cover-on');
+  }
+  function hideCover() {
+    const cover = $('#ggCover'), mask = $('#game');
+    if (cover) { cover.hidden = true; cover.innerHTML = ''; }
+    if (mask) mask.classList.remove('cover-on');
   }
 
   /** 复用封面卡片做一个选择框（不引原生 confirm —— 它会阻塞、也没法定制文案）。 */
@@ -3131,15 +3148,14 @@
       if (!cover) { resolve(null); return; }
       const btns = o.buttons.map((b, k) =>
         '<button class="' + (b.cls || 'gg-short') + '" data-k="' + k + '">' + b.label + '</button>').join('');
-      cover.innerHTML = '<div class="gg-card">' +
+      showCover('<div class="gg-card">' +
         '<h2 style="font-size:19px;letter-spacing:1px">' + o.title + '</h2>' +
         '<p>' + o.body + '</p>' +
-        '<div class="gg-btns">' + btns + '</div></div>';
-      cover.hidden = false;
+        '<div class="gg-btns">' + btns + '</div></div>');
       U.$$('#ggCover .gg-btns button').forEach(b => {
         b.onclick = () => {
           const v = o.buttons[+b.dataset.k].value;
-          cover.hidden = true; cover.innerHTML = '';
+          hideCover();
           resolve(v);
         };
       });
@@ -3150,17 +3166,24 @@
   async function exitFlow() {
     if (!G.running || G.ended) { close(); return; }
     const v = await askChoice({
-      title: '要离开吗',
-      body: '行情<b>不会</b>因为你离开就停下 —— 选「保留进度」的话，下次进来它会按真实流逝的时间' +
-        '把这段时间的 K 线自己补上，就像你没关过一样。',
+      title: '退出游戏',
+      body: '行情不会因为退出而暂停。<br>选择「保留进度」，下次进入时会按真实经过的时间' +
+        '把这段时间的 K 线补齐；选择「结束本局」，这一局的进度会被清除。',
       buttons: [
         { label: '保留进度', value: 'keep', cls: 'gg-long' },
         { label: '结束本局', value: 'end', cls: 'gg-short' },
         { label: '取消', value: null, cls: 'gg-short' }
       ]
     });
-    if (v === 'keep') { saveRound(); close(); U.toast('进度已保留，下次进来可以接着玩', 2600); }
-    else if (v === 'end') { clearSave(); close(); }
+    if (v === 'keep') { saveRound(); close(); U.toast('进度已保存在本机，下次打开可以直接继续。', 2600); }
+    else if (v === 'end') {
+      // 先让 G.running 落下来，再清存档 —— 否则 close() 开头那句"兜底存盘"会把刚清掉的存档又写回去，
+      // 于是下一次进来仍然弹「上次那局还在」。这是个真出现过的 bug。
+      G.running = false;
+      clearSave();
+      close();
+      U.toast('本局已结束，存档已清除。', 2600);
+    }
     // v === null（取消）：卡片已经被 askChoice 收掉了，局还在跑，什么都不用做
   }
 
@@ -3200,16 +3223,16 @@
     const oldName = (s.city && s.city.name) || '上次的城市';
     const eq = equityOfSave(s);
     const v = await askChoice({
-      title: '上次那局还在',
+      title: '有一局尚未结束',
       body: '<b>' + oldName + '</b> WXI · 停在第 <b>' + dayAt(s.i) + '</b> 天 · 权益 <b>' + money(eq) +
         '</b>（' + ((eq / (s.cash0 || DEF_CASH) - 1) * 100 >= 0 ? '+' : '') +
         ((eq / (s.cash0 || DEF_CASH) - 1) * 100).toFixed(2) + '%）<br>' +
-        '<span class="dim">离开 ' + gapText(Date.now() - (+s.at || Date.now())) +
-        ' —— 这段时间行情是照走的，接着玩的话会把缺的 K 线补上。</span>',
+        '<span class="dim">已离开 ' + gapText(Date.now() - (+s.at || Date.now())) +
+        '。这段时间行情照常推进，选择继续会补齐缺少的 K 线。</span>',
       buttons: [
         { label: '继续 ' + oldName, value: 'resume', cls: 'gg-long' },
         { label: '从 ' + curName + ' 重新开始', value: 'new', cls: 'gg-short' },
-        { label: '算了', value: null, cls: 'gg-short' }
+        { label: '取消', value: null, cls: 'gg-short' }
       ]
     });
     if (v === 'resume') { resumeRound(s); return; }
@@ -3228,8 +3251,7 @@
     if (!cover) return;
     const app = global.__APP;
     const cityName = (app && app.S && app.S.cur && app.S.cur.name) || '当前城市';
-    cover.hidden = false;
-    cover.innerHTML =
+    showCover(
       '<div class="gg-card">' +
       '<h2 style="font-size:22px;letter-spacing:2px">🎮 Climate Create Bet</h2>' +
       '<p>标的：<b>WXI 复合天气指数</b> —— <b>' + cityName + '</b> 本地的对流能量 / 阵风 / 降水 / 露点，' +
@@ -3255,8 +3277,81 @@
       '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
       '<div class="gg-btns"><button class="gg-long" id="ggAgain">开始操盘</button>' +
       '<button class="gg-short" id="ggQuit">算了</button></div>' +
-      '</div>';
+      '</div>');
     bindCoverOnce();
+  }
+
+  /** 新手入门：玩这个游戏的人不一定懂炒股，所以"怎么看图、怎么下单"要在游戏里就地讲一遍。
+   *  这里只讲读图和操作；天数、成本那些参数在开场封面已经写了，不重复。 */
+  function guideHTML() {
+    const app = global.__APP;
+    // 局里就以本局的标的为准；没开局时退回主站当前选中的城市。
+    const cn = (G.city && G.city.name) || (app && app.S && app.S.cur && app.S.cur.name) || '当前城市';
+    return '<div class="gg-card guide">' +
+      '<h2>新手入门</h2>' +
+      '<div class="gg-guide">' +
+
+      '<h5>一、这是什么</h5>' +
+      '<dl>' +
+      '<dt>你在赌一段天气的好坏</dt>' +
+      '<dd>系统把 <b>' + cn + '</b> 的天气数据（对流能量、阵风、降水、露点、空气质量）压成一个数字，' +
+      '叫 <b>WXI 天气指数</b>，再用它画出一张像股票一样的图。天气变差 → 指数往上走；天气转好 → 指数往下走。</dd>' +
+      '<dt>你不是在跟别人对赌</dt>' +
+      '<dd>盘面只有你一个人，对手是天气本身。没有庄家，只有你猜得准不准、仓位管得好不好。</dd>' +
+      '</dl>' +
+
+      '<h5>二、怎么看图</h5>' +
+      '<dl>' +
+      '<dt>先看最上面那根蜡烛</dt>' +
+      '<dd>左上角那行 <code>开 … 高 … 低 … 收 …</code> 就是当前这根蜡烛的四个价。' +
+      '<b>收</b> 是最新的价，也是你下单的成交基准。</dd>' +
+      '<dt>红绿代表方向</dt>' +
+      '<dd>红＝这根比上一根收得高，绿＝低，灰＝一模一样。如果跟你看惯的国外行情相反，主站顶栏可以切换。</dd>' +
+      '<dt>图上那两条彩色的线</dt>' +
+      '<dd>黄线是 <b>均价</b>（最近若干根收盘的平均值），紫色虚线是 <b>大盘</b>（同省 8 个城市的平均指数）。' +
+      '本地线在大盘线上面 = 你这边在出事；两条贴在一起 = 一场大范围天气过程，都在动。</dd>' +
+      '<dt>下面那排柱子</dt>' +
+      '<dd>是 <b>活跃度</b>，越高说明那段时间天气越闹（雨大、风大）。它不代表涨跌，只代表动静大小。</dd>' +
+      '<dt>右边那串数字</dt>' +
+      '<dd>从上往下是账户权益、可用保证金、占用保证金、持仓、持仓均价、浮动盈亏、强平价、爆仓距离。' +
+      '<b>新手先只看两个</b>：账户权益（赚了还是亏了）和爆仓距离（离出局还有多远）。</dd>' +
+      '</dl>' +
+
+      '<h5>三、怎么下单</h5>' +
+      '<ol>' +
+      '<li>选 <b>杠杆</b>。它只决定占用多少保证金，不改变你的方向判断。倍率越高，能承受的反向波动越小。</li>' +
+      '<li>选 <b>仓位</b>（动用本金的比例）。满仓就是全押。</li>' +
+      '<li>点 <b>做多 ↑</b>（看涨，赌天气变差）或 <b>做空 ↓</b>（看跌，赌天气转好）。点一下即市价成交。</li>' +
+      '<li>想先挂条件再成交，用中间的 <b>挂多单 / 挂空单</b>：填价格和手数，价格碰到了才成交。</li>' +
+      '<li>有持仓之后，用 <b>设止损 / 设止盈</b> 挂好退路 —— 新手最容易犯的错就是不加止损。</li>' +
+      '<li>想平掉全部持仓，点 <b>一键平仓</b>。</li>' +
+      '<li>嫌行情太快或太慢，右下角 <b>行情速度</b> 随时调。</li>' +
+      '<li>想换时间颗粒度看图，右下角 <b>K 线周期</b> 随时换，不影响已经在跑的行情。</li>' +
+      '</ol>' +
+
+      '<h5>四、什么时候结束</h5>' +
+      '<dl>' +
+      '<dt>正常结算</dt>' +
+      '<dd>交易天数走完，自动结算，给出等级和最终权益。</dd>' +
+      '<dt>爆仓</dt>' +
+      '<dd>亏损把权益打到维持保证金以下，强制平仓，本局结束。杠杆越高越容易碰到。</dd>' +
+      '<dt>中途退出</dt>' +
+      '<dd>点 ✕ 会问你「保留进度」还是「结束本局」。保留的话行情照走，下次进来自动补齐；' +
+      '结束的话这一局的进度就清掉了。</dd>' +
+      '</dl>' +
+
+      '<p class="gg-guide-warn"><b>先说清楚：</b>这里用的是真实气象数据，但价格波动是模拟出来的，' +
+      '和真实气象服务没有任何关系。它是个看图下注的小游戏，不是投资工具，也别拿这套路去真赌天气。</p>' +
+
+      '</div>' +
+      '<div class="gg-btns"><button class="gg-long" id="ggGuideOk">看完了</button></div>' +
+      '</div>';
+  }
+  function showGuide() {
+    const wasIdle = !G.running && !G.ended;
+    showCover(guideHTML());
+    const ok = $('#ggGuideOk');
+    if (ok) ok.onclick = () => { hideCover(); if (wasIdle) startCard(); };
   }
 
   function close() {
@@ -3276,6 +3371,8 @@
     if (btn) btn.addEventListener('click', open);
     const x = $('#ggExit');
     if (x) x.addEventListener('click', exitFlow);
+    const gd = $('#ggGuide');
+    if (gd) gd.addEventListener('click', showGuide);
     const mask = $('#game');
     if (mask) mask.addEventListener('click', e => { if (e.target === mask) exitFlow(); });
     // 网页版直接关标签页 / 手机端切后台被杀，都要把这一局留住
@@ -3374,7 +3471,8 @@
       setDbgComp: v => { DBG_COMP = !!v; },
       fbReset,
       stepBars, saveRound, loadSaved, clearSave, resumeRound, catchUp, autoSave,
-      equityOfSave, gapText, dayAt, exitFlow, SAVE_KEY,
+      equityOfSave, gapText, dayAt, exitFlow, SAVE_KEY, showGuide,
+      showCover, hideCover,
       P, cityAmp, cityWeight, dishScale
     }
   };

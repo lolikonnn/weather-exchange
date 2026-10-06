@@ -1471,3 +1471,104 @@ WIF                0.2541%       0.8249%       1.9544%            -0.019
 - Windows 上 Chrome 窗口有约 **500 px 的最小宽度**，`--window-size=390,844` 会被顶到约 500×692；
   `--force-device-scale-factor=2` 也**不会**把 CSS 视口除半（实测 780×1688 + DSF=2 → 视口仍是 762×1536）。
   所以这台机器上能测到的最小宽度就是 **500 CSS px**。
+
+## 卡片、存档、"人机味"：一轮里踩的四个坑
+
+这一轮改的是：竖屏卡片被常驻下单键压住、点「结束本局」后存档又长回来、提示文案改正式、
+术语表补「主图上的几条线」、游戏里加「新手入门」。前两件都是真 bug，值得记下来。
+
+### 一、`close()` 会把刚清掉的存档写回去
+
+原来的退出流程是：
+
+```js
+// exitFlow() 里点「结束本局」
+clearSave();
+close();          // ← close() 第一句是：if (G.running && !G.ended) saveRound();
+```
+
+`clearSave()` 刚把 `tjs.wxgame_save` 删掉，`close()` 立刻判断"这一局还在跑"，
+于是 `saveRound()` 又原样写了一份。下次进来照样弹「有一局尚未结束」。
+
+**它是平台无关的** —— 电脑和手机都在，因为问题出在调用顺序上，不是出在存储上。
+修法是把状态先改掉再删：
+
+```js
+G.running = false;   // 先让 close() 认为"没在跑"
+clearSave();
+close();
+```
+
+**教训**：一个"顺手保存"的钩子挂在公共出口（`close()`）上时，所有想绕过它的路径
+都得**先把状态改掉**，光清存储是没用的 —— 钩子读的是状态，不是存储。
+这类 bug 探针很好抓：`clearSave()` 之后调一次 `loadSaved()`，看是不是 `null`。
+
+### 二、`position: fixed` 的下单键会压住卡片
+
+上一轮为了"一边看图一边下单"，把 `.gg-trade > .gg-btns` 钉在屏幕最底部。
+但开场说明、新手入门、结算卡、退出确认**也画在同一个 `#game` 遮罩里**，
+于是卡片的按钮和那排常驻键叠在一起，谁在上面只看 z-index。
+
+修法是给遮罩加一个状态类，卡片出现时让常驻键让位：
+
+```css
+.game-mask.cover-on .gg-trade > .gg-btns { display: none; }
+```
+
+```js
+function showCover(html) { cover.innerHTML = html; cover.hidden = false; mask.classList.add('cover-on'); }
+function hideCover()     { cover.hidden = true; cover.innerHTML = ''; mask.classList.remove('cover-on'); }
+```
+
+**关键是把"卡片显隐"收敛成两个函数**，而不是散在五个地方各写一遍
+`cover.hidden = false; cover.innerHTML = ...`。这一轮就是因为入口散着，
+`startCard()` 里漏改了一个收尾的 `);`，直接把整个 `game.js` 变成 SyntaxError。
+
+### 三、没有 node，怎么找 JS 语法错
+
+改崩之后 `window.Game` 是 `undefined`，页面上所有游戏相关的东西一起消失。
+这台机器上没有 node，没法 `node --check`。浏览器给的信息很有限
+（`SyntaxError: missing ) after argument list`），但它至少把错误类型说清楚了。
+
+于是写了 `tmp/jsscan.py`：逐字符扫一遍，跳过行注释 / 块注释 / 字符串，
+维护 `(` `[` `{` 的栈，报第一个对不上的位置。**它不要钱地精确**：
+
+```
+!! 第 3282 行的 } 对不上第 3254 行的 (
+```
+
+顺着这两行一看就找到了（`showCover(` 开头，收尾还是 `'</div>';` 而不是 `'</div>');`）。
+
+**它有已知误报**：正则字面量（`/\//g`）会被当成除号，之后整段就错位了 ——
+`web/js/app.js:478` 的 `String(x.date).replace(/\//g, '-')` 就一直被报到不配平，
+但那一行是对的。**所以它报错不一定是真错，但它说"配平"就一定是配平的。**
+
+### 四、`resumeRound()` 不等于 `open()`
+
+写探针量竖屏布局时，`.gg-guide` 量出来的 `scrollHeight` 和 `clientHeight` **都是 0**，
+看起来像"新手入门卡片高度塌了"。其实是探针的锅：
+
+- `open()` 负责把 `#game` 遮罩的 `hidden` 摘掉；
+- `resumeRound(s)` 只负责把一局的字段灌回 `G` 并重建图表，**它假设面板已经亮了**。
+
+探针绕过了 `open()` 直接调 `resumeRound()`，遮罩还挂着 `hidden`，所有元素 rect 都是 0。
+补一句 `$('#game').hidden = false; await wait(60);` 之后，
+`.gg-guide` 就正常报 `scrollHeight 1302 / clientHeight 673` 了。
+
+**教训**：`display:none` 的祖先会让整棵子树的度量全变 0，而 `getComputedStyle().display`
+读的是**指定值**、不会告诉你祖先藏着 —— 量布局之前先确认面板真的亮着。
+
+### 附带：探针扫源码判断"文案改干净了没有"
+
+想把"旧文案有没有残留"做成自动检查，第一版直接 fetch `/js/game.js` 然后正则搜关键词，
+结果一直误报。两个原因：
+
+- **注释里还留着旧文案**（我在 `resumeCard` 上方记了一句"上次那局还在 —— 问一句是接着玩还是重开"）。
+  解法是先 `replace(/\/\*[\s\S]*?\*\//g, '')` 去掉块注释再扫。
+- **搜的词太宽**。「天台」「久留美」是杠杆按钮的正常文案（`20× 天台` / `100× 久留美`），
+  不是结算评语。应该只搜**被删掉的那几条整句**。
+
+还有一个纯手误值得记：`P('… = ' + src.indexOf(k) >= 0)` —— 字符串拼接的优先级高于 `>=`，
+它等价于 `('…' + idx) >= 0`，`NaN >= 0` 恒为 `false`。**五个检查项全部安静地显示 `false`**，
+看起来像"全都没找到"。括号补上就好。
+

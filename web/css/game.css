@@ -393,6 +393,32 @@
   padding: 1px 5px; border-radius: 4px; color: #ffd28a;
 }
 
+/* ───────── 新手入门（游戏顶栏的「？」） ─────────
+   和网站的术语表一个意思：玩这个游戏的人不一定懂炒股，
+   所以"怎么看图、怎么下单"要在游戏里就地讲一遍，不用去别处找。 */
+.gg-card.guide { max-height: 88vh; display: flex; flex-direction: column; text-align: left; }
+.gg-card.guide h2 { text-align: center; font-size: 19px; letter-spacing: 1px; margin-bottom: 10px; }
+.gg-guide { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.gg-guide h5 {
+  margin: 15px 0 6px; font-size: 12.5px; letter-spacing: .5px;
+  color: var(--accent, #ffb74d); border-bottom: 1px dashed rgba(255, 255, 255, .1); padding-bottom: 4px;
+}
+.gg-guide h5:first-child { margin-top: 0; }
+.gg-guide dl { margin: 0; }
+.gg-guide dt { font-size: 12.5px; font-weight: 600; color: #dfe4ee; margin-top: 8px; }
+.gg-guide dd { margin: 2px 0 0; font-size: 12.5px; line-height: 1.72; color: #aeb6c4; }
+.gg-guide b { color: #ffb74d; font-weight: 600; }
+.gg-guide ol { margin: 4px 0 0; padding-left: 19px; font-size: 12.5px; line-height: 1.75; color: #aeb6c4; }
+.gg-guide ol li { margin: 4px 0; }
+.gg-guide code {
+  font: 11.5px/1 'SF Mono', Menlo, monospace; background: #1e2430;
+  padding: 1px 5px; border-radius: 4px; color: #ffd28a;
+}
+.gg-guide-warn {
+  margin: 12px 0 0; padding: 8px 10px; font-size: 12px; line-height: 1.7;
+  color: #d8c9a8; background: #1d1a12; border: 1px solid #4a4026; border-radius: 6px;
+}
+
 /* 开场卡片里的本金选择器 */
 .gg-cash { text-align: left; margin: 14px 0; padding: 11px 12px; border: 1px solid var(--line, #262b36); border-radius: 9px; background: #14181f; }
 .gg-cash-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
@@ -459,6 +485,12 @@
     margin: 0; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
     background: var(--panel, #12151c); border-top: 1px solid var(--line, #262b36);
   }
+  /* 卡片（开场 / 选择 / 结算 / 新手入门）盖在最上面时，把那排常驻的下单键收起来 ——
+     它们 z-index 12 且钉在底部，不收的话会正好压在卡片自己的按钮上（用户报过这个）。
+     cover-on 由 game.js 的 showCover/hideCover 同步。 */
+  .game-mask.cover-on .gg-trade > .gg-btns { display: none; }
+  /* 新手入门在窄屏上占满整屏（正文长，卡片形式会挤成一条缝） */
+  .gg-card.guide { max-height: 100%; height: 100%; border-radius: 0; border: 0; padding: 16px 15px 12px; }
   /* 内容不要被那排常驻按钮盖住（.gg-right 已经在上面留了 padding-bottom） */
   /* 窄屏放不下开高低收 + 两条均线，只留最有用的几个数 */
   .gg-ohlc { left: 60px; top: 3px; font-size: 10px; }
