@@ -12,6 +12,16 @@
     humid: { label: '平均湿度', unit: '%', get: b => b.humAvg }
   };
 
+  /** K 线 tooltip 的标题。
+      日K / 周K 的键是完整日期（周K 是那一周的周一），所以能带上星期几；
+      月K 的键只有 'YYYY-MM'，拼不出星期几 —— 别硬拼，改成 "2025 年 11 月"。 */
+  function tipTitle(d) {
+    const w = weekday(d);
+    if (w) return d + ' ' + w;
+    const m = /^(\d{4})-(\d{2})$/.exec(String(d));
+    return m ? m[1] + ' 年 ' + (+m[2]) + ' 月' : String(d);
+  }
+
   const C = {
     bg: 'transparent',
     axis: '#39404e',
@@ -461,7 +471,7 @@
       const prev = bars[i - 1];
       const base = prev ? prev.c : b.o;
       const chg = b.c - base, pct = U.pctOf(b.c, base);
-      let h = '<div style="font-weight:700;color:#e9edf4;margin-bottom:3px">' + b.d + ' ' + weekday(b.d) +
+      let h = '<div style="font-weight:700;color:#e9edf4;margin-bottom:3px">' + tipTitle(b.d) +
         (b.wcode != null ? ' <span style="color:#4fc3f7">' + API.wmoText(b.wcode) + '</span>' : '') + '</div>';
       h += row('开', fx(b.o, 1) + ' ℃', U.trendColor(b.o - base));
       h += row('高', fx(b.h, 1) + ' ℃', C.up);
@@ -471,7 +481,10 @@
       // 副图口径选的是「日内温差」时，振幅跟它算出来是同一个数（都是 最高-最低），
       // 显示两遍没意义。窄屏上少一行，tooltip 也更容易整个塞进主图。
       if (metric.label !== '日内温差') h += row('振幅', fx(b.h - b.l, 1) + ' ℃', C.labelHi);
-      h += row(metric.label, fx(metric.get(b), metric.unit === '%' ? 0 : 1) + metric.unit, '#4fc3f7');
+      // 周K / 月K 是聚合出来的，bar 上只有 {d,o,h,l,c,v,n,raw}，没有 range / windAvg / humAvg
+      // （副图在月K 下本来就是隐藏的）。取不到就别显示一个 "-- ℃" 占位行。
+      const mv = metric.get(b);
+      if (mv != null) h += row(metric.label, fx(mv, metric.unit === '%' ? 0 : 1) + metric.unit, '#4fc3f7');
       if (S.ov && S.ov.byKey) {
         const v = S.ov.byKey[b.d];
         h += row(S.ov.name, (v == null ? '—' : fx(v, S.ov.unit === '%' ? 0 : 1) + ' ' + S.ov.unit), S.ov.color);
@@ -608,12 +621,13 @@
   function subTip(ps, S, xs) {
     const i = ps[0].dataIndex, b = S.bars[i];
     if (!b) return '';
-    let h = '<div style="font-weight:700;color:#e9edf4;margin-bottom:3px">' + b.d + ' ' + weekday(b.d) + '</div>';
+    let h = '<div style="font-weight:700;color:#e9edf4;margin-bottom:3px">' + tipTitle(b.d) + '</div>';
     const n = S.indName, ind = S.ind;
     const g = (k) => (ind[k] && ind[k][i] != null) ? fx(ind[k][i], 3) : '--';
     if (n === 'vol') {
       const metric = METRICS[S.metric] || METRICS.range;
-      h += row(metric.label, fx(metric.get(b), 1) + metric.unit, '#4fc3f7');
+      const mv = metric.get(b);
+      if (mv != null) h += row(metric.label, fx(mv, 1) + metric.unit, '#4fc3f7');
       h += row('MA5', g('volMa5'), C.ma[1]); h += row('MA10', g('volMa10'), C.ma[2]);
     } else if (n === 'macd') {
       h += row('DIF', g('dif'), C.dif); h += row('DEA', g('dea'), C.dea);

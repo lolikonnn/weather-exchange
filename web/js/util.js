@@ -61,11 +61,13 @@
     return new Date(+p[0], +p[1] - 1, +p[2]);
   }
 
-  /** 星期几 */
+  /** 星期几。传进来的**不一定**是完整日期 —— 月K 的键只有 'YYYY-MM'，
+   *  这种拼不出星期几。宁可返回空串，也不要吐出 '周undefined' 这种东西。 */
   function weekday(s) {
     const w = '日一二三四五六';
     const d = s instanceof Date ? s : parseDate(s);
-    return '周' + w[d.getDay()];
+    const n = d.getDay();
+    return n === n ? '周' + w[n] : '';
   }
 
   /** ISO 时间串（可能无秒）-> Date */
