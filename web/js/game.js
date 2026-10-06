@@ -102,6 +102,9 @@
     maxDD: 0,
     trades: 0,
     fills: [],        // 最近 5 笔成交，新的在前
+    orders: [],       // 挂单：限价 { kind:'limit', dir, price, lots } / 止损止盈 { kind:'sl'|'tp', price }
+    orderSeq: 0,
+    sev: null,        // 本局的 severity 切片（天气日历要提前看"什么时候变天"）
     hist: [],
     liqPrice: null,
     liqAt: 0,
@@ -141,7 +144,11 @@
   function marginUsed() { return G.pos ? Math.abs(G.pos) * G.avg * LOT_MULT / G.lev : 0; }
   function unreal() { return G.pos ? G.pos * (G.price - G.avg) * LOT_MULT : 0; }
   function equity() { return G.cash + unreal(); }
-  function freeEq() { return equity() - marginUsed(); }
+  /** 挂着的限价单锁掉的那部分保证金 —— 真券商就是这么算的，不然可以无限挂单把仓位吹到天上去 */
+  function reservedMargin() {
+    return G.orders.reduce((s, o) => s + (o.kind === 'limit' ? o.lots * o.price * LOT_MULT / G.lev : 0), 0);
+  }
+  function freeEq() { return equity() - marginUsed() - reservedMargin(); }
   function maxLots() { const m = G.price * LOT_MULT / G.lev; return m > 0 ? Math.floor(Math.max(0, freeEq()) / m) : 0; }
   /** 强平价：解 equity = marginUsed × MAINTAIN */
   function liqPriceOf() {
@@ -170,9 +177,13 @@
   }
 
   /* ═══════════════ 成交 ═══════════════ */
-  function applyFill(q) {
+  /**
+   * 按指定价成交。`p` 默认是最新价，但挂单必须按"挂的那个价"成交 —— 那正是挂单的意义。
+   */
+  function applyFillAt(q, p) {
     if (!q) return;
-    const p = G.price, old = G.pos;
+    p = (p > 0) ? p : G.price;
+    const old = G.pos;
     const fee = Math.abs(q) * p * LOT_MULT * FEE_RATE;
     if (old === 0) {
       G.avg = p;
@@ -188,12 +199,74 @@
     G.pos = old + q;
     if (!G.pos) G.avg = 0;
     G.trades++;
+    // 仓位平掉之后，挂在它上面的止损止盈就没意义了
+    if (!G.pos) G.orders = G.orders.filter(o => o.kind === 'limit');
     // 成交记录（最近 5 笔，新的在上）
     const kind = old === 0 ? (q > 0 ? '开多' : '开空')
       : (G.pos === 0 ? '平仓'
         : ((old > 0) === (q > 0) ? (q > 0 ? '加多' : '加空') : (q > 0 ? '减空' : '减多')));
     G.fills.unshift({ at: G.i, kind: kind, lots: Math.abs(q), px: p, fee: fee });
     if (G.fills.length > 5) G.fills.length = 5;
+  }
+  function applyFill(q) { applyFillAt(q, G.price); }
+
+  /* ═══════════════ 挂单 ═══════════════ */
+  /**
+   * 限价开仓单：价格碰到 `price` 就按**这个价**开仓（不是按最新价 —— 那才是挂单的意思）。
+   * 下单时就把它要占的保证金锁掉，所以不能靠挂单把仓位吹到天上去。
+   */
+  function placeLimit(dir, price, lots) {
+    price = +price; lots = Math.floor(+lots);
+    if (!(price > 0)) return '价格没填';
+    if (!(lots >= 1)) return '手数至少 1';
+    const need = lots * price * LOT_MULT / G.lev;
+    if (need > freeEq() + 1e-6) return '可用保证金不够（要 ' + money(need) + '）';
+    G.orders.push({ id: ++G.orderSeq, kind: 'limit', dir: dir > 0 ? 1 : -1, price: price, lots: lots });
+    return null;
+  }
+
+  /** 止损 / 止盈挂在当前持仓上，碰到就把整个仓位平掉（跟真券商一样，不记手数） */
+  function setStop(kind, price) {
+    price = +price;
+    if (!(price > 0)) return '价格没填';
+    if (!G.pos) return '现在没有持仓';
+    G.orders = G.orders.filter(o => o.kind !== kind);
+    G.orders.push({ id: ++G.orderSeq, kind: kind, price: price });
+    return null;
+  }
+
+  function cancelOrder(id) { G.orders = G.orders.filter(o => o.id !== id); }
+
+  /**
+   * 这一根 K 线里哪些挂单被碰到了。
+   *
+   * 判定用「上一根收盘 → 本根收盘」这条线段，再加本根的上下影线 ——
+   * 光看收盘价的话，插针把你止损扫掉的情形就永远模拟不出来。
+   * 同一根里有好几个价位被碰到时，按「离上一根收盘的距离」排序逐个成交：
+   * 价格是从上一根收盘一路走过来的，先碰到的先成交，这才符合直觉。
+   */
+  function processOrders(prevPx) {
+    if (!G.orders.length || !G.series[G.i]) return;
+    const bar = G.series[G.i];
+    const lo = Math.min(prevPx, G.price, bar.l);
+    const hi = Math.max(prevPx, G.price, bar.h);
+    const hits = G.orders.filter(o => o.price >= lo && o.price <= hi);
+    if (!hits.length) return;
+    hits.sort((a, b) => Math.abs(a.price - prevPx) - Math.abs(b.price - prevPx));
+    for (const o of hits) {
+      if (G.orders.indexOf(o) < 0) continue;   // 前面的成交可能已经把它带走了
+      if (o.kind === 'limit') {
+        applyFillAt(o.dir * o.lots, o.price);
+        floatText('限价成交 ' + (o.dir > 0 ? '多' : '空') + ' ' + o.lots + ' 手 @ ' + n1(o.price), o.dir > 0 ? THEME.up : THEME.down, 12);
+        beep(o.dir > 0 ? 660 : 440, .08, 'triangle', .04);
+      } else if (G.pos) {
+        const q = -G.pos;
+        applyFillAt(q, o.price);
+        floatText((o.kind === 'sl' ? '止损触发 @ ' : '止盈触发 @ ') + n1(o.price), o.kind === 'sl' ? THEME.down : THEME.up, 13);
+        beep(o.kind === 'sl' ? 300 : 900, .16, 'sine', .05);
+      }
+      G.orders = G.orders.filter(x => x.id !== o.id);
+    }
   }
 
   function liquidate() {
@@ -322,7 +395,7 @@
         series[j].l = Math.min(o, c) - w;
       }
       if (!series.every(b => isFinite(b.o) && isFinite(b.c))) continue;
-      return { series, seeds };
+      return { series, seeds, sevWin: sev.slice(s, s + need) };
     }
     return null;
   }
@@ -331,6 +404,31 @@
     const day = Math.floor(i / PER_DAY) + 1, m = (i % PER_DAY) * 15;
     const hh = U.pad2(Math.floor(m / 60)), mm = U.pad2(m % 60);
     return (m === 0) ? ('第 ' + day + ' 天') : ('D' + day + ' ' + hh + ':' + mm);
+  }
+
+  /* ═══════════════ 天气日历 ═══════════════
+     财经日历告诉你「20:30 有非农」，但不会告诉你数据是好是坏 —— 这个日历一样：
+     它只标出**未来一天里天气什么时候会剧变**，一个字都不提往哪边。
+
+     判定用的是 |Δseverity|，也就是"变化得多猛"。CAPE 炸上去和塌下来
+     算出来是同一个数，所以强度条本身不泄露方向。
+     触发门槛跟价格冲击用的同一个 JUMP_AT —— 日历上标了的，盘面上就真会动。 */
+  function calendarAt(i, horizon) {
+    if (!G.sev || !G.series.length) return [];
+    const end = Math.min(G.series.length - 1, i + (horizon || PER_DAY));
+    const raw = [];
+    for (let k = Math.max(1, i + 1); k <= end; k++) {
+      const d = Math.abs(G.sev[k] - G.sev[k - 1]);
+      if (d > JUMP_AT) raw.push({ at: k, d: d });
+    }
+    // 同一场天气过程会连着好几根都在变，合并成一段
+    const out = [];
+    for (const e of raw) {
+      const last = out[out.length - 1];
+      if (last && e.at - last.to <= 3) { last.to = e.at; last.d = Math.max(last.d, e.d); }
+      else out.push({ from: e.at, to: e.at, d: e.d });
+    }
+    return out;
   }
 
   /* ═══════════════ 新闻闪报（都用真实数值） ═══════════════ */
@@ -485,6 +583,16 @@
         if (lp0 > lo - span * 0.25 && lp0 < hi + span * 0.25) { lo = Math.min(lo, lp0); hi = Math.max(hi, lp0); }
       }
     }
+    // 挂着的单子也拉进可视范围 —— 挂单挂在天边看不见的话，跟没挂一样没感觉。
+    // 但也别把轴拉爆：离得太远的（超过可视跨度 1.5 倍）就不管它，右侧列表里还有。
+    if (G.orders.length && isFinite(lo) && isFinite(hi)) {
+      const span0 = (hi - lo) || 1;
+      G.orders.forEach(o => {
+        if (o.price > lo - span0 * 1.5 && o.price < hi + span0 * 1.5) {
+          lo = Math.min(lo, o.price); hi = Math.max(hi, o.price);
+        }
+      });
+    }
     const yPad = ((hi - lo) || 1) * 0.08;
     const yMin = isFinite(lo) ? +(lo - yPad).toFixed(2) : undefined;
     const yMax = isFinite(hi) ? +(hi + yPad).toFixed(2) : undefined;
@@ -505,6 +613,18 @@
         });
       }
     }
+    // 挂单：限价用青色点线、止损用绿、止盈用红
+    const ORD_C = { limit: '#4fc3f7', sl: THEME.down, tp: THEME.up };
+    G.orders.forEach(o => {
+      const tag = o.kind === 'limit' ? (o.dir > 0 ? '挂多 ' : '挂空 ') : (o.kind === 'sl' ? '止损 ' : '止盈 ');
+      marks.push({
+        yAxis: o.price, lineStyle: { color: ORD_C[o.kind], type: 'dotted', width: 1, opacity: .9 },
+        label: {
+          formatter: tag + n1(o.price) + (o.kind === 'limit' ? ' ×' + o.lots : ''),
+          color: ORD_C[o.kind], fontSize: 9, position: 'insideStartTop'
+        }
+      });
+    });
 
     G.main.setOption({
       animation: false,
@@ -691,6 +811,52 @@
       }).join('');
     }
 
+    // ── 挂单列表 ──
+    const ordBox = $('#ggOrders'), ordTip = $('#ggOrdTip');
+    if (ordBox) {
+      if (!G.orders.length) {
+        ordBox.innerHTML = '<div class="gg-empty">没有挂单</div>';
+      } else {
+        ordBox.innerHTML = G.orders.map(o => {
+          const isL = o.kind === 'limit';
+          const col = isL ? '#4fc3f7' : (o.kind === 'sl' ? THEME.down : THEME.up);
+          const name = isL ? (o.dir > 0 ? '限价多' : '限价空') : (o.kind === 'sl' ? '止损' : '止盈');
+          const dist = G.price ? ((o.price - G.price) / G.price * 100) : 0;
+          return '<div class="gg-o"><span style="color:' + col + '">' + name + '</span>' +
+            '<span>' + (isL ? o.lots + ' 手' : '全平') + '</span>' +
+            '<span>' + n1(o.price) + '</span>' +
+            '<span class="dim">' + (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%</span>' +
+            '<button class="gg-x" data-cancel="' + o.id + '" title="撤单">×</button></div>';
+        }).join('');
+      }
+      if (ordTip) {
+        const nL = G.orders.filter(o => o.kind === 'limit').length;
+        const nS = G.orders.length - nL;
+        ordTip.textContent = G.orders.length ? (nL + ' 个限价 · ' + nS + ' 个止损止盈') : '碰到价才成交';
+      }
+    }
+
+    // ── 天气日历 ──
+    // 注意别用 setT：它是在这个函数下面才 const 出来的，从这里调会踩 TDZ
+    const calBox = $('#ggCal'), calTip = $('#ggCalTip');
+    if (calBox) {
+      const evs = calendarAt(G.i, PER_DAY);
+      if (calTip) calTip.textContent = '未来 24 小时 · ' + (evs.length ? evs.length + ' 次变天' : '风平浪静');
+      if (!evs.length) {
+        calBox.innerHTML = '<div class="gg-empty">接下来一天没什么动静</div>';
+      } else {
+        calBox.innerHTML = evs.slice(0, 6).map(e => {
+          // 强度档是按实测 |Δsev| 分布定的：整局中位 0.06、p99 约 1.7、max 约 2.5，
+          // 门槛 JUMP_AT=0.9 之上才进日历。所以「剧烈」是真的少见。
+          const bars = Math.min(4, Math.max(1, Math.ceil(e.d / 0.7)));
+          const when = labelAt(e.from) + (e.to > e.from ? '–' + labelAt(e.to).replace(/^D\d+ /, '') : '');
+          return '<div class="gg-c"><span>' + when + '</span>' +
+            '<i class="t' + bars + '">' + '▮'.repeat(bars) + '</i>' +
+            '<b>' + (e.d >= 2.0 ? '剧烈' : e.d >= 1.3 ? '明显' : '一般') + '</b></div>';
+        }).join('');
+      }
+    }
+
     const bl = $('#ggLong'), bs = $('#ggShort');
     if (bl && bs) bl.disabled = bs.disabled = (G.ended || !G.running || lots < 1);
     const bc = $('#ggClosePos');
@@ -760,8 +926,13 @@
     if (G.i >= G.series.length - 1) { endRound('timeup'); return; }
 
     const prev = equity();
+    const prevPx = G.price;
     G.i++;
     G.price = G.series[G.i].c;
+
+    // 挂单 / 止损止盈先跑，再判爆仓 —— 顺序反了的话，止损单会因为
+    // "这一根已经先爆仓了"而永远来不及救你。
+    processOrders(prevPx);
 
     const mu = marginUsed();
     if (mu > 0 && equity() <= mu * MAINTAIN) {
@@ -805,6 +976,7 @@
     G.pos = 0; G.avg = 0;
     G.peak = START_CASH; G.maxDD = 0; G.trades = 0;
     G.fills = [];
+    G.orders = []; G.orderSeq = 0;
     G.hist = [START_CASH];
     G.liqPrice = null; G.liqAt = 0; G.lastNews = '';
     G.ended = false;
@@ -835,6 +1007,7 @@
     G.city = city;
     G.series = picked.series;
     G.seeds = picked.seeds;
+    G.sev = picked.sevWin;
     resetState();
     readTheme();
     ensureCharts();
@@ -1000,6 +1173,37 @@
     if (S) S.addEventListener('click', () => trade(-1));
     if (C) C.addEventListener('click', closeAll);
 
+    // ── 挂单 ──
+    // 价格框空着就按现价预填：绝大多数时候你想挂的就是"现价上下一点点"，
+    // 每次手打五位数字太反人类。
+    const ordPx = $('#ggOrdPx'), ordLots = $('#ggOrdLots');
+    function readPx() {
+      const v = parseFloat(ordPx && ordPx.value);
+      return (isFinite(v) && v > 0) ? v : G.price;
+    }
+    function readLots() {
+      const v = Math.floor(parseFloat(ordLots && ordLots.value));
+      if (isFinite(v) && v >= 1) return v;
+      return Math.floor(maxLots() * G.pct / 100);
+    }
+    function ordFeedback(err) {
+      if (err) { toast(err); beep(200, .12, 'square', .04); }
+      else render();
+    }
+    const ob = $('#ggOrdBuy'), os = $('#ggOrdSell'), sl = $('#ggSetSl'), tp = $('#ggSetTp');
+    if (ob) ob.addEventListener('click', () => ordFeedback(placeLimit(1, readPx(), readLots())));
+    if (os) os.addEventListener('click', () => ordFeedback(placeLimit(-1, readPx(), readLots())));
+    if (sl) sl.addEventListener('click', () => ordFeedback(setStop('sl', readPx())));
+    if (tp) tp.addEventListener('click', () => ordFeedback(setStop('tp', readPx())));
+    // 撤单用事件委托 —— 列表每次 render 都是重建的，逐个绑会漏
+    const ordBox = $('#ggOrders');
+    if (ordBox) ordBox.addEventListener('click', e => {
+      const b = e.target.closest('[data-cancel]');
+      if (!b) return;
+      cancelOrder(+b.dataset.cancel);
+      render();
+    });
+
     U.$$('#ggLev button').forEach(b => b.addEventListener('click', () => {
       G.lev = +b.dataset.lev; setSeg('#ggLev button', 'lev', G.lev); render();
     }));
@@ -1031,9 +1235,10 @@
   global.Game = {
     open, close, G, bind,
     _t: {
-      pickSeries, severity, ema, median, robustScale, applyFill, equity, marginUsed,
+      pickSeries, severity, ema, median, robustScale, applyFill, applyFillAt, equity, marginUsed,
       liqPriceOf, maxLots, beginRound, endRound, tick, beep, labelAt, newsAt, visBars,
-      tolerablePct,
+      tolerablePct, placeLimit, setStop, cancelOrder, processOrders, calendarAt, freeEq,
+      reservedMargin, JUMP_AT,
       LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, START_CASH, FEE_RATE
     }
   };

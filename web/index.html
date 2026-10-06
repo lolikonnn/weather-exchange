@@ -294,8 +294,31 @@
             <button id="ggClosePos" title="按现价平掉全部持仓">一键平仓</button>
           </div>
 
+          <!-- 挂单：就一个价格框、一个手数框，然后选"挂的是什么"。
+               限价单碰到那个价才成交（按挂牌价成交，不是按最新价）；止损/止盈挂在当前持仓上，
+               碰到就把整个仓位平掉。价格框空着的话按现价预填，省得每次手打。 -->
+          <div class="gg-lab" style="margin-top:11px"><span>挂单</span><b id="ggOrdTip">碰到价才成交</b></div>
+          <div class="gg-ord-in">
+            <input id="ggOrdPx" class="gg-inp" type="number" step="0.1" inputmode="decimal" placeholder="价格">
+            <input id="ggOrdLots" class="gg-inp" type="number" step="1" min="1" inputmode="numeric" placeholder="手数">
+          </div>
+          <div class="gg-grid2">
+            <button id="ggOrdBuy"  class="gg-long"  title="价格碰到这个数就买入开多（限价）">挂多单</button>
+            <button id="ggOrdSell" class="gg-short" title="价格碰到这个数就卖出开空（限价）">挂空单</button>
+          </div>
+          <div class="gg-grid2">
+            <button id="ggSetSl" title="用上面的价格给现在的持仓设止损，碰到就全平">设止损</button>
+            <button id="ggSetTp" title="用上面的价格给现在的持仓设止盈，碰到就全平">设止盈</button>
+          </div>
+          <div class="gg-fills" id="ggOrders"><div class="gg-empty">没有挂单</div></div>
+
           <div class="gg-lab" style="margin-top:11px"><span>成交记录</span><b id="ggTrades">0 笔</b></div>
           <div class="gg-fills" id="ggFills"><div class="gg-empty">还没下过单</div></div>
+
+          <!-- 天气日历：只告诉你什么时候变天，不说往哪边 —— 跟财经日历一个道理，
+               你知道 20:30 有非农，但不知道数据是好是坏。 -->
+          <div class="gg-lab" style="margin-top:11px"><span>天气日历</span><b id="ggCalTip">未来 24 小时</b></div>
+          <div class="gg-cal" id="ggCal"><div class="gg-empty">风平浪静</div></div>
 
           <div class="gg-lab" style="margin-top:11px"><span>行情速度</span><b id="ggSpeedTip"></b></div>
           <div class="gg-seg" id="ggSpeed">
@@ -308,6 +331,8 @@
             15 分钟一根 K 线，一局 <b>960 根 = 10 天</b>。<b>指数每动 1 点，每手盈亏 ¥10</b>。<br>
             满仓 + <b>N 倍</b>杠杆时，反向走 <b>(1−10%)÷N</b> 就爆仓：
             10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。<br>
+            <b>天气日历</b>只告诉你<b>什么时候</b>变天，不告诉你往哪边 ——
+            就像非农公布前你只知道 20:30 这个时间。<br>
             键盘 <code>↑</code> 做多、<code>↓</code> 做空、<code>空格</code> 平仓。
           </p>
         </div>

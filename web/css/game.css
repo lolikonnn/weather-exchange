@@ -147,6 +147,49 @@
 .gg-fills .gg-f span:first-child { color: var(--dim, #8b919e); flex: none; }
 .gg-fills .gg-f span:last-child { font-family: 'SF Mono', Menlo, Consolas, monospace; }
 
+/* ───────── 挂单 ───────── */
+.gg-ord-in { display: flex; gap: 8px; padding: 6px 14px 0; }
+.gg-inp {
+  flex: 1; min-width: 0; background: #12161f; color: var(--fg, #e6e9ef);
+  border: 1px solid var(--line, #262b36); border-radius: 7px;
+  padding: 7px 9px; font-size: 12.5px; font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.gg-inp::placeholder { color: #5b6270; font-family: inherit; }
+.gg-inp:focus { outline: none; border-color: var(--accent, #ffb74d); }
+.gg-inp::-webkit-outer-spin-button, .gg-inp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.gg-inp { -moz-appearance: textfield; appearance: textfield; }
+#ggOrdBuy, #ggOrdSell { padding: 6px 4px; font-size: 12px; }
+#ggSetSl, #ggSetTp { padding: 5px 4px; font-size: 11px; color: var(--dim, #8b919e); }
+
+.gg-fills .gg-o {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 11px; padding: 3px 0; border-bottom: 1px dashed rgba(255, 255, 255, .05);
+  font-variant-numeric: tabular-nums;
+}
+.gg-fills .gg-o span { font-family: 'SF Mono', Menlo, Consolas, monospace; }
+.gg-fills .gg-o span:first-child { flex: none; min-width: 46px; }
+.gg-fills .gg-o span.dim { color: var(--dim, #8b919e); margin-left: auto; }
+.gg-fills .gg-o .gg-x {
+  flex: none; width: 18px; height: 18px; line-height: 1; padding: 0;
+  background: none; border: 0; color: #5b6270; font-size: 15px; cursor: pointer; border-radius: 4px;
+}
+.gg-fills .gg-o .gg-x:hover { color: #ff7b7d; background: rgba(255, 77, 79, .12); }
+
+/* ───────── 天气日历 ───────── */
+.gg-cal { max-height: 96px; overflow-y: auto; padding: 0 14px 8px; }
+.gg-cal .gg-empty { font-size: 11.5px; color: var(--dim, #8b919e); padding: 3px 0 6px; }
+.gg-cal .gg-c {
+  display: flex; align-items: baseline; gap: 7px; font-size: 11px; padding: 3px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, .05); font-variant-numeric: tabular-nums;
+}
+.gg-cal .gg-c span { color: var(--dim, #8b919e); flex: none; min-width: 84px; }
+.gg-cal .gg-c i { font-style: normal; letter-spacing: -1px; color: #ffb74d; font-size: 10px; }
+.gg-cal .gg-c i.t1 { opacity: .5; }
+.gg-cal .gg-c i.t2 { opacity: .7; }
+.gg-cal .gg-c i.t4 { color: #ff7b7d; }
+.gg-cal .gg-c b { margin-left: auto; font-weight: 700; color: #cdd3dd; }
+
 .gg-body { flex: 1; display: flex; min-height: 0; }
 .gg-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line, #262b36); }
 .gg-right { width: 322px; flex: none; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
