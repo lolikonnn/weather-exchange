@@ -26,6 +26,9 @@ import subprocess
 import sys
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import webfilter                                    # 哪些 web/ 文件不该发布，见该文件
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SDK = os.path.join(ROOT, "android", ".sdk")
 BT = os.path.join(SDK, "build-tools", "android-14")
@@ -47,22 +50,12 @@ NAME = "天气战士"
 SKIP_ASSET = ("__probe.html", "__net.html", "__net2.html")
 
 
-def run(cmd, **kw):
-    print("$ " + " ".join(cmd))
-    env = dict(os.environ)
-    env["JAVA_HOME"] = JAVA_HOME
-    env["PATH"] = os.path.join(JAVA_HOME, "bin") + os.pathsep + env.get("PATH", "")
-    r = subprocess.call(cmd, env=env, **kw)
-    if r != 0:
-        sys.exit("命令失败(退出码 %d): %s" % (r, cmd[0]))
-
-
 def sync_assets():
-    """web/ -> android/assets/web/（去掉开发用探针页）"""
+    """web/ -> android/assets/web/（去掉开发用探针页与未发布的游戏）"""
     if os.path.isdir(ASSETS_WEB):
         shutil.rmtree(ASSETS_WEB)
     os.makedirs(ASSETS_WEB)
-    n = 0
+    n = skipped = 0
     for base, dirs, files in os.walk(os.path.join(ROOT, "web")):
         # dist/ 是临时拷进来的安装包；official/ 是给 GitHub Pages 用的静态兜底快照（2.7 MB）——
         # APK 自带本地代理，装到手机上能实时抓中国天气网，不需要这份离线快照。
@@ -71,11 +64,37 @@ def sync_assets():
         out = ASSETS_WEB if rel == "." else os.path.join(ASSETS_WEB, rel)
         os.makedirs(out, exist_ok=True)
         for f in files:
-            if f in SKIP_ASSET:
+            if f in SKIP_ASSET or webfilter.is_probe(f):
+                skipped += 1
                 continue
-            shutil.copy2(os.path.join(base, f), os.path.join(out, f))
+            r = f if rel == "." else os.path.join(rel, f).replace(os.sep, "/")
+            if webfilter.skip_rel(r):
+                print("  跳过 %s（未发布的功能）" % r)
+                skipped += 1
+                continue
+            dst = os.path.join(out, f)
+            if r == "index.html":
+                # 把游戏相关的几行从拷进去的那份里摘掉；web/ 源文件一个字节都不动
+                html = open(os.path.join(base, f), encoding="utf-8").read()
+                html, cut = webfilter.strip_game(html)
+                if cut:
+                    print("  index.html 摘掉 %d 行游戏相关内容" % cut)
+                with open(dst, "w", encoding="utf-8", newline="") as fp:
+                    fp.write(html)
+            else:
+                shutil.copy2(os.path.join(base, f), dst)
             n += 1
-    print("assets/web: %d 个文件 -> %s" % (n, ASSETS_WEB))
+    print("assets/web: %d 个文件（跳过 %d）-> %s" % (n, skipped, ASSETS_WEB))
+
+
+def run(cmd, **kw):
+    print("$ " + " ".join(cmd))
+    env = dict(os.environ)
+    env["JAVA_HOME"] = JAVA_HOME
+    env["PATH"] = os.path.join(JAVA_HOME, "bin") + os.pathsep + env.get("PATH", "")
+    r = subprocess.call(cmd, env=env, **kw)
+    if r != 0:
+        sys.exit("命令失败(退出码 %d): %s" % (r, cmd[0]))
 
 
 def ensure_keystore():

@@ -32,6 +32,9 @@ import urllib.request
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import webfilter                                    # 哪些 web/ 文件不该发布，见该文件
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API = "https://api.github.com"
 UA = "TJS-Weather-Push/1.0"
@@ -213,6 +216,26 @@ def main():
     done = 0
     for rel in sorted(files):
         full = files[rel]
+        if rel.startswith("web/"):
+            wr = rel[4:]
+            if webfilter.is_probe(os.path.basename(wr)) or webfilter.skip_rel(wr):
+                continue
+            if wr == "index.html":
+                # 把游戏相关的几行摘掉再传；web/index.html 源文件一个字节都不动
+                html = open(full, encoding="utf-8").read()
+                html, cut = webfilter.strip_game(html)
+                if cut:
+                    print("  推送时摘掉 index.html 里 %d 行游戏相关内容" % cut)
+                content = html.encode("utf-8")
+                st, blob = req("POST", "/repos/%s/%s/git/blobs" % (owner, a.repo), a.token, {
+                    "content": base64.b64encode(content).decode("ascii"),
+                    "encoding": "base64",
+                })
+                if st not in (200, 201):
+                    sys.exit("上传 %s 失败 (%s): %s" % (rel, st, blob))
+                tree.append({"path": rel, "mode": "100644", "type": "blob", "sha": blob["sha"]})
+                done += 1
+                continue
         with open(full, "rb") as f:
             content = f.read()
         st, blob = req("POST", "/repos/%s/%s/git/blobs" % (owner, a.repo), a.token, {

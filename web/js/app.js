@@ -102,7 +102,12 @@
     renderIndexes();
     if (!S.watch.length) { box.appendChild(el('div', { class: 'sr-empty', text: '自选为空，点搜索添加城市' })); return; }
     let ids = S.watch.slice();
-    if (S.sortMode === 1) ids.sort((a, b) => (quoteOf(b).pct || -1e9) - (quoteOf(a).pct || -1e9));
+    if (S.sortMode === 1) ids.sort((a, b) => {
+      // 分母改成绝对温标后，平盘就是货真价实的 0%。这里必须显式判 null：
+      // 写成 `pct || -1e9` 会把 0 和"没数据"一起压到最底下。
+      const pa = quoteOf(a).pct, pb = quoteOf(b).pct;
+      return (pb == null ? -1e9 : pb) - (pa == null ? -1e9 : pa);
+    });
     else if (S.sortMode === 2) {
       ids.sort((a, b) => {
         const ca = API.Cities.get(a), cb = API.Cities.get(b);
