@@ -701,6 +701,9 @@
         : 'MA5 ' + g('ma5') + '　MA10 ' + g('ma10') + '　MA20 ' + g('ma20') + '　MA60 ' + g('ma60');
     }
     syncOverlayBtn();
+    // 预警滚动条跟着当前城市走。这里调是安全的：tickerRefresh 内部按
+    // "城市 + 条数 + 标题"算了个签名，没变就直接返回，不会把滚动动画打回开头。
+    if (window.WXUI && WXUI.tickerRefresh) WXUI.tickerRefresh();
   }
 
   /** 「叠到主图」按钮的状态：副图切回温差（vol）时没有任何可叠的天气量，按钮置灰 */
@@ -823,15 +826,34 @@
     //   老写法不管成败都写 `S.briefAt = Date.now()`，于是一次失败（典型是 Open-Meteo
     //   当天额度用光）就把整列涨跌幅锁死半小时 —— 全列表一片 "--"，期间一次重试都没有，
     //   额度恢复了也不会自己好。
-    if (Date.now() >= (S.briefAt || 0)) {
-      const need = ids.filter(i => API.Cities.get(i)).slice(0, BRIEF_MAX);
+    const need = ids.filter(i => API.Cities.get(i)).slice(0, BRIEF_MAX);
+    const due = Date.now() >= (S.briefAt || 0);
+    // ★ 节流没到点的时候，也得允许补「一次都没成功过」的那些。
+    //   刚加自选 / 刚定位过来的城市本来就没有昨收，如果只能等满一个 30 分钟周期，
+    //   这一格会出现「有价格、涨跌幅空着」的怪样子 —— 用户看到的就是那个灰 `--`。
+    //   失败过的给 1 分钟退避，免得一个永远取不到坐标的城市每轮都重试。
+    //   （轮询间隔本身最快也有 30 秒、默认 15 分钟，所以这个退避不会挡住真正的下一轮。）
+    const FRESH_BACKOFF = 60000;    // 1 分钟
+    S.briefTry = S.briefTry || {};
+    const fresh = need.filter(i => !S.briefs[i] &&
+      Date.now() - (S.briefTry[i] || 0) > FRESH_BACKOFF);
+    const todo = due ? need : fresh;
+    if (todo.length) {
       let got = 0;
-      await runLimited(need, 4, async i => {
+      await runLimited(todo, 4, async i => {
         const c = API.Cities.get(i);
+        S.briefTry[i] = Date.now();       // 先记，失败也算试过了
         try { const b = await briefOf(c, BRIEF_MS); if (b) { S.briefs[i] = b; got++; } } catch (e) { }
       });
-      S.briefAt = Date.now() + (got ? BRIEF_MS : 120000);
+      if (due) S.briefAt = Date.now() + (got ? BRIEF_MS : 120000);
     }
+    // ★ renderGeo() 必须在这里重画一次。
+    //   「当前所在地」那一行的价格来自 quoteOf(LOC_ID)，而这一行原来的**唯一**重画入口
+    //   都在定位那套流程里（initGeo / applyGeo / locate 的回调）。页面刚打开时它先渲染成
+    //   `--`，行情是**轮询**补上来的，而这条路原来只重画自选 / 热门 / 指数条 ——
+    //   于是定位那一格永远停在打开那一刻：价格和涨跌幅都是灰的 `--`，
+    //   旁边自选城市却已经有数字了（用户看到的正是这个）。
+    renderGeo();
     renderWatchlist(); renderHotlist(); renderIndexes();
     if (S.cur) { renderQuoteHead(); renderOrderbook(); renderTape(); }
   }

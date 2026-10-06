@@ -30,7 +30,7 @@ html,body{height:100%}
 body{
   background:var(--bg);color:var(--txt);
   font:13px/1.4 "Microsoft YaHei UI","PingFang SC","Hiragino Sans GB",system-ui,sans-serif;
-  display:grid;grid-template-rows:46px 30px 34px minmax(0,1fr) 24px 22px;
+  display:grid;grid-template-rows:46px 30px auto 34px minmax(0,1fr) 24px 22px;
   height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;
   user-select:none;
 }
@@ -386,7 +386,10 @@ body{
     /* body 是 grid；不写 grid-template-columns 时隐式列是 auto，
        会被最宽子项的 max-content 撑破视口（实测 429 > 390）。显式钉一列并禁横向滚动。 */
     grid-template-columns:minmax(0,1fr);
-    grid-template-rows:auto auto auto minmax(0,1fr) 22px 24px 54px;  /* 顶栏 / 天气条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签 */
+    /* body 是 grid，行数必须跟直接子元素一一对上，多一个少一个都会整体错位。
+       顺序：顶栏 / 天气条 / 预警滚动条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签。
+       预警滚动条那一行写 auto：它没数据时是 [hidden]（display:none），auto 会塌成 0，不留空档。 */
+    grid-template-rows:auto auto auto auto minmax(0,1fr) 22px 24px 54px;  /* 顶栏 / 天气条 / 预警滚动条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签 */
     overflow-x:hidden;
     font-size:13px;
     -webkit-text-size-adjust:100%;
@@ -476,7 +479,7 @@ body{
 /* 横屏手机 / 小平板：回到两栏（自选 + 图表），盘口折到下面 */
 @media (max-width:860px) and (orientation:landscape){
   .mtabs{display:none}
-  body{grid-template-rows:auto auto auto minmax(0,1fr) 22px 24px}
+  body{grid-template-rows:auto auto auto auto minmax(0,1fr) 22px 24px}
   .layout{grid-template-columns:170px minmax(0,1fr)}
   .pane-left,.pane-center,.pane-right{display:flex;grid-area:auto}
   .pane-right{display:none}
@@ -507,6 +510,46 @@ body{
 .wxbtn:hover{background:#2e3543;border-color:#464f61;color:var(--txt-hi)}
 .wxbtn:active{transform:translateY(1px)}
 .wx-bar-hint{margin-left:auto;padding-left:12px;color:var(--dim);font-size:11px;flex:none}
+
+/* ───────────────── 预警滚动条 ─────────────────
+   炒股软件那种"一直往左滚的提示条"。整条可以点，点开预警信号面板。
+   滚动用 CSS 动画（`translateX(0 → -50%)`）：JS 把内容**铺两遍**，
+   滚过一半时正好接上开头，所以看不出接缝，也不需要 JS 逐帧改 scrollLeft。 */
+.ticker{
+  display:flex;align-items:center;height:26px;overflow:hidden;cursor:pointer;
+  background:linear-gradient(90deg,rgba(255,77,79,.13),rgba(255,77,79,.035) 60%,transparent);
+  border-bottom:1px solid var(--line);font-size:11.5px;color:var(--txt);
+}
+.ticker:hover{background:linear-gradient(90deg,rgba(255,77,79,.20),rgba(255,77,79,.06) 60%,transparent)}
+.ticker-tag{
+  flex:none;display:flex;align-items:center;height:100%;padding:0 9px;
+  background:#c62828;color:#fff;font-weight:600;letter-spacing:.5px;
+}
+.ticker-view{flex:1 1 auto;min-width:0;height:100%;overflow:hidden;position:relative}
+.ticker-run{
+  position:absolute;left:0;top:0;height:100%;display:flex;align-items:center;
+  white-space:nowrap;will-change:transform;
+}
+.ticker-run.rolling{animation:tickerRoll var(--tk-dur,40s) linear infinite}
+.ticker-run.rolling:hover{animation-play-state:paused}
+@keyframes tickerRoll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.ticker-it{display:inline-flex;align-items:center;gap:6px;padding:0 15px 0 0;margin-left:15px;border-right:1px dashed var(--line2)}
+.ticker-it b{font-weight:600}
+.ticker-it i{font-style:normal;color:var(--dim);font-family:var(--mono);font-size:10.5px}
+.ticker-it em{font-style:normal;color:var(--dim2)}
+.ticker-more{
+  flex:none;padding:0 10px;color:var(--dim);font-size:11px;
+  border-left:1px solid var(--line);height:100%;display:flex;align-items:center;
+}
+/* 用户系统里开了"减少动态效果"就不滚，静态摆着也一样能看 */
+@media (prefers-reduced-motion: reduce){
+  .ticker-run.rolling{animation:none;transform:none}
+}
+@media (max-width:860px){
+  .ticker{height:24px;font-size:11px}
+  .ticker-more{display:none}
+  .ticker-it{padding-right:12px;margin-left:12px}
+}
 
 /* ───────────────── 功能页外壳 ───────────────── */
 .wx-panel{width:min(1080px,94vw);height:min(780px,90vh)}
@@ -683,6 +726,7 @@ body.fullchart .pane-right{display:none!important}
 body.fullchart .pane-center{display:flex!important;min-height:0}
 body.fullchart .topbar,
 body.fullchart .wx-bar,
+body.fullchart .ticker,
 body.fullchart .index-strip,
 body.fullchart .statusbar,
 body.fullchart .disclaimer,

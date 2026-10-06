@@ -559,6 +559,88 @@
       }).join('') + '</div>';
     },
 
+    /* ── 预警滚动条 ──
+       用户问："炒股网站上是不是有时候会有滚动的提示条？那当前所在地最新的预警信号能不能像这样做一个滚动？"
+       炒股软件那条滚的是公告，这里滚的是**离当前所在地最近的预警**。
+
+       两个刻意的取舍：
+
+       1. **不是把全国几百条都滚一遍。** 那里面绝大多数跟自己无关，滚久了就成了没人看的背景。
+          只取离当前城市 `R` 公里以内的，按距离升序；**附近一条都没有时**退成"全国最近"，并把
+          标签改成「全国最近」—— 直接藏起来用户会以为坏了，直接滚全国又会让人以为本地有预警。
+       2. **整条可以点**，点开预警信号面板看全部。滚动条只负责"让你知道有这回事"。
+
+       动画走 CSS（`translateX(0 → -50%)`），内容**铺两遍**，滚过一半正好接上开头，所以看不出接缝；
+       跑的时长按内容实际宽度算（`TICK_PPS` 像素/秒），内容长短不影响观感速度。 */
+    _tk: { R: 200, MAX: 10, PPS: 26, PERIOD: 300000 },
+    _tkTimer: 0,
+    _tkSig: '',
+
+    async tickerRefresh() {
+      const bar = $('#warnTicker'), run = $('#tickerRun'), tag = $('#tickerTag');
+      if (!bar || !run) return;
+      const app = global.__APP;
+      const c = (app && app.S && app.S.cur) || null;
+      const hasLL = !!(c && isFinite(c.lat) && isFinite(c.lon));
+
+      let ws;
+      try { ws = await W.warnings(); }
+      catch (e) { bar.hidden = true; return; }
+      if (!ws || !ws.length) { bar.hidden = true; return; }
+
+      if (hasLL) {
+        ws.forEach(w => {
+          w.d = (isFinite(w.lat) && isFinite(w.lon)) ? qkDist(c.lat, c.lon, w.lat, w.lon) : Infinity;
+        });
+        ws.sort((x, y) => x.d - y.d);
+      }
+
+      const near = hasLL ? ws.filter(w => isFinite(w.d) && w.d <= this._tk.R) : [];
+      const local = near.length > 0;
+      const list = (local ? near : ws).slice(0, this._tk.MAX);
+
+      // 数据没变就别重画 —— 重画会把动画打回开头，看着像一直在闪。
+      const sig = (hasLL ? c.id : '-') + '|' + local + '|' + ws.length + '|' +
+        list.map(w => w.title).join('~');
+      if (sig === this._tkSig) return;
+      this._tkSig = sig;
+
+      const txt = w => {
+        const d = (w.d != null && isFinite(w.d)) ? ' · ' + Math.round(w.d) + ' 公里' : '';
+        const col = warnColor(w.title), t = w.title || '气象预警';
+        return '<span class="ticker-it" title="' + esc(t) + '">' +
+          '<b style="color:' + col + '">【' + esc(shortWarn(t)) + '】</b>' +
+          esc(t) + '<i>' + d + '</i></span>';
+      };
+      const once = list.map(txt).join('');
+      run.innerHTML = once + once;                 // 铺两遍，-50% 正好接上
+      run.classList.remove('rolling');
+      if (tag) tag.textContent = local ? '⚠ 本地预警' : '⚠ 全国最近';
+
+      // 内容比可视区还短就没必要滚，静态摆着更清楚。
+      const half = run.scrollWidth / 2;
+      const view = run.parentNode;
+      if (half > (view ? view.clientWidth : 0) + 4) {
+        run.style.setProperty('--tk-dur', Math.max(8, Math.round(half / this._tk.PPS)) + 's');
+        // 先把它挪回起点再开动画，否则下一次重算时长时会从半路跳一下。
+        void run.offsetWidth;
+        run.classList.add('rolling');
+      }
+      bar.hidden = false;
+    },
+
+    /* 定时刷新 + 点整条打开预警面板。
+       ⚠ 这里只挂一次定时器：init() 可能被调用多次（比如深链重进），
+       每次都 setTimeout 的话会有好几个定时器一起跑，切城市时同时重算。 */
+    tickerInit() {
+      const bar = $('#warnTicker');
+      if (!bar) return;
+      bar.addEventListener('click', () => WXUI.open('wxWarn'));
+      this.tickerRefresh();
+      if (this._tkTimer) return;
+      this._tkTimer = setInterval(() => WXUI.tickerRefresh(), this._tk.PERIOD);
+    },
+
     /* ── 地震 ──
        数据源是 USGS（免 key、CORS 全开）。为什么不用中国地震台网：www.ceic.ac.cn
        响应是 200 但**不带 CORS 头**，浏览器里直连读不到。
@@ -700,6 +782,8 @@
       }, { passive: false });
       const lb = document.getElementById('btnLocate');
       if (lb) lb.addEventListener('click', () => WXUI.locate());
+      // 预警滚动条：拉一次 + 挂 5 分钟定时器（tickerInit 内部防重入）
+      WXUI.tickerInit();
     }
   };
 
