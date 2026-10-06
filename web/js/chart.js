@@ -524,8 +524,14 @@
     // 不这么干的话副图会按 553 根日K 排横轴，跟主图（24 / 168 个时次）说的不是同一段时间。
     const xs = S.cats || bars.map(b => b.d);
     const view = S.view == null ? 90 : S.view;
-    // 副图的缩放起点跟着主图 —— 主图自己缩过放的话，两块图不能各缩各的
-    const start = (S.cats && Chart && Chart._mainStart != null) ? Chart._mainStart : zoomStart(xs.length, view);
+    // ⚠ 传了 S.cats 就说明副图吃的是**主图那一整条横轴**，缩放必须完全跟着主图：
+    //   主图没开 dataZoom 就是全展，副图也必须全展（start = 0）。
+    //   这里踩过坑：第一版写成"主图有 _mainStart 就跟、没有就退回 zoomStart(xs.length, view)"，
+    //   而分时 / 7日 的主图恰好**没有** dataZoom，于是副图按"最近 90 根"算出 start = 46.4%，
+    //   自己偷偷缩到后 54%（7 天只剩后 3 天多），跟主图整整错开一截 ——
+    //   两块图还挂在同一个 echarts group 上，连主图都会跟着被拽歪。
+    const start = S.cats ? ((Chart && Chart._mainStart != null) ? Chart._mainStart : 0)
+      : zoomStart(xs.length, view);
     const zoom = [
       { type: 'inside', xAxisIndex: [0], start: start, end: 100, zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
       { type: 'slider', xAxisIndex: [0], start: start, end: 100, show: false }
