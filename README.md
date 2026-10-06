@@ -21,6 +21,7 @@
 > 都在 **[docs/NOTES.md](docs/NOTES.md)** —— 不关心实现细节的话不用点进去。
 >
 > **每次更新改了什么** → **[CHANGELOG.md](CHANGELOG.md)**。
+> **每个数字是从哪个接口拿的** → **[docs/APIS.md](docs/APIS.md)**。
 
 ---
 
@@ -601,6 +602,8 @@ K 线上**一定**会出现对应的那根长阴 / 长阳，不是两套互不�
 
 > 前四项走同一个 Open-Meteo 账号体系，所以额度是一起算的（见「额度」那一节）。
 > USGS 与台风网都是免 key 的独立源，不占额度。
+>
+> **逐条端点、参数、粒度、代理路由、踩过的坑 → [docs/APIS.md](docs/APIS.md)**（含"试过但没用上的"那一节）。
 
 ## 城市范围
 
@@ -838,12 +841,17 @@ weather-fighter/
 ├── tools/                   数据集构建、预抓、打包脚本
 │   ├── build_catalog.py     把 352 城全量目录写回 cities.json（并单独标出预抓范围）
 │   ├── build_places.py      爬阿里 DataV 生成 data/places.json（区县级搜索兜底）
-│   ├── radar_slugs.py      探测 352 城里哪些有单站雷达（拼 {省拼音}/{市拼音}.htm）
+│   ├── radar_slugs.py       探测 352 城里哪些有单站雷达（拼 {省拼音}/{市拼音}.htm）
 │   ├── slim_world.py        把 echarts world.json 裁成 data/world.json
 │   ├── make_icon.py         从 logo-src.png 生成站标与五种密度的 launcher 图标
 │   ├── logo-src.png         站标源图（**故意不放在 web/ 下**，否则 1.2 MB 会被打进 APK）
 │   ├── test_apk_parser.py   在 PC 上单测 APK 里的 Java 解析器
 │   └── build_apk.py         手工 aapt2 + d8 + apksigner 打包
+├── docs/                    文档（不发布到 Pages，只在仓库里看）
+│   ├── APIS.md              数据接口汇总：每个数字来自哪个接口
+│   ├── NOTES.md             实现上的坑与取舍
+│   └── screenshots/         文档用截图
+├── CHANGELOG.md             更新日志（立项至今，按时间倒序）
 └── dist/                    产物
 ```
 
