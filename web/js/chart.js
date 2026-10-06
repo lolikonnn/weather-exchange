@@ -178,6 +178,9 @@
     const pts = S.points || [];
     if (!pts.length) return emptyOpt('暂无分时数据');
     const base = S.base;
+    // 右侧百分数轴：气温的比值必须走绝对温标，见 U.pctOf 的注释。
+    // base 为空时返回 undefined，让 ECharts 自己定轴范围（原来的写法会算出 NaN）。
+    const basePct = v => (base == null ? undefined : +U.pctOf(v, base).toFixed(2));
     const xs = pts.map(p => p.t);
     const ys = pts.map(p => p.p);
     const vals = ys.filter(v => v != null);
@@ -235,7 +238,7 @@
         formatter: (ps) => {
           const i = ps[0].dataIndex, t = xs[i], p = ys[i];
           const chg = base != null ? p - base : null;
-          const pct = base ? chg / base * 100 : null;
+          const pct = U.pctOf(p, base);
           const w = S.hours ? S.hours[i] : null;
           let html = '<div style="font-weight:700;color:#e9edf4">' + String(t).replace('T', ' ').slice(0, 16) + ' ' + (w ? w : '') + '</div>';
           html += row('气温', fx(p, 1) + ' ℃', U.trendColor(chg));
@@ -263,7 +266,7 @@
           splitLine: { lineStyle: { color: C.split, type: 'dashed' } }
         },
         {
-          type: 'value', min: +((lo - base) / base * 100).toFixed(2), max: +((hi - base) / base * 100).toFixed(2),
+          type: 'value', min: basePct(lo), max: basePct(hi),
           position: 'right', axisLine: { show: false }, axisTick: { show: false },
           axisLabel: Object.assign({}, axisCommon.axisLabel, {
             formatter: v => sgn(v, 2) + '%',
@@ -426,7 +429,7 @@
           type: 'value', scale: true, position: 'right',
           axisLine: { show: false }, axisTick: { show: false },
           axisLabel: Object.assign({}, axisCommon.axisLabel, {
-            formatter: v => S.base ? sgn((v - S.base) / S.base * 100, 1) + '%' : v.toFixed(0)
+            formatter: v => S.base != null ? sgn(U.pctOf(v, S.base), 1) + '%' : v.toFixed(0)
           }),
           splitLine: splitNone
         }
@@ -457,8 +460,7 @@
       if (!b) return '';
       const prev = bars[i - 1];
       const base = prev ? prev.c : b.o;
-      const chg = b.c - base, pct = base ? chg / base * 100 : 0;
-      const amp = b.l ? (b.h - b.l) / (b.o || 1) * 100 : 0;
+      const chg = b.c - base, pct = U.pctOf(b.c, base);
       let h = '<div style="font-weight:700;color:#e9edf4;margin-bottom:3px">' + b.d + ' ' + weekday(b.d) +
         (b.wcode != null ? ' <span style="color:#4fc3f7">' + API.wmoText(b.wcode) + '</span>' : '') + '</div>';
       h += row('开', fx(b.o, 1) + ' ℃', U.trendColor(b.o - base));

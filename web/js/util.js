@@ -103,6 +103,29 @@
   function downColor() { return getComputedStyle(document.body).getPropertyValue('--down').trim() || DOWN; }
   function trendColor(v) { return Math.abs(v) < 1e-9 ? FLAT : (v > 0 ? upColor() : downColor()); }
 
+  /* ───────── 气温的"涨跌幅" ───────── */
+  /** 绝对零度。气温是**间隔尺度**量：摄氏/华氏的零点是人为约定的，不是"没有温度"，
+      所以拿摄氏值当分母算比值没有意义 —— 换个单位这个"涨幅"就变了
+      （21.0→22.5℃ 在摄氏下是 +7.14%、开尔文 +0.51%、华氏 +3.87%，同一件物理事实）。
+      更糟的是它会直接算错：0℃ 时除零，**0℃ 以下整个符号翻转** —— 哈尔滨 2025-12~2026-02
+      的 90 个交易日里有 88 天收盘价 < 0℃，其中 47 天是"升温却显示成负数"，
+      最离谱的一天开 -4.8℃、收 -16.1℃（大降温 11.3℃）却显示 +235.4%。
+      要算相对变化就必须用有真零点的绝对温标，于是分母统一加 K0。
+      代价：因为大气温度只在 273~313K 之间晃，比值退化成 ΔT × ~0.0034，
+      几乎就是绝对差的线性重标定 —— 但这正是物理上的实话，对气温来说有意义的就是
+      绝对差 ΔT 本身，比值提供不了额外信息。附带好处：算出来是 ±0.1~2.5%，
+      恰好落在真实股票一天的涨跌幅区间里。 */
+  const K0 = 273.15;
+  function pctOf(cur, base) {
+    if (cur == null || base == null) return null;
+    return (cur - base) / (base + K0) * 100;
+  }
+  /** 绝对差的中文说明用不到，但保留一个"绝对差"取值，免得各处再写一遍减法 */
+  function diffOf(cur, base) {
+    if (cur == null || base == null) return null;
+    return cur - base;
+  }
+
   /* ───────── 天气现象 -> 图标/量级 ───────── */
   const WX = [
     [/雷|闪电/, '⛈', 9], [/暴雪/, '🌨', 9], [/暴雨/, '🌧', 8], [/大雨/, '🌧', 7],
@@ -193,7 +216,7 @@
   global.U = {
     $, $$, el, pad2, fx, sgn, cls, fmtDate, fmtTime, fmtHM, parseDate, parseISO, weekday,
     pluck, clamp, sum, avg, last, clone, storeGet, storeSet,
-    UP, DOWN, FLAT, upColor, downColor, trendColor,
+    UP, DOWN, FLAT, upColor, downColor, trendColor, K0, pctOf, diffOf,
     wxIcon, wxShort, wxSeverity, windLevel, sessionLabel, sparkPath,
     toast, debounce, marketPhase
   };

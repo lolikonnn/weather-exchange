@@ -121,7 +121,9 @@
       const sd = Math.sqrt(v);
       upper[i] = m + k * sd;
       lower[i] = m - k * sd;
-      width[i] = m ? (upper[i] - lower[i]) / m * 100 : null;
+      // BOLL 带宽 = (上轨-下轨)/中轨。中轨是气温均值，所以分母同样必须走绝对温标，
+      // 否则冬天中轨为负时带宽会变号、接近 0℃ 时又会爆掉（同 U.pctOf 的理由）。
+      width[i] = m == null ? null : (upper[i] - lower[i]) / (m + U.K0) * 100;
     }
     return { mid, upper, lower, width };
   }

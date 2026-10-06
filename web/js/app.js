@@ -44,7 +44,8 @@
     const temp = (q && q.temp != null) ? q.temp : (b ? b.now : null);
     const prev = b ? b.prevClose : null;
     const chg = (temp != null && prev != null) ? temp - prev : null;
-    const pct = (chg != null && prev) ? chg / prev * 100 : null;
+    // 涨幅的分母必须走绝对温标 —— 摄氏 0℃ 以下整个符号会翻转，见 U.pctOf 的注释
+    const pct = U.pctOf(temp, prev);
     return { temp, prev, chg, pct, q, b };
   }
 
