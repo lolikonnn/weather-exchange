@@ -213,6 +213,8 @@ body{
 .qh-stats{
   flex:1;display:flex;flex-direction:column;align-content:start;padding-top:2px;min-width:0;
 }
+/* 竖屏才出现的「展开/收起」。桌面上 .qh-stats 五组本来就排得下，不需要它。 */
+.qh-more{display:none}
 .qg{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:2px 10px;min-width:0}
 /* 组分隔线：只花 4px（1px 线 + 0 额外内边距），图表那边的空间基本不受影响 */
 .qg + .qg{margin-top:4px;border-top:1px solid #2a313d}
@@ -452,6 +454,10 @@ body{
      max-content 宽 502px 会把统计格挤到 16px，而且整块被 .layout{overflow:hidden} 裁掉
      （截图里右上角那排"今开/最高/最低"就是这么消失的）。改成竖排后两者各占满一行。 ── */
   .quote-head{flex-direction:column;gap:7px;padding:6px 8px}
+  /* ⚠ 主轴上竖排之后，桌面那条 .quote-head > .ticker{flex:1 0 100%} 会变成
+     "高度撑满剩余空间" —— 于是预警条长成一条通到屏幕底的大红竖条。
+     竖排里它只是普通一行：不伸不缩，占满宽度。 */
+  .quote-head > .ticker{flex:0 0 auto;width:100%;margin-top:5px}
   .qh-left{width:100%;min-width:0}
   .qh-name{gap:6px;margin-bottom:3px}
   .qh-name h1{font-size:17px}
@@ -460,10 +466,28 @@ body{
   .qh-price{gap:7px}
   .qh-last{font-size:30px}
   .qh-stats{width:100%}
-  /* 窄屏每组三列：一组四格会排成 3+1，但仍在同一组里，不会被别的组插进来 */
-  .qg{grid-template-columns:repeat(3,minmax(0,1fr));gap:1px 8px}
-  .qs{font-size:11px;gap:4px;min-width:0}
-  .qs b,.qs span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* 窄屏每组自己分列。下限给 88px 而不是写死列数：
+     407px 真机上正好落到 4 列（一组四格一行 → 折起两组后行情头省一半高度），
+     360px 那种小屏落到 3 列（一组变 3+1 两行），不会挤到截字。
+     实测两端都被截掉 0 个（探针 tmp/nar.js 在 iframe 里量 —— Windows 无头 Chrome
+     窗口最小 500 CSS px，真机宽度只能靠 iframe 拿到自己的视口）。 */
+  .qg{grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:1px 8px}
+  .qs{font-size:11px;gap:4px;min-width:0;padding:0.5px 0;line-height:1.3}
+  /* 标签不参与省略（"这个数是什么"被截了这格就等于没有），挤的时候让数值侧收窄 */
+  .qs b{flex:0 0 auto;overflow:visible;text-overflow:clip;white-space:nowrap}
+  .qs span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* ── 统计格默认折起后面三组 ──
+     真机 400px 宽时每组四格要排成 3+1 两行，五组 180px，主图就只剩不到 100px。
+     默认只留「气温」和「天空」两组（新加的云量/紫外线在这一组里，第一眼还看得见），
+     其余三组折起来。这颗按钮的显隐和 class 都只作用于窄屏，桌面一行代码都不变。 */
+  .quote-head.more-off .qg:nth-child(n+3){display:none}
+  .qh-more{
+    display:flex;align-items:center;gap:3px;flex:0 0 auto;order:8;margin:5px 0 0;
+    background:var(--panel2);border:1px solid var(--line2);border-radius:var(--r);
+    color:var(--dim2);font-family:inherit;font-size:11px;line-height:1;padding:4px 9px;cursor:pointer;
+  }
+  .qh-more:active{transform:translateY(1px)}
+  .qh-more i{font-style:normal;font-size:9px}
 
   /* ── 图表标签栏可滑 ── */
   #periodTabs,.tabbar{overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}

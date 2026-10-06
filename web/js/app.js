@@ -826,6 +826,17 @@
       : '先把副图切到降水 / 风 / 云量 / 空气，才能叠到主图';
   }
 
+  /** 竖屏统计格的「展开/收起」按钮的字面。
+   *  默认值按屏幕定：窄屏折起来（主图才有地方），宽屏全放出来。
+   *  用户手动点过就按他点的来（存 'qmore'）。 */
+  function syncQMore() {
+    const qh = $('#quoteHead'), t = $('#qMoreTxt'), i = $('#qMoreIco');
+    if (!qh || !t) return;
+    const off = qh.classList.contains('more-off');
+    t.textContent = off ? '全部数据' : '收起';
+    if (i) i.textContent = off ? '▾' : '▴';
+  }
+
   /* ═══════════ 状态栏 ═══════════ */
   function renderStatus(msg) {
     if (msg) $('#statusLeft').textContent = msg;
@@ -1185,6 +1196,13 @@
     $('#btnHelp').addEventListener('click', () => { $('#helpDrawer').hidden = false; });
     $('#helpClose').addEventListener('click', () => { $('#helpDrawer').hidden = true; });
     $('#helpDrawer').addEventListener('click', e => { if (e.target.id === 'helpDrawer') $('#helpDrawer').hidden = true; });
+    // 竖屏里统计格的「展开/收起」（桌面那颗按钮是 display:none，点了也没用）
+    $('#qMore').addEventListener('click', () => {
+      const off = $('#quoteHead').classList.toggle('more-off');
+      storeSet('qmore', off ? 1 : 0);
+      syncQMore();
+    });
+    syncQMore();
     $('#drawerFilter').addEventListener('input', debounce(e => {
       const q = e.target.value.trim().toLowerCase();
       U.$$('#drawerBody .dw-city').forEach(n => {
@@ -1295,6 +1313,12 @@
     S.overlay = !!storeGet('overlay', 0);
     const cm = storeGet('color', 'cn');
     document.body.classList.toggle('us', cm === 'us');
+    // 竖屏默认把统计格折到两组：真机 400px 宽时五组要占 180px，主图只剩不到 100px。
+    // 用户点过「收起/全部数据」就按他点的来；宽屏一律全放（CSS 里那条规则也只在窄屏生效）。
+    const qmore = storeGet('qmore', null);
+    const narrow = window.matchMedia('(max-width:860px)').matches;
+    if (qmore === null ? narrow : (!!qmore && narrow)) $('#quoteHead').classList.add('more-off');
+    syncQMore();
     $('#refreshRate').value = String(S.refreshMs);
     $('#volumeMetric').value = S.metric;
     $('#colorMode').value = cm;

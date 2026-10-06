@@ -131,6 +131,12 @@
         </div>
       </div>
       <div class="qh-stats" id="qStats"></div>
+      <!-- 竖屏专用：统计格默认只放最上面两组，剩下的折起来。
+           20 个格子在 400px 宽下每组要两行，五组就是 180px，主图只剩不到 100px。
+           这颗按钮只在窄屏出现（CSS 里 .qh-more{display:none}，竖屏块里才打开）。 -->
+      <button type="button" class="qh-more" id="qMore" title="展开/收起行情头里的统计格">
+        <span id="qMoreTxt">展开全部</span><i id="qMoreIco">▾</i>
+      </button>
       <!-- 预警滚动条：炒股软件里那条一直往左滚的提示条。
            只滚**当前所在地**那个市/区的预警 —— 全国同时有几百条生效中，
            全滚出来是噪音。本区市一条都没有时整条收起来（不占位置、不留"暂无预警"占位）。

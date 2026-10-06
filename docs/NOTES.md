@@ -1921,3 +1921,101 @@ display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));
 顺带一个坑：**`location.reload()` 会把探针的 `<pre id="o">` 一起冲掉**，
 第一趟的结论就没了。所以 A 段结束时把 `O.textContent` 拆行写进 `localStorage`，
 B 段开头再打出来 —— 不然只能看到后半截，前半截的失败会被误当成通过。
+
+## 竖屏里 `flex:1 0 100%` 的意思会翻个面
+
+预警条（`#warnTicker`）在桌面上是横在行情头底部的一小条。搬到竖屏之后，它变成了一根
+从屏幕中部通到下部的大红竖条，宽约 172px、高约 700px，标签「⚠ 本地预警」竖着排在里头。
+
+桌面那条规则是好用的：
+
+```css
+.quote-head            { display:flex; flex-wrap:wrap; }
+.quote-head > .ticker  { flex:1 0 100%; order:9; }   /* 占满一整行宽度，排到最后 */
+```
+
+而竖屏块里有一句
+
+```css
+.quote-head { flex-direction:column; }
+```
+
+**`flex-basis` 是沿主轴量的。** 主轴从横向变成纵向之后，同一个 `100%` 就从"整行宽度"
+变成了"整个高度"：`flex-grow:1` 把它撑满剩余高度，`align-items:flex-start` 又把宽度
+收成内容宽 —— 一条 172×700 的红柱子就这么来的。
+
+**教训：凡是写了 `flex-basis`（尤其是百分比）或者 `flex:1` 的元素，一旦祖先可能会
+`flex-direction:column`，就必须在两个方向上都写清楚。** 竖屏里重写一条就行：
+
+```css
+@media (max-width:860px) {
+  .quote-head > .ticker { flex:0 0 auto; width:100%; margin-top:5px; }
+}
+```
+
+`flex:0 0 auto` + 显式 `width:100%` —— 不伸不缩、宽度自己说了算，不再问主轴要长度。
+
+## 按元素名写的省略号规则，会盖掉按内容写的
+
+更早那轮修过「风...」：统计格里的**标签**被挤到省略号，用户以为自己看错了。
+当时的修法是让标签永不截断、挤的时候收窄数值侧：
+
+```css
+.qs b    { flex:0 0 auto; overflow:visible; text-overflow:clip; }
+.qs span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+```
+
+竖屏块里后来又加了一句：
+
+```css
+.qs b, .qs span { overflow:hidden; text-overflow:ellipsis; }
+```
+
+**选择器权重一样，但竖屏块在后面、而且直接把 `.qs b` 又指回了 `hidden`** —— 标签截断
+就这么被装回来了，而且只在竖屏出现，桌面上测一切正常。
+
+两个教训叠在一起：
+
+1. 同一套元素在媒体查询里"重写一遍"时，最容易漏掉的不是新增的规则，而是**把父级
+   刚调好的东西又覆盖回去**。改竖屏之前，先搜一遍同一个选择器在桌面块里长什么样。
+2. 别用 `a, b { ... }` 这种"顺手把两个都写上"的写法去覆盖两个**需求相反**的元素。
+   标签要 `visible`、数值要 `hidden`，本来就不该共用一条规则。
+
+## 真机宽度在 Windows 上量不到 —— 用 iframe 造一个
+
+无头 Chrome 的窗口宽度会被夹到大约 **500 CSS px**（`--window-size=390,844` 拿到的是 500×692，
+`--force-device-scale-factor=2` 也不会把 CSS 视口除半）。而这一轮的 bug 只在 407px 上下出现。
+
+**办法是把页面装进一个定宽 iframe：**
+
+```js
+var f = document.createElement('iframe');
+f.style.cssText = 'position:absolute;left:0;top:0;width:407px;height:760px;border:0';
+f.src = '/index.html';
+document.body.appendChild(f);
+```
+
+iframe 有**自己的视口**，里面所有媒体查询都按 407×760 算 —— 和被塞进真机是一回事，
+`getBoundingClientRect()` 量的也是真实布局值。（探针和页面同源，所以父页可以往
+`localStorage` 里播 `tjs.geo` 的种、也可以直接 `f.contentDocument.getElementById(...)`。）
+
+截图同理：把 iframe 摆在一个更大的窗口里（比如 500×900）拍下来，再按 `(0,0,407,760)`
+裁一刀 —— **比强行让 Chrome 缩窗口靠谱**，因为窗口尺寸是它说了算，不是我们。
+
+## 一个容器放不下时，先问它是"该折"还是"该滚"
+
+竖屏的行情头有五组统计格。407px 宽时每组四格要排成 3+1 两行，五组就是 180px ——
+主图本来就只有 230px 上下。
+
+这里有一个**已经在别处做过的选择**可以照抄：`.pane-center` 在竖屏本来就带
+`overflow-y:auto`（"实在放不下时改由它内部滚动"）。但行情头**不适合滚**：它是"一眼扫过去"
+的读数区，滚起来等于看不见。
+
+所以这一块选了**折叠**：默认只留两组，其余折起来，点一下全放。
+两条判断标准，记在这儿备查：
+
+- **要"一眼扫完"的读数区 → 折叠**（行情头统计格、K 线周期选择）：宁可少显示，也要能一眼看全；
+- **要"逐条看"的列表 → 滚动**（逐时成水流、自选列表）：条目本身就是一条一条读的。
+
+还有一个细节：折叠的默认值只在窄屏生效（宽屏永远全放），并且**用户点过之后就按他点的来**
+（存 `tjs.qmore`，`null` 才算"没表过态"）。否则在手机上点开一次，回桌面还是收着的，很怪。
