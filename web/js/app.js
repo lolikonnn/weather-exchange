@@ -709,31 +709,36 @@
   }
 
   /** 分时 / 7日 下的「温差」副图。
-      温差是**每天**的量（当日最高 − 当日最低），而这两档主图是逐小时的 ——
-      所以把当天那根日K的温差铺到这一天覆盖的每个小时上，横轴类别直接用主图的时间键，
-      上下两块图才会一格对一格（一天画成一条等高的宽带子，带子之间留缝就是日界）。
-      以前这里一律把 553 根日K 丢给副图：主图是 24 小时 / 7 天，副图是 553 天，
-      两块图说的根本不是同一段时间 —— 周期从五日改成 7 日之后这个错位更明显。 */
+      温差（当日最高 − 当日最低）是**每天**的量：一天一个数，摊到 24 个小时上就是一条平线 ——
+      分时档下整幅图只有一根柱子，等于没信息。所以逐小时这两档换成
+      **「较当日均温」**：这一小时的气温比今天平均冷暖多少。
+      数据用的是**主图自己那份逐时气温**（pts），所以上下两块图天然同一条时间轴、同一条日界。
+      日K / 周K / 月K 那几档仍然是"当天的日内温差" —— 那里一天本来就是一根柱子，口径是对的。 */
   function renderVolSub(pts) {
-    const d = S.data || {};
-    const idx = {};
-    (d.daily || []).forEach((b, i) => { idx[b.d] = i; });
-    const ind = d.indicators || {};
-    const bars = [], ma5 = [], ma10 = [];
+    // 每天一个平均（只对有气温的小时求平均，"今天的平均"就是今天的口径）
+    const byDay = {};
     pts.forEach(pt => {
-      const ds = String(pt.t).slice(0, 10), i = idx[ds];
-      const b = i == null ? null : d.daily[i];
-      // ⚠ 直接放**那一根日K本身**，不要另拼一个 {o,h,l,c} 的小对象 ——
-      //   温差口径取的是 b.range（不是现场算 h−l），少拷一个字段柱子就全长不出来，
-      //   而且不报错（ECharts 拿到 value=undefined 就是一根空柱）。
-      // 取不到那天的日K就占个位（h/l 为空 → 那一段自然空着）。
-      bars.push(b || { d: ds, o: null, h: null, l: null, c: null, range: null });
-      ma5.push(i == null ? null : ((ind.volMa5 || [])[i]));
-      ma10.push(i == null ? null : ((ind.volMa10 || [])[i]));
+      const ds = String(pt.t).slice(0, 10);
+      (byDay[ds] = byDay[ds] || []).push(pt.p);
+    });
+    const avg = {};
+    Object.keys(byDay).forEach(ds => {
+      const a = byDay[ds].filter(v => v != null);
+      avg[ds] = a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
+    });
+    let prev = null;
+    const bars = pts.map(pt => {
+      const ds = String(pt.t).slice(0, 10);
+      const v = (pt.p == null || avg[ds] == null) ? null : +(pt.p - avg[ds]).toFixed(2);
+      // o 用**上一小时**的偏离值：柱子颜色于是表示"比上一小时更暖（红）/ 更冷（绿）"，
+      // 跟主图蜡烛"红=升温"的习惯一致。
+      const b = { d: String(pt.t).slice(5, 16).replace('T', ' '), o: prev == null ? v : prev, c: v, dev: v };
+      prev = v;
+      return b;
     });
     Chart.renderSub({
-      indName: 'vol', bars: bars, ind: { volMa5: ma5, volMa10: ma10 },
-      cats: pts.map(x => x.t), metric: S.metric, period: S.period
+      indName: 'vol', bars: bars, ind: {}, cats: pts.map(x => x.t),
+      metric: 'dev', period: S.period
     });
   }
 

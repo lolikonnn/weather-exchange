@@ -9,7 +9,11 @@
     range: { label: '日内温差', unit: '℃', get: b => b.range },
     precip: { label: '降水量', unit: 'mm', get: b => b.v },
     wind: { label: '平均风速', unit: 'm/s', get: b => b.windAvg },
-    humid: { label: '平均湿度', unit: '%', get: b => b.humAvg }
+    humid: { label: '平均湿度', unit: '%', get: b => b.humAvg },
+    /* 逐小时那两档（分时 / 7日）的「温差」用的口径：这一小时的气温比**当天平均**冷暖多少。
+       为什么不用 range：日内温差是"每天"的量，一天一个数，摊到 24 个小时上就是一条平线
+       （分时档下整幅图只有一根柱子，等于没信息）。见 app.js 的 renderVolSub。 */
+    dev: { label: '较当日均温', unit: '℃', get: b => b.dev }
   };
 
   /** 简单均线：窗口内**非空值**的平均，前 n−1 个是 null。
@@ -610,6 +614,8 @@
         { name: 'MA5', type: 'line', data: ind.volMa5, showSymbol: false, lineStyle: { width: 1, color: C.ma[1] }, itemStyle: { color: C.ma[1] } },
         { name: 'MA10', type: 'line', data: ind.volMa10, showSymbol: false, lineStyle: { width: 1, color: C.ma[2] }, itemStyle: { color: C.ma[2] } }
       ];
+      // 「较当日均温」是围绕 0 上下摆的，没有一条 0 基线就看不出"偏暖还是偏冷"
+      if (S.metric === 'dev') baseOpt.series.push(refLine([0]));
     } else if (S.indName === 'macd') {
       baseOpt.series = [
         {
