@@ -85,7 +85,7 @@
       animation: false,
       grid: { left: L, right: R, top: 16, bottom: 26, containLabel: false },
       tooltip: {
-        trigger: 'axis', axisPointer: { type: 'cross', label: { backgroundColor: '#39404e' } },
+        trigger: 'axis', confine: true, axisPointer: { type: 'cross', label: { backgroundColor: '#39404e' } },
         backgroundColor: '#161a22', borderColor: '#2b323d',
         textStyle: { color: '#e9edf4', fontSize: 11 }
       },
@@ -770,6 +770,7 @@
       animation: false,
       backgroundColor: 'transparent',
       tooltip: {
+        confine: true,
         backgroundColor: '#161a22', borderColor: '#2b323d', textStyle: { color: '#e9edf4', fontSize: 11 },
         formatter: p => {
           const d = p.data || {};

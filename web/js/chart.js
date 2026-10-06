@@ -44,6 +44,13 @@
     if (dn) C.down = dn;
     if (fl) C.flat = fl;
     if (accent) C.avg = C.dea = C.d = accent;
+    // 窄屏（手机竖屏）上 K 线 tooltip 有十几行、能到 215px 高，比主图容器本身
+    // （窄屏 min-height 只有 170px）还高。confine 只能把它按在容器左上角，
+    // 仍然会冒出去一截。所以跟着屏幕宽度把字号和内边距收紧，让它尽量塞得下。
+    const narrow = global.innerWidth <= 660;
+    tooltipBase.padding = narrow ? [4, 7] : [7, 10];
+    tooltipBase.textStyle.fontSize = narrow ? 11 : 12;
+    tooltipBase.extraCssText = narrow ? 'line-height:1.35;' : '';
   }
 
   /** 给主题色套一个透明度，用于面积渐变。
@@ -67,6 +74,10 @@
 
   const tooltipBase = {
     trigger: 'axis',
+    // 必须 confine —— ECharts 默认允许 tooltip 画到容器外面。手机竖屏时主图很窄，
+    // 触发点靠左就会算出负的 left，整个信息框被屏幕边缘切掉一截（用户报的
+    // "信息窗格在某些位置会被遮挡无法看到全貌"）。confine 把它按在容器内。
+    confine: true,
     backgroundColor: 'rgba(24,28,36,.96)',
     borderColor: '#3a4252',
     borderWidth: 1,
@@ -84,6 +95,41 @@
     const c = echarts.init(el, null, { renderer: 'canvas' });
     c.group = 'tjs';
     return c;
+  }
+
+  /** 让 ECharts 跟着容器尺寸走。
+      只挂 window.resize 不够 —— 安卓 APP 启动时系统栏的 inset 是在 WebView
+      建好之后才补到根布局上的，容器会"先高后矮"，而页面不一定收到 window.resize。
+      于是 ECharts 一直按旧高度画，画布就溢出到下面副图的页签行上（用户报的
+      "主图曲线溢出到副图选单"）。
+      这里三管齐下：ResizeObserver + 启动后头几秒轮询对账 + init 里的 window.resize。
+      为什么不能只靠 ResizeObserver：headless Chrome 里实测它压根不派发 —— 自己建
+      一个 observer 盯着一个尺寸确实变了的容器，触发 0 次。手机端应该没问题，但
+      既然验证不了，就不能把正确性押在它身上。
+      容器被隐藏时 rect 是 0，这时候绝不能 resize —— 会把 ECharts 设成 0×0，
+      再显示回来就是一片空白（app.js 里那几处 setTimeout resize 就是为这个加的）。 */
+  function follow(el, get) {
+    let last = '';
+    const apply = () => {
+      const c = get();
+      if (!c) return;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const key = Math.round(r.width) + 'x' + Math.round(r.height);
+      if (key === last) return;
+      last = key;
+      c.resize();
+    };
+    if (global.ResizeObserver) {
+      const ro = new ResizeObserver(U.debounce(apply, 60));
+      ro.observe(el);
+    }
+    // 启动后头 4 秒每 250ms 对一次账，之后交给上面那些事件
+    const t0 = Date.now();
+    const tm = setInterval(() => {
+      if (Date.now() - t0 > 4000) { clearInterval(tm); return; }
+      apply();
+    }, 250);
   }
 
   let main = null, sub = null;
@@ -420,7 +466,9 @@
       h += row('低', fx(b.l, 1) + ' ℃', C.down);
       h += row('收', fx(b.c, 1) + ' ℃', U.trendColor(chg));
       h += row('涨跌', sgn(chg, 1) + ' ℃ ' + sgn(pct, 2) + '%', U.trendColor(chg));
-      h += row('振幅', fx(b.h - b.l, 1) + ' ℃', C.labelHi);
+      // 副图口径选的是「日内温差」时，振幅跟它算出来是同一个数（都是 最高-最低），
+      // 显示两遍没意义。窄屏上少一行，tooltip 也更容易整个塞进主图。
+      if (metric.label !== '日内温差') h += row('振幅', fx(b.h - b.l, 1) + ' ℃', C.labelHi);
       h += row(metric.label, fx(metric.get(b), metric.unit === '%' ? 0 : 1) + metric.unit, '#4fc3f7');
       if (S.ov && S.ov.byKey) {
         const v = S.ov.byKey[b.d];
@@ -584,6 +632,8 @@
       sub = mkChart(subEl);
       echarts.connect('tjs');
       window.addEventListener('resize', U.debounce(() => { main.resize(); sub.resize(); }, 120));
+      follow(mainEl, () => main);
+      follow(subEl, () => sub);
       return this;
     },
     setTheme() { readTheme(); },
