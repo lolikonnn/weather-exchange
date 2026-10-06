@@ -1688,3 +1688,36 @@ CSS 动画会被打回开头，看起来像一直在跳。用一个签名（`城
 会抛 `ReferenceError`，被当成 unhandledrejection 显示在页面状态条上（`⚠ Promise: $ is not defined`），
 而且那个 `while` 循环会**立刻中断** —— 于是截图拍在开机中间，画面是错位的、看着像布局坏了。
 排查了半天才发现是探针自己的错。**探针里一律用 `document.getElementById` / `document.querySelector`。**
+
+## 开机时的两个异步任务，谁先到不一定
+
+「当前所在地」那一格修完之后用户又发了一次同样的截图，于是找到**第三处**缺陷（前两处见上一节）。
+复现的办法是把 `tjs.geo` 写进 localStorage **再 reload 一次**（让开机流程自己去读，
+而不是在探针里手动调 `applyGeo`）—— 结果那一格是好的：
+
+```
+price="22.4" color=rgb(255,77,79) | pct="+0.31%" class=sw-pct p-up
+```
+
+说明**开机路径**没问题，用户八成看到的是浏览器缓存的旧 `app.js`
+（GitHub Pages 给静态资源的 `Cache-Control` 是 10 分钟）。
+
+但顺手发现 `applyGeo()` 里这条是错的：
+
+```js
+renderGeo(); renderWatchlist();
+if (S.cur && S.cur.id !== LOC_ID) warmQuotes();   // ← 开机时 S.cur 很可能还没准备好
+```
+
+开机时 `initGeo()` 和 `selectCity()` 是**并行**的两个 Promise，定位比首次加载先回来完全正常。
+这时候 `S.cur` 还是 `undefined`，整条 `if` 直接被跳过 —— 而报价的下一次机会是**默认 15 分钟**后的轮询。
+表现就是那一格挂着灰 `--` 等一刻钟。改成：
+
+```js
+if (S.cur && S.cur.id !== LOC_ID) warmQuotes();
+else if (S.geo) warmQuotes();
+```
+
+一句话：**"把数据准备好"和"界面准备好没有"是两件事，后者不该挡住前者。**
+凡是 `if (某个异步任务的结果) { 做正事 }` 的写法，都要问一句：这个条件只是"顺路省一次请求"，
+还是**错了就永远不做**？后者必须有个兜底分支。
