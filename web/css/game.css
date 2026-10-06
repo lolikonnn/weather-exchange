@@ -384,6 +384,16 @@
 .gg-card .gg-btns { margin-top: 16px; }
 .gg-card .gg-btns button { padding: 12px 0; }
 
+/* 结局的"收场白" —— 只在两个明确的结局上出现（爆仓 / 冲到好档位），
+   中间那些不痛不痒的结果不加：多一句反而把"这次到底算好还是不好"搅浑了。
+   和上面那条 .dim 评语隔开一道虚线，让它是"最后一句"。 */
+.gg-card .gg-finale {
+  margin: 10px 0 2px; padding-top: 9px; font-size: 13px; line-height: 1.7;
+  border-top: 1px dashed var(--line, #262b36);
+}
+.gg-card .gg-finale.bad  { color: #ff8f91; }
+.gg-card .gg-finale.good { color: #ffd666; }
+
 /* 开场说明里的规则条目 */
 .gg-rules { text-align: left; font-size: 12.5px; line-height: 1.85; color: #c8cdd8; margin: 14px 0; }
 .gg-rules li { margin: 3px 0; }
