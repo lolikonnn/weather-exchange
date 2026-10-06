@@ -319,6 +319,12 @@
           <div class="gg-lab" style="margin-top:11px"><span>成交记录</span><b id="ggTrades">0 笔</b></div>
           <div class="gg-fills" id="ggFills"><div class="gg-empty">还没下过单</div></div>
 
+          <!-- 多维压力表：把"天气好坏"拆成六个维度，各自给出当前值、近 7 天分位、
+               方向和**对指数贡献多少点**。最后一行合计 === 指数的舒适度，
+               所以它不是在讲故事，而是指数的另一种读法。 -->
+          <div class="gg-lab" style="margin-top:11px"><span>天气压力表</span><b id="ggPxTip">各维贡献</b></div>
+          <div class="gg-press" id="ggPress"></div>
+
           <!-- 天气日历：只告诉你什么时候变天，不说往哪边 —— 跟财经日历一个道理，
                你知道 20:30 有非农，但不知道数据是好是坏。 -->
           <div class="gg-lab" style="margin-top:11px"><span>天气日历</span><b id="ggCalTip">未来 24 小时</b></div>
@@ -338,10 +344,11 @@
 
           <div class="gg-lab" style="margin-top:11px"><span>行情速度</span><b id="ggSpeedTip"></b></div>
           <div class="gg-seg" id="ggSpeed">
-            <button data-sp="0">慢 15</button>
-            <button data-sp="1">悠闲 22</button>
-            <button data-sp="2">正常 45</button>
-            <button data-sp="3">狂暴 90</button>
+            <button data-sp="0">实时</button>
+            <button data-sp="1">慢</button>
+            <button data-sp="2">悠闲</button>
+            <button data-sp="3">正常</button>
+            <button data-sp="4">狂暴</button>
           </div>
 
           <p class="gg-hint">

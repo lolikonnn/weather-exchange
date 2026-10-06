@@ -147,6 +147,36 @@
 .gg-fills .gg-f span:first-child { color: var(--dim, #8b919e); flex: none; }
 .gg-fills .gg-f span:last-child { font-family: 'SF Mono', Menlo, Consolas, monospace; }
 
+/* ───────── 多维压力表 ─────────
+   六行 = 六个天气维度。每行：名称 / 当前值 / 分位条 / 方向 / 对指数贡献。
+   分位条是这里的重点 —— "31.4℃"玩家没直觉，"近 7 天 88% 分位"立刻能懂
+   （和行情里的 RSI 88 是一回事）。 */
+.gg-press { padding: 2px 14px 8px; }
+.gg-press .gg-pr {
+  display: grid; grid-template-columns: 34px 62px 1fr 14px 54px;
+  gap: 6px; align-items: center; font-size: 11px; padding: 3px 0;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px dashed rgba(255, 255, 255, .05);
+}
+.gg-press .gg-pr > .n { color: var(--dim, #8b919e); }
+.gg-press .gg-pr > .v { font-family: 'SF Mono', Menlo, Consolas, monospace; }
+.gg-press .gg-pr > .v i { font-style: normal; color: var(--dim, #8b919e); font-size: 9.5px; margin-left: 1px; }
+/* 分位条：一条 0~100% 的底槽 + 当前位置的填充 + 50% 处的中位刻度 */
+.gg-press .gg-bar {
+  position: relative; height: 5px; border-radius: 3px;
+  background: rgba(255, 255, 255, .07); overflow: hidden;
+}
+.gg-press .gg-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+.gg-press .gg-bar::after {
+  content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px;
+  background: rgba(255, 255, 255, .22);
+}
+.gg-press .gg-pr > .d { text-align: center; font-size: 10px; }
+.gg-press .gg-pr > .c { text-align: right; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+.gg-press .gg-pr.sum { border-bottom: none; margin-top: 2px; padding-top: 5px; border-top: 1px solid rgba(255, 255, 255, .10); }
+.gg-press .gg-pr.sum > .n { grid-column: 1 / 5; }
+.gg-press .gg-pr.sum > .c { grid-column: 5; }
+
 /* ───────── 挂单 ───────── */
 .gg-ord-in { display: flex; gap: 8px; padding: 6px 14px 0; }
 .gg-inp {

@@ -51,6 +51,122 @@
   'use strict';
   const { $, el, storeGet, storeSet, toast } = U;
 
+  /* ═══════════════ 可标定系数表 ═══════════════
+     把"手感系数"全部收进一个对象，只为了能**成批扫参**（tools/calibrate_game.js）。
+     以前它们是一堆散落的 const，标定时只能一个一个手工改、还要改回来。
+
+     真实基准（欧易 9 个对 × 365 天 × 15 分钟，tools/analyze_crypto.py）：
+       BTC 单根 |涨跌| 中位 0.0822% / WIF 0.2541% → 梯度 3.09×
+       15 分钟自相关 ≈ 0.02（几乎无记忆）
+     这些数就是"该调到多少"的靶子，不再是拍脑袋。 */
+  const P = {
+    /* ═══════ 以下系数是用真实交易所数据标定的，不是拍的 ═══════
+       方法：tools/fetch_crypto.py 下欧易 9 个对 × 365 天 × 15 分钟
+             → tools/shape_check.js 量真实分布形状 → tools/tune_shape.js 搜参。
+       靶子（真实 BTC 0.0994% → WIF 0.2541%）：中位 0.1848%、p90/中位 3.35、
+             p99/中位 8.30、城市梯度 2.56×。
+
+       ✅ 已对上：**水平**（中位 0.1840% vs 0.1848%）与**城市梯度**（2.02× vs 2.56×）。
+       ❌ 对不上、而且**结构性做不到**：中等波动偏多、极端波动偏少
+             （p90 6.62 vs 3.35，p99 19.35 vs 8.30）。
+             原因是本模型 = 大量独立随机项叠加 → 中心极限定理把分布推向"厚腰薄尾"；
+             真实行情是反过来的"薄腰厚尾"（长时间极静 + 偶发暴动）。
+             要真正对上得换成"平时几乎不动、偶发跳变"的生成机制 ——
+             那是重写价格模型，不是调参。详见 docs/NOTES.md。 */
+    JUMP_AT: 1.8,      // |Δsev| 超过它才算"剧烈变化"。实测调到 1.8 以上**完全无影响**
+                       // （真实天气 15 分钟内的 |Δsev| 极少超过 1.8）→ 这一项基本空转
+    TREND_K: 8,       // 趋势分量放大倍数。反推自真实梯度：要拿到 2.56× 的城市梯度，
+                       // 趋势的方差占比不能超过约 14% —— 趋势是所有城市共用的慢分量，
+                       // 它占比一高，大小城市的差别就被抹平（原值 50 时梯度只有 1.5×）
+    EMA_A: 0.05,       // 趋势 EMA 系数（半衰期约 14 根 = 3.5 小时）
+    NOISE_K: 13.308,   // 快分量放大倍数
+    NOISE_A: 0.45,     // 快分量 EMA 系数（越小越"成段"）
+    NOISE_BOOST: 1.42, // 补回 EMA 削掉的方差
+    MICRO_K: 1.247,    // 微观毛刺振幅
+    MICRO_DECAY: 0.68,
+    JUMP_K: 28.279,     // 超出部分折算成冲击点数
+    JUMP_DECAY: 0.78,  // 余波衰减
+    REG_K: 4.99,      // 区域大盘带动
+    DEW_K: 4.159,      // 露点（湿热）项
+    DISH_K: 2.495,     // 盘子扰动基准振幅（再乘 cityAmp）
+    DISH_DECAY: 0.96,
+    AIR_K: 4.99,      // 空气质量慢变量偏置
+    QUAKE_K: 9.981,   // 地震：每高出 M0 一级、按距离衰减后的冲击点数
+    TYPHOON_K: 33.269, // 台风：风速/30 × 距离衰减后的冲击点数
+    FCST_K: 1.663,     // 预报偏离系数
+    CITY_AMP_A: 0.19,  // 城市 → 波动放大倍数的幂次（见 cityAmp）
+    CITY_K: 0.8389,     // 归一常数：让 dishScale = 1.0（地级市）那档的 cityAmp = 1.0
+    /* ── 天气 → 指数（这两项决定"指数在说什么"）──
+       COMFORT_K：舒适度每高出中位 1 分，指数高多少点。
+                  基本面 anchor = BASE + (慢速 comfort − 中位) × COMFORT_K。
+                  靶子是最常见那批波动的幅度（真实中位绝对涨跌 0.1848%），
+                  见 tools/calibrate_comfort.js。
+       REVERT   ：每根 K 线把价格往 anchor 拉回的比例（均值回归）。
+                  没有它就是随机游走：方差随时间无限增长，一局跑到后面会飘离 1000，
+                  "指数 1000 = 天气一般"这个语义就没了。
+                  ⚠ 它和 COMFORT_K 是一对：REVERT 越小价格越"黏"在基本面上、
+                    天气对指数的主导权越大；越大则越像纯噪声。
+                      0.02 → 半衰期约 34 根（8.6 小时）
+                      0.05 → 半衰期约 14 根（3.5 小时） */
+    COMFORT_K: 8,
+    /* NOISE_AMP：所有随机项的**总幅度**旋钮。单独拎出来是为了让标定脚本
+       能一次调平波动水平，而不用去改 NOISE_K/DISH_K/... 十来个系数
+       （那些系数的**相对比例**才是各自的分工，总音量应该只有一个旋钮）。 */
+    NOISE_AMP: 0.35,
+    /* NOISE_REVERT：噪声通道（快通道）的回归强度。越大噪声衰减越快、盘面越"毛"。
+       它和 REVERT 分工不同：REVERT 管长期钉住基本面，它管短周期的抖动。
+       ⚠ 这一对是标定出来的**关键**：单通道时 lag-1 自相关锁死在 0.84
+         （怎么调另外两个旋钮都没用），加上快通道后降到 0.40。详见 docs/NOTES.md。 */
+    /* ── 事件驱动架构的三个旋钮 ──
+       INERTIA      ：冲击的衰减速率（每根衰减这个比例）。半衰期 ≈ ln2/INERTIA。
+                      这是**自相关的直接控制**：衰减快 → 冲击互不重叠 → 自相关 ≈ 0。
+       FLOW_RATE    ：每根 K 线的基准事件到达数。真实 15 分钟大概就是 1~2 笔。
+       EVENT_K      ：单笔事件的平均冲击幅度（价格的千分比）。
+       FLOW_DECAY   ：自激强度的记忆（波动聚集的来源）。 */
+    INERTIA: 0.92,
+    FLOW_RATE: 1.2,
+    EVENT_K: 0.0003,
+    FLOW_DECAY: 0.9,
+    /* ── 插针（流动性被吃穿）──
+       真实币圈最显眼的形态之一：一根长针打出去、立刻缩回，实体很小。
+       原来影线写死成 `|涨跌| × WICK_K`，是**确定性**关系 —— 大实体必然大影线，
+       根本做不出"小实体长针"。
+
+         SPIKE_P     ：每根 K 线的基础触发概率（还会乘天气活跃度）
+         SPIKE_DEPTH ：插针深度 = 价格 × 这个比例；实际再除以 dishScale(城市)
+                       —— 小城市盘子薄、同样的扫单打得更深
+
+       ⚠ 幅度**必须按价格绝对水平算，不能跟 body 挂钩**。我第一版用 `max(body, ·)`
+         当基准，结果 body 一大针就爆（body 的 p99 有 32 点、max 90 点），
+         实测出现 2223 点的影线，整根 K 线糊成一条竖线。
+         真实插针是"价格被打下去几个百分点"，与当根实体多大无关。
+
+       ⚠ 插针**只在 pickSeries 里生成一次**（立靶子），动画只许读不许自己算 ——
+         让 liveAt() 现算的话每次读都重掷骰子，同一根蜡烛前后看到的针不一样。
+
+       ⚠ 只改影线、不改收盘，所以不动已经标定好的收益分布。 */
+    SPIKE_P: 0.00012,
+    SPIKE_DEPTH: 0.045,
+    /* BRIDGE_K：分钟级"布朗桥"的步长（相对父根振幅）。
+       控制 1 分钟 / 5 分钟档**内部来回的幅度**。
+       太小 → 又是直线（真实盘面里 1 分钟不可能是直线）；
+       太大 → 分钟级的振幅超过它所属的 15 分钟，聚合回去就不像话了。
+       桥的方差是 t(1−t) 形状，两头小中间大，所以这个值可以给得比"均匀摆动"更大些。 */
+    BRIDGE_K: 1.6,
+    /* BRIDGE_RHO：分钟级路径的**动量**（AR(1) 系数）。
+       0 = 每步独立（画出来是锯齿，不像行情）；越大越"成段"。
+       0.55 大约连走 2~3 根同向，接近真实分钟线的样子。 */
+    BRIDGE_RHO: 0.55,
+    /* ── 混沌跳跃（肥尾的来源）──
+       真实 15 分钟单根最大 BTC 4.2% / WIF 38%、峰度 16~833；
+       本模型原来只有 max 5.8%、峰度 5~13。这条通道补的就是这个尾巴。
+         CHAOS_P  ：基础触发概率（还会乘平静度与热度）
+         CHAOS_K  ：跳跃幅度（价格的千分比）
+       它**不进快通道**（不被 NOISE_REVERT 回拉），否则尾巴又会被压平。 */
+    CHAOS_P: 0.0004,
+    CHAOS_K: 0.0035
+  };
+
   /* ═══════════════ 合约与规则 ═══════════════ */
   // 本金可以在开场卡片里改，而且**真的会改变难度**（见 cashTip 的注释）：
   // 手续费有 5 元保底、滑点随名义金额上涨、小城市盘子更小。
@@ -82,28 +198,24 @@
   const CAP_BASE   = 3000000;
   const MAINTAIN   = 0.10;     // 维持保证金率：权益 ≤ 占用保证金 × 10% 就强平
   const BASE       = 1000;     // 指数基准
-  const TREND_K    = 50;       // 趋势分量放大倍数
-  const NOISE_K    = 16;       // 快分量放大倍数
+  /* 手感系数全部走 P.xxx 现取（不设 const 别名）。
+     ⚠ 这里踩过两次坑，都是"标定脚本改了 P 但结果一动不动"：
+       ① `const NOISE_K = P.NOISE_K` —— 加载时快照；
+       ② 改用 `Object.defineProperty` 包一层再 `return o[k]` —— 读一次仍然是快照。
+       浏览器里没有构建步骤，想在运行时改系数就只能**每次引用 P 本身**。
+       所以下面代码里凡是原来的 NOISE_K / JUMP_K / … 一律写成 P.NOISE_K / P.JUMP_K。 */
   /* ── 让走势像真的股票，而不是一串独立的随机点 ──
      真实的分钟级行情有个很显眼的特征：**相邻两根是相关的**（lag-1 自相关 0.2~0.5），
      所以看起来是"一段一段地推"，而不是每根各走各的。原来的快分量是
-     (sev − tr) × NOISE_K，sev 本身已经比较连续，但两根之间还是偏独立，
+     (sev − tr) × P.NOISE_K，sev 本身已经比较连续，但两根之间还是偏独立，
      盘面上就显得"生硬"。这里加两层：
-       ① NOISE_A：把快分量本身过一道轻 EMA（越小越平滑、越有趋势感），
-          再用 NOISE_BOOST 补回被 EMA 削掉的方差，保证整体波动幅度不变；
+       ① P.NOISE_A：把快分量本身过一道轻 EMA（越小越平滑、越有趋势感），
+          再用 P.NOISE_BOOST 补回被 EMA 削掉的方差，保证整体波动幅度不变；
        ② 微观游走 micro：一个衰减的 AR(1)，给出真实盘口那种细细的毛刺。
      这些系数是拿真实 minutely_15 跑探针量出来的（见 docs/NOTES.md）。 */
-  const NOISE_A    = 0.45;
-  const NOISE_BOOST = 1.42;
-  const MICRO_K    = 1.5;
-  const MICRO_DECAY = 0.68;
-  const EMA_A      = 0.05;     // 趋势 EMA 系数（半衰期约 14 根 = 3.5 小时）
   const WICK_K     = 0.30;     // 影线 = |本根涨跌| × 这个系数
-  // 突发行情：单根 15 分钟里 severity 变化超过 JUMP_AT 个稳健标准差才算"剧烈变化"，
-  // 超出的部分乘 JUMP_K 变成冲击，再按 JUMP_DECAY 衰减出余波（见 pickSeries）。
-  const JUMP_AT    = 0.9;
-  const JUMP_K     = 34;
-  const JUMP_DECAY = 0.78;
+  // 突发行情：单根 15 分钟里 severity 变化超过 P.JUMP_AT 个稳健标准差才算"剧烈变化"，
+  // 超出的部分乘 P.JUMP_K 变成冲击，再按 P.JUMP_DECAY 衰减出余波（见 pickSeries）。
   /* 一局的结构 = **预热 + 交易**。
      群里那位说得对：真实的行情软件打开就是一条已经走了很久的连续 K 线，不会从空白开始长。
      所以进来先白送 1 周（7 天）历史（画在图上、已经走完，你只能看不能交易），
@@ -126,9 +238,57 @@
      四档对应一局约 48 / 32.7 / 16 / 8 分钟（可以随时暂停，也可以直接平仓结算）。
      每根 K 线多长时间由 BAR_MIN 决定，所以「每秒几根 K 线」= 这个数 ÷ 周期分钟数，
      1 分钟档 + 狂暴档能到 90 根/秒 —— 那是画不过来的，所以主循环按 TICK_HZ 批处理。 */
-  const SPEEDS     = [15, 22, 45, 90];
-  const SPEED_N    = ['慢', '悠闲', '正常', '狂暴'];
-  const TICK_HZ    = 10;       // 重绘频率上限（Hz）；一次 tick 可以推进多根 K 线
+  /* 速度档：每真实秒推进多少**分钟天气**。
+     TICK_HZ=4 时，每次更新的推进量 = SPEEDS/4 分钟，所以:
+       SPEEDS=15  → 每次推 3.75 分钟 = 0.25 格（最细）
+       SPEEDS=60  → 每次推 15  分钟 = 1.00 格（**刚好一格一次**，默认）
+       SPEEDS=120 → 每次推 30  分钟 = 2.00 格（开始跳格）
+       SPEEDS=240 → 每次推 60  分钟 = 4.00 格（明显跳格） */
+  const SPEEDS     = [15, 30, 60, 120, 240];
+  const SPEED_N    = ['实时', '慢', '悠闲', '正常', '狂暴'];
+
+  /* ── 时间流速：整个游戏只有这一个时间轴，**与 K 线档位无关** ──
+     这是核心不变量，写在这里免得以后再搞错：
+
+         G.acc += (SPEEDS[speed] / barMin()) / TICK_HZ
+
+     G.acc 是"当前这根 K 线的进度"，乘上 barMin() 就是**推进的天气时间**
+     = SPEEDS[speed] 分钟/秒 —— **式子里没有档位**。所以切换 1 分/1 时/1 日
+     只是换了一把尺子去看**同一条时间轴**，时间流速一点不变。
+     档位改变的是"一根 K 线代表多少天气时间"，不是"天气走多快"。
+
+     由此推出各档位一根 K 线的墙钟时长 = **barMin / SPEEDS**（用哪个 SPEEDS 档看下表）：
+
+     | 档 | SPEEDS | 一格 15 分钟 | 1 日一根 | 一局 30 天 |
+     |---|---|---|---|---|
+     | 实时 | 15 | 1.00 s | 96.0 s | 48.0 min |
+     | 慢 | 30 | 0.50 s | 48.0 s | 24.0 min |
+     | **悠闲（默认）** | **60** | **0.25 s** | **24.0 s** | **12.0 min** |
+     | 正常 | 120 | 0.13 s | 12.0 s | 6.0 min |
+     | 狂暴 | 240 | 0.06 s | 6.0 s | 3.0 min |
+
+     ⚠ 单位是「每真实秒推进多少**分钟**天气」，不是「每秒几根 K 线」。
+       写成后者就会变成"档位越粗越快"，那是错的（时间流速会跟着档位变）。
+     ⚠ 一局 30 天是固定的（预热 7 天 + 交易 30 天），所以一局长度 = 一局分钟数 ÷ SPEEDS。
+       想看清粗档位就得接受一局长；想一局短，粗档位就会闪过去。这是同一个旋钮。
+     ⚠ 默认选 60（不是最快也不是最慢），因为它让 **TICK_HZ=4 时每次更新正好推进一格**
+       —— "一秒变 4 次"和"一格一变"在这档上重合，看着最像真实行情推送。 */
+  /* ── 重绘频率：一秒变几次 ──
+     **这是独立于时间流速的一条规则。** 它和 SPEEDS 各管一件事：
+
+         SPEEDS  → 天气时间走多快（一格 15 分钟花几秒）
+         TICK_HZ → 一秒重建几次画面（candle 一秒变几次）
+
+     两者通过推进量解耦：
+         G.acc += (SPEEDS[G.speedIdx] / barMin()) / TICK_HZ
+     `u` 的推进速率 = SPEEDS×60/barMin（次/秒，与 TICK_HZ 无关），
+     所以**改 TICK_HZ 只改"多久采一次样"，不改"天气走多快"**，一局时长不变。
+
+     ⚠ 这个解耦是被用户点出来的，前面几轮一直没意识到：
+       用户要的是"无论怎么调时间流速，都是 1 秒变 4 次"。
+       原来的 30 Hz 并不是"一秒变 30 次" —— 价格每 tick 都在动，
+       所以它其实是"看得太连续"，反而不像行情推送。4 Hz 才像一个真的报价流。 */
+  const TICK_HZ    = 4;
   function perDay()    { return 1440 / BAR_MIN[G.barIdx]; }           // 一天几根
   function warmBars()  { return WARM_DAYS * perDay(); }               // 预热段几根
   function tradeBars() { return TRADE_DAYS * perDay(); }              // 交易段几根
@@ -147,10 +307,7 @@
        盘子项  dish **建模**：带衰减的随机游走，小地方振幅更大（见 cityWeight）
      每一项都是"那一项的异常值 × 一个系数"，异常值用中位数对齐，所以叠加后
      基准仍然是 BASE = 1000。 */
-  const REG_K      = 6;        // 区域大盘带动
-  const DEW_K      = 5;        // 露点（湿热）项
-  const DISH_K     = 3;        // 盘子扰动的基准振幅（再乘 cityWeight 得到的倍率）
-  const DISH_DECAY = 0.96;     // 盘子扰动衰减（半衰期约 17 根 ≈ 4 小时）
+
 
   /* ── 四个「真数据」压力源：空气质量 / 地震 / 台风 / 预报偏离 ──
      这四个都是群里点名要的，而且**每一项都接了真实数据源**，没有一个是编的：
@@ -167,14 +324,10 @@
          正好是"利好出尽"，玩家追高就要吃余波的亏。
        · 任何一项取不到数据就整项退化成 0，**绝不编数据补位**。
      每一个新项都先做稳健标准化再乘系数，所以叠加后基准仍然是 BASE = 1000。 */
-  const AIR_K      = 6;        // ① 空气质量 PM2.5 的慢变量偏置（小时级，整局缓慢推着走）
   const QUAKE_M0   = 3.0;      // ② 低于这个震级不算压力（USGS 的查询下限也是 3.0）
-  const QUAKE_K    = 12;       //    每高出 M0 一级、按距离衰减后的冲击点数
   const QUAKE_R    = 700;      //    震中到这个公里数之外就不计入了（与 api.js 的查询半径一致）
   const QUAKE_DECAY = 0.90;    //    余波衰减（半衰期约 6.6 根 ≈ 1.7 小时）
   const TYPHOON_R  = 900;      // ③ 台风中心影响到这个公里数以内才计入
-  const TYPHOON_K  = 40;       //    风速/30 × 距离衰减后的冲击点数（台风是持续过程，不额外加余波）
-  const FCST_K     = 2;        // ④ 预报偏离系数（实测 − 预报，已做稳健标准化）
 
   /* 上面这几个系数是量出来的，不是拍的。标尺来自探针实测：
      单根中位涨跌约 2.7 点（0.266%）、整局（672 根）振幅约 250 点（25%）。
@@ -218,7 +371,7 @@
     avg: 0,           // 持仓均价（指数点）
     lev: 10,
     pct: 30,
-    speedIdx: 1,
+    speedIdx: 2,
     barIdx: 2,        // K 线周期档位下标（BAR_MIN / BAR_N），默认 15 分钟
     timer: null,
     acc: 0,           // 帧间小数累加器：每帧推进不足一根时的余量（见 tick）
@@ -232,6 +385,8 @@
     orderSeq: 0,
     sev: null,        // 本局的 severity 切片（天气日历要提前看"什么时候变天"）
     hist: [],
+    liveOn: false,    // live bar 当前是否会显示（图表已按它画过）—— 控制 10Hz 局部重绘
+    hoverIdx: null,   // 鼠标停在图表第几根上；非 null 时盘中重绘不抢左上角读数
     liqPrice: null,
     liqAt: 0,
     sound: true,
@@ -240,6 +395,20 @@
     seeds: null,      // 这一局的原始天气分量（做闪报用）
     lastNews: ''
   };
+
+  /* 标定开关：打开后 pickSeries 会把每一项分量记进 dbgComp（见 tools/analyze_crypto.py）。
+     平时为 false，行为与以前完全一致。 */
+  let DBG_COMP = false;
+
+  /* 插针倍率：只在调试时放大，用来**验收**插针。
+     正常每局才 1.4 次，刷新页面几十秒里很可能一次都碰不上 —— 那就没法验。
+     带上 `?spike=800` 之后每根 K 线都在打针，一眼能看到"影线远大于实体"的形态。 */
+  function spikeMul() {
+    try {
+      return /[?&]spike=(\d+)/.test(global.location.search)
+        ? Math.max(1, Math.min(5000, +RegExp.$1)) : 1;
+    } catch (e) { return 1; }
+  }
 
   const THEME = { up: '#ff4d4f', down: '#00b578', flat: '#8b919e', ac: '#ffb74d', line: '#262b36', dim: '#8b919e', fg: '#e6e9ef' };
   function readTheme() {
@@ -472,51 +641,200 @@
     return u.toISOString().slice(0, 16);
   }
 
+  /* 省会名单（含自治区首府）。**写死是故意的** —— 靠"市名以省名开头"去猜是猜不准的：
+     实测那条规则只命中 3 座（名字正好等于省名的），广州/杭州/成都/武汉 全漏，
+     于是 352 城里 305 座权重完全一样，"大城市稳、小城市野"这个梯度形同不存在。 */
+  const CAPITALS = {
+    '石家庄': 1, '太原': 1, '呼和浩特': 1, '沈阳': 1, '长春': 1, '哈尔滨': 1,
+    '南京': 1, '杭州': 1, '合肥': 1, '福州': 1, '南昌': 1, '济南': 1, '郑州': 1,
+    '武汉': 1, '长沙': 1, '广州': 1, '南宁': 1, '海口': 1, '成都': 1, '贵阳': 1,
+    '昆明': 1, '拉萨': 1, '西安': 1, '兰州': 1, '西宁': 1, '银川': 1, '乌鲁木齐': 1
+  };
+
   /**
-   * 这个城市有多"大"。用来定**盘子扰动**的振幅 —— 小地方筹码少，同样的资金进出
-   * 更容易把价格打飞，这就是"庄家操盘"的观感来源。
+   * 这个城市有多"大"。决定**盘子深浅**和**波动放大倍数**。
    *
-   * `cities.json` 里没有人口字段（只有 id/name/prov/py/lat/lon/cma/path），
-   * 所以按**行政层级**分档，而不是假装知道人口：
-   *   直辖市 3.0 / 省会 2.2 / 有国家站的地级市 1.6 / 有 path 的 1.2 / 区县 0.6
-   * 再取 `1.6 / w` 当振幅倍率，并夹到 [0.35, 2.6] 免得极端值飞出画面。
+   * 档位照着真实数据集的构成定（352 城实测 4 / 27 / 305 / 40 城）：
+   *   3.0 直辖市(4) ｜ 2.2 省会·首府(27) ｜ 1.6 有国家站的地级市(305) ｜ 0.6 其余(40)
+   *
+   * ⚠ 两个历史坑，都是量出来才发现的：
+   *   ① 老版本用「市名以省名开头」认省会 → 只命中 3 城，305 座城权重全等；
+   *   ② 还挂着一条 `if (c.path) return 1.2`，而 cities.json 里**每座城都有 path**，
+   *      所以那一档是死代码、一次都走不到（README 里"有 path 的 1.2"就是它）。
    */
   function cityWeight(c) {
     if (!c) return 1;
     const p = String(c.prov || ''), nm = String(c.name || '');
-    if (/^(北京市|上海市|天津市|重庆市)$/.test(p)) return 3.0;
-    const core = p.replace(/(省|市|自治区|壮族|回族|维吾尔|特别行政区|自治州)/g, '');
-    if (core && nm && (nm === core || nm.indexOf(core) === 0)) return 2.2;
-    if (c.cma) return 1.6;
-    if (c.path) return 1.2;
-    return 0.6;
+    if (/^(北京市|上海市|天津市|重庆市)$/.test(p)) return 3.0;   // 直辖市
+    if (CAPITALS[nm]) return 2.2;                               // 省会 / 自治区首府
+    if (c.cma) return 1.6;                                      // 有国家站的地级市
+    return 0.6;                                                 // 区县 / 没站的地方
   }
+  /** 盘子深浅：小地方容量小，同样的单子冲击更大（用于滑点、盘子扰动振幅） */
   function dishScale(c) {
     const w = cityWeight(c);
     return Math.max(0.35, Math.min(2.6, 1.6 / w));
   }
 
-  /** 把 minutely_15 的原始分量压成一条「天气恶劣度」序列 */
-  function severity(mn) {
-    const T = mn.temp.map(v => (v == null ? 0 : +v));
-    const Gs = mn.gust.map(v => (v == null ? 0 : +v));
-    const P = mn.precip.map(v => (v == null ? 0 : +v));
-    const C = mn.cape.map(v => (v == null ? 0 : +v));
-    const W = mn.wcode.map(v => (v == null ? 0 : +v));
-    const mC = median(C), sC = robustScale(C, mC);
-    const mG = median(Gs), sG = robustScale(Gs, mG);
-    const mT = median(T), sT = robustScale(T, mT);
-    const out = new Array(T.length);
-    for (let i = 0; i < T.length; i++) {
-      const wc = W[i];
-      // 雷暴码权重最大 —— 它代表"此时此刻头上正在放电"，比任何数值都硬
-      const storm = (wc === 95 || wc === 96 || wc === 99) ? 1.6
-        : (wc === 80 || wc === 81 || wc === 82 || wc === 65 || wc === 63) ? 0.5 : 0;
-      out[i] = (C[i] - mC) / sC * 1.00        // 对流有效位能
-        + (Gs[i] - mG) / sG * 0.55            // 阵风
-        + (T[i] - mT) / sT * 0.30             // 气温异常
-        + Math.min(4, Math.sqrt(P[i])) * 0.45 // 实况降水
-        + storm;
+  /* ── 城市 → 波动放大倍数 ──
+     这才是"大城市像主流币、小城市像山寨币"的**载体**。
+
+     真实基准（欧易 9 个对 × 365 天 × 15 分钟，tools/analyze_crypto.py 量的）：
+       最稳的 BTC  单根 |涨跌| 中位 0.0822%
+       最野的 WIF              中位 0.2541%
+       → 放大 **3.09×**：这是可以量的，不用拍。
+
+     而旧模型里**只有 dish 一项**受城市影响（它只占波动方差的 ~4%），
+     noise / carry / micro / 四个压力源全与城市无关 —— 实测梯度因此被稀释成 1.78×。
+     所以把 cityAmp 乘到**所有随机项**上，梯度才立得住。
+
+     两个系数是反推的，不是凑的：
+       ① 梯度目标 2.52×（BTC→WIF 的 3.09× 打八二折：游戏最小只到区县，
+          真实还有比 WIF 更小的币，留余量）
+       ② 中位那档（地级市，dishScale = 1.0）的 cityAmp 归一到 1.0
+     解得 P.CITY_AMP_A = ln(2.52)/ln(2.6/0.533) ≈ 0.577，P.CITY_K 再把水平拉回 1.0。 */
+  function cityAmp(c) {
+    return P.CITY_K * Math.pow(dishScale(c), P.CITY_AMP_A);
+  }
+
+  /* ── 舒适度的六个维度 ──
+     每个维度给出：**当前值**（人看得懂的物理量）、**得分**（0~100，这一段的好坏）、
+     **贡献**（它把指数推了多少点）。三者都留着，是为了多维压力表要显示
+     "现在多少 → 什么状态 → 推了指数多少"。
+
+     `contrib = 权重 × 得分`，而 comfort = Σ contrib —— **这一条是硬约束**，
+     面板上六行加起来必须**恰好等于**指数那边的舒适度，否则它就是装饰性数字。
+     所以 comfort() 只做求和，不再单独算一遍（两条路径共用一份计算，
+     不会出现"面板说的"和"指数走的"对不上）。 */
+  const DIMS = [
+    { key: 'temp',  nm: '气温',  unit: '℃',   w: 0.34, fmt: v => v.toFixed(1) },
+    { key: 'dew',   nm: '湿度',  unit: '℃',   w: 0.15, fmt: v => v.toFixed(1) },
+    { key: 'prec',  nm: '降水',  unit: 'mm',  w: 0.21, fmt: v => v.toFixed(2) },
+    { key: 'wcode', nm: '天气',  unit: '',    w: 0.20, fmt: v => WCODE_N[v | 0] || ('码 ' + (v | 0)) },
+    { key: 'gust',  nm: '阵风',  unit: 'km/h', w: 0.05, fmt: v => v.toFixed(0) },
+    { key: 'air',   nm: '空气',  unit: 'µg',  w: 0.05, fmt: v => v.toFixed(0) }
+  ];
+  const WCODE_N = {
+    0: '晴', 1: '基本晴', 2: '多云', 3: '阴', 45: '雾', 48: '雾凇',
+    51: '毛毛雨', 53: '毛毛雨', 55: '毛毛雨', 56: '冻毛雨', 57: '冻毛雨',
+    61: '小雨', 63: '中雨', 65: '大雨', 66: '冻雨', 67: '冻雨',
+    71: '小雪', 73: '中雪', 75: '大雪', 77: '米雪',
+    80: '阵雨', 81: '阵雨', 82: '强阵雨', 85: '阵雪', 86: '强阵雪',
+    95: '雷暴', 96: '雷暴夹雹', 99: '强雷暴'
+  };
+
+  /** 分段线性折线：points = [[x, y], ...]，x 必须递增；两端按端点值外推。
+   *  用连续折线而不是硬阈值 —— 硬阈值会让指数在阈值附近来回抖。 */
+  function ramp(x, pts) {
+    if (x == null || !isFinite(x)) return 0;
+    if (x <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (x <= pts[i][0]) {
+        const x0 = pts[i - 1][0], y0 = pts[i - 1][1], x1 = pts[i][0], y1 = pts[i][1];
+        return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+      }
+    }
+    return pts[pts.length - 1][1];
+  }
+
+  /**
+   * 逐维度的舒适度分解。返回长度 = 时间点数的数组，每项是：
+   *   { temp:{v,score,contrib}, dew:{...}, prec:{...}, wcode:{...}, gust:{...}, air:{...},
+   *     total }
+   * 其中 `total === Σ contrib`，就是 comfort 的值。
+   *
+   * @param mn  minutely_15 分量（temp/gust/precip/wcode/dew 数组）
+   * @param pm25 可选的 PM2.5 数组（按小时对齐后传入），缺了空气项就不参与
+   */
+  function comfortParts(mn, pm25) {
+    const n = mn.time.length;
+    const T = mn.temp, Gs = mn.gust, Pr = mn.precip, W = mn.wcode, Dw = mn.dew || [];
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const t = T[i] == null ? 24 : +T[i];
+      const g = Gs[i] == null ? 0 : +Gs[i];
+      const p = Pr[i] == null ? 0 : +Pr[i];
+      const wc = W[i] | 0;
+      const d = Dw[i] == null ? t - 8 : +Dw[i];          // 露点缺了就按"干爽"估
+
+      // 体感温度：22~27℃ 满分，往两边掉
+      const sT = ramp(t, [[-5, 0], [0, 10], [8, 40], [16, 80], [22, 100], [27, 100],
+                          [31, 70], [35, 35], [40, 0], [45, 0]]);
+      // 湿度：露点 <16 干爽，>24 闷得难受
+      const sD = ramp(d, [[0, 100], [10, 100], [16, 95], [20, 75], [24, 40], [27, 15], [30, 0]]);
+      // 降水：15 分钟累计。0.2mm 已是小雨，2mm 是暴雨级
+      const sP = ramp(p, [[0, 100], [0.05, 90], [0.3, 65], [0.8, 40], [2, 15], [5, 0], [20, 0]]);
+      // 天气码：0/1 晴、2/3 多云、45+ 雾、5x 毛毛雨、6x 雨、7x 雪、8x 阵雨、9x 雷暴
+      const sW = wc === 0 ? 100 : wc === 1 ? 95 : wc === 2 ? 85 : wc === 3 ? 78
+        : (wc === 45 || wc === 48) ? 55
+        : (wc === 51 || wc === 53 || wc === 55) ? 65
+        : (wc === 56 || wc === 57) ? 45
+        : (wc === 61 || wc === 63) ? 35 : (wc === 65) ? 10
+        : (wc === 66 || wc === 67) ? 8
+        : (wc === 71 || wc === 73 || wc === 75 || wc === 77) ? 25
+        : (wc === 80 || wc === 81) ? 40 : (wc === 82) ? 12
+        : (wc === 85 || wc === 86) ? 20
+        : (wc === 95) ? 6 : (wc === 96 || wc === 99) ? 0 : 60;
+      // 阵风：和风无感，超过 40km/h 开始碍事，80+ 有危险
+      const sG = ramp(g, [[0, 100], [15, 98], [25, 88], [40, 62], [60, 28], [80, 10], [110, 0]]);
+      // 空气：PM2.5 <35 优、75 以上差、150+ 重霾
+      const hasAir = !!(pm25 && pm25[i] != null);
+      const sA = hasAir
+        ? ramp(+pm25[i], [[0, 100], [15, 98], [35, 85], [55, 65], [75, 45], [110, 25], [150, 10], [250, 0]])
+        : 85;
+
+      const cT = 0.34 * sT, cD = 0.15 * sD, cP = 0.21 * sP;
+      const cW = 0.20 * sW, cG = 0.05 * sG, cA = 0.05 * sA;
+      out[i] = {
+        temp:  { v: t,  score: sT, contrib: cT },
+        dew:   { v: d,  score: sD, contrib: cD },
+        prec:  { v: p,  score: sP, contrib: cP },
+        wcode: { v: wc, score: sW, contrib: cW },
+        gust:  { v: g,  score: sG, contrib: cG },
+        air:   { v: hasAir ? +pm25[i] : null, score: sA, contrib: cA, missing: !hasAir },
+        total: cT + cD + cP + cW + cG + cA
+      };
+    }
+    return out;
+  }
+
+  /** ── 天气舒适度：这个标的的"基本面"──
+   *  指数在语义上就是**当地天气的好坏程度**，所以需要一个有绝对含义的标尺：
+   *
+   *      100 = 最舒服（温和、干爽、无雨、无雷暴、风小、空气干净）
+   *        0 = 最难受（极端气温、暴雨、雷暴、狂风、重霾）
+   *
+   *  ⚠ 这和原来的 severity() 是**两种东西**，别混：
+   *    · severity 是「对中位数的稳健标准差」→ **零中心的异常度**，只表达"偏离常态多少"，
+   *      晴天雨天都可能 +2 或 −2，**没有好坏方向**。原来的指数就是靠它驱动的。
+   *    · comfort 是**绝对好坏**（有方向的、非负的），好天气一定比坏天气高。
+   *    改成 comfort 之后指数才有语义：**指数高 = 天气好，指数低 = 天气差**。
+   *
+   *  ⚠ 这里**只做求和**，每个维度怎么算全在 comfortParts() 里 ——
+   *    多维压力表要和指数对得上，就不能存在第二套算法。
+   */
+  function comfort(mn, pm25) {
+    return comfortParts(mn, pm25).map(p => p.total);
+  }
+
+  /** 把 minutely_15 的原始分量压成一条「天气恶劣度」序列。
+   *  ⚠ 现在它是 **comfort 的负增量**：天气变差 → severity 上升 → 指数下跌。
+   *    这样"天气好坏"就有了方向，而下面价格模型里那些以 severity 为输入的项
+   *    （噪声、跳变触发）语义不变，不用全部重写。
+   *    保留原始定义（零中心异常度）的那部分仍然有用：它衡量"变化得有多剧烈"，
+   *    正适合拿来触发突发行情。 */
+  function severity(mn, pm25) {
+    const n = mn.time.length;
+    const cf = comfort(mn, pm25);
+    /* 用**滑动中位数**而不是整段中位数：整段中位数会把"这一段整体偏热"吃掉，
+       而滑动窗口保留慢变 —— 指数要能体现"这几天一直很闷"这种持续状态。 */
+    const W = 96;                       // 96 根 = 1 天
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = Math.max(0, i - W), b = Math.min(n, i + W + 1);
+      const seg = cf.slice(a, b).sort((x, y) => x - y);
+      const med = seg[seg.length >> 1];
+      out[i] = -(cf[i] - med) / 10;     // 除以 10：让量级和原来的异常度接近
     }
     return out;
   }
@@ -581,18 +899,40 @@
     o.quake = +(+o.quake).toFixed(2);
     o.typh = +(+o.typh).toFixed(2);
     o.qmag = +(+o.qmag || 0).toFixed(1);
+    /* 多维压力表那四样：**取这一组里最后一根**，不是平均。
+       面板显示的是"现在什么状态"，聚合档位下这一格代表的是这一段天气的**末端** ——
+       取平均会把"刚转雷暴"和"雷暴要结束了"糊成同一个中间态，反而看不出方向。 */
+    const last = g[g.length - 1];
+    o.cparts = last.cparts; o.ctotal = last.ctotal;
+    o.cpct = last.cpct; o.cdir = last.cdir;
     return o;
   }
 
   /** 把 15 分钟的基准序列重采样成玩家选的 K 线周期。
    *  **数据源只有 15 分钟**（Open-Meteo 的 minutely_15 就是最细的免费粒度了），所以：
    *    · 周期 ≥ 15 分钟 → **聚合**真数据（15 原样、30 并 2 根、45 并 3 根、60 并 4 根）
-   *    · 周期 <  15 分钟 → **插值展开**（1 分钟 = 1 根摊成 15 根、5 分钟 = 摊成 3 根）
-   *  聚合只是"看粗一点"，丢的是细节；展开则是**建模** —— 两根 15 分钟之间到底
-   *  怎么走的没人知道，所以收盘价沿父根的开→收线性走、叠一个确定性小锯齿，
-   *  影线按父根振幅的比例分下去。**1 分钟/5 分钟档上那些细碎波动是画出来的、不是采到的**，
-   *  README 里写明了。展开时最后一根强制收在父根收盘价上，所以把 1 分钟聚合回
-   *  15 分钟能和真数据逐点对上。 */
+   *    · 周期 <  15 分钟 → **布朗桥展开**（1 分钟 = 摊成 15 根、5 分钟 = 摊成 3 根）
+   *
+   *  ### 展开为什么用布朗桥
+   *  两根 15 分钟之间到底怎么走的，数据里没有 —— 这一段是**建模**的。
+   *  早先用的是"开→收线性走 + 每根叠一个确定性小锯齿"，两个毛病：
+   *    ① 锯齿幅度按父根振幅的固定比例分（`amp × 0.06`），所以**每根长得一样**，
+   *       看着像心电图而不像行情；
+   *    ② 最要命的：一条 15 分钟里直上直下时，15 根 1 分钟就是**一条直线** ——
+   *       而真实盘面里 1 分钟级别**不可能**是直线，它在宏观方向上一定带来回试探。
+   *
+   *  布朗桥正好是这个问题的标准解法：**起点固定在父根开盘、终点固定在父根收盘**，
+   *  中间按随机游走走。性质刚好对上：
+   *    · 端点硬约束 → 聚合回 15 分钟**逐点不变**（这是最早那条不变量）
+   *    · 中间自由 → 每一根都带真实的来回，且**每根形状都不同**
+   *    · 桥的方差是 t(1−t) 形状（两头小、中间大）→ 天然像行情：
+   *      刚开盘贴着上一根收、盘中来回最凶、快收盘又收敛
+   *
+   *  ### 幅度怎么定
+   *  桥的步长按**父根振幅**缩放，再乘 `BRIDGE_K`。这样：
+   *    · 平静的 15 分钟 → 内部也安静（振幅小）
+   *    · 暴动的那根 → 内部剧烈来回
+   *  也就是"内部波动跟着宏观波动走"，而不是所有档位一个固定幅度。 */
   function resample(series, seeds, regLine) {
     const barMin = BAR_MIN[G.barIdx];
     const out = [], sd = [], rg = [];
@@ -601,9 +941,16 @@
       for (let i = 0; i < series.length; i += k) {
         const g = series.slice(i, i + k);
         const o = g[0].o, c = g[g.length - 1].c;
-        let hi = -Infinity, lo = Infinity;
-        for (let q = 0; q < g.length; q++) { if (g[q].h > hi) hi = g[q].h; if (g[q].l < lo) lo = g[q].l; }
-        out.push({ t: g[0].t, o: o, h: Math.max(hi, o, c), l: Math.min(lo, o, c), c: c });
+        let hi = -Infinity, lo = Infinity, sp = 0, spd = 0;
+        for (let q = 0; q < g.length; q++) {
+          if (g[q].h > hi) hi = g[q].h;
+          if (g[q].l < lo) lo = g[q].l;
+          /* 插针**靶子**要跟着一起聚合：一组里最深的那根针决定这根的影线。
+             取 max 而不是求和 —— 影线是"打到哪里"，不是把几根针叠起来。 */
+          if ((g[q].spike || 0) > sp) { sp = g[q].spike || 0; spd = g[q].spikeDir || 0; }
+        }
+        out.push({ t: g[0].t, o: o, h: Math.max(hi, o, c), l: Math.min(lo, o, c), c: c,
+                   spike: sp, spikeDir: spd });
         sd.push(aggSeed(seeds.slice(i, i + k)));
         if (regLine) rg.push(regLine[Math.min(regLine.length - 1, i + k - 1)]);
       }
@@ -618,15 +965,46 @@
       const r0 = regLine ? regLine[i] : 0;
       const r1 = regLine ? regLine[Math.min(regLine.length - 1, i + 1)] : 0;
       let prev = p.o;
+      /* 父根那一针落在**哪一个子根**上：确定性地摊到展开段的前 1/3 里（用 zag 定），
+         并且**只落一次** —— 否则 m 个子根各带一次针，聚合回 15 分钟就变成 m 倍。
+         保证「展开 → 聚合」回到父根时插针总量对得上。 */
+      const spSlot = p.spike > 0 ? Math.floor((zag(i, 313) * 0.5 + 0.5) * Math.max(1, Math.ceil(m / 3))) : -1;
+      /* ── 布朗桥 ──
+         先造一条 m 步的随机游走 w[0..m]，再把两端"钉"到 0（起点）和 0（终点偏移之和），
+         于是 b[j] = w[j] − (j/m)·w[m] 满足 b[0] = 0 且 b[m] = 0。
+         桥值乘上步长就是价格偏移，加到"开→收的直线"上：
+           c_j = p.o + (p.c − p.o)·f + step · b[j]
+         第 j = m−1 根时 b[m−1] ≠ 0，所以最后一根**仍然强制写成 p.c**，
+         保证聚合回父根逐点相等（那条不变量不能破）。
+         方差形状 t(1−t) 是桥自带的：两头小、中间大 —— 天然像行情。 */
+      /* 随机游走用 **AR(1)** 而不是逐点独立的 zag：
+         ⚠ 第一版写成 `w[j] = w[j-1] + zag(...)`，zag 前后独立 → 桥在原地高频抖，
+           画出来是"锯齿"而不是"走一段再回头"。真实日内路径是有**动量**的：
+           连着涨几根、再连着跌几根。AR(1) 的 rho 就是那个动量，
+           0.55 大约连走 2~3 根同向。 */
+      const w = new Array(m + 1);
+      w[0] = 0;
+      let drift = 0;
+      for (let j = 1; j <= m; j++) {
+        drift = drift * P.BRIDGE_RHO + zag(i * 131 + 7, j * 17 + 3) * (1 - P.BRIDGE_RHO);
+        w[j] = w[j - 1] + drift;
+      }
+      const step = amp * P.BRIDGE_K / Math.sqrt(Math.max(1, m));
       for (let j = 0; j < m; j++) {
         const f = (j + 1) / m;
-        let c = p.o + (p.c - p.o) * f + amp * 0.06 * zag(i, j);
+        const bridge = w[j + 1] - f * w[m];        // b[0]=0，b[m]=0
+        let c = p.o + (p.c - p.o) * f + step * bridge;
         if (j === m - 1) c = p.c;                 // 收在父根收盘，聚合回去才对得上
         const o = prev;
-        const w = amp * 0.10 * Math.abs(zag(i, j + 977)) + Math.abs(c - o) * WICK_K;
+        /* 影线：基础部分按"这根自己的涨跌"+ 桥的局部摆动，
+           不再用父根振幅的固定比例 —— 那会让每根长得一模一样。 */
+        let wk = Math.abs(c - o) * WICK_K + step * 0.35 * Math.abs(zag(i, j + 977));
+        const isSpike = (j === spSlot);
+        if (isSpike) wk += p.spike;
         out.push({
           t: fmtMin(base + j * barMin * 60000),
-          o: o, h: Math.max(o, c) + w, l: Math.min(o, c) - w, c: c
+          o: o, h: Math.max(o, c) + wk, l: Math.min(o, c) - wk, c: c,
+          spike: isSpike ? p.spike : 0, spikeDir: isSpike ? (p.spikeDir || 0) : 0
         });
         sd.push(seeds[i]);                        // 子根共用父根那份天气读数
         if (regLine) rg.push(+(r0 + (r1 - r0) * f).toFixed(2));
@@ -640,6 +1018,7 @@
    *  extra = { air, quake, typh, fcst } 四个压力源的数据（缺了就传 null，对应项退化成 0） */
   function pickSeries(mn, reg, city, extra) {
     if (!mn || !mn.time || !mn.time.length) return null;
+    const dbgComp = [];                       // 只在 DBG_COMP 为真时被填（标定用）
     const n = mn.time.length;
     let i0 = mn.time.findIndex(t => t >= nowLocalStr());
     if (i0 < 0) i0 = n;
@@ -651,8 +1030,28 @@
     const need = srcBars();
     if (end < need + 1) return null;
 
-    const sev = severity(mn);
-    const tr = ema(sev, EMA_A);
+    /* ── 空气质量先对齐到 15 分钟时间轴 ──
+       ⚠ 必须排在 comfort()/severity() **之前**：comfort 里的空气项要吃它。
+       原来这段在对齐大盘之后，那时 severity 已经算完了 —— 顺序错了空气项就永远是缺省值。 */
+    let airRaw = null;
+    if (extra && extra.air && extra.air.time && extra.air.time.length) {
+      const A = extra.air, am = {};
+      for (let k = 0; k < A.time.length; k++) if (A.pm25[k] != null) am[A.time[k]] = +A.pm25[k];
+      const hourOf = t => t.slice(0, 13) + ':00';      // "2026-10-05T13:45" → "2026-10-05T13:00"
+      const vals = [];
+      const raw = new Array(n).fill(null);
+      for (let k = 0; k < n; k++) {
+        const v = am[hourOf(mn.time[k])];
+        if (v != null) { raw[k] = v; vals.push(v); }
+      }
+      // 覆盖不到一半就不认 —— 否则拿零星半小时的 PM2.5 去推整局，等于编数据
+      if (vals.length > n * 0.5) airRaw = raw;
+    }
+
+    // 天气舒适度（有绝对好坏方向的"基本面"）+ 恶劣度（有方向的增量）
+    const cf = comfort(mn, airRaw);
+    const sev = severity(mn, airRaw);
+    const tr = ema(sev, P.EMA_A);
     const now = nowLocalStr();
 
     // ── 区域大盘：同一个时间轴（两边都是 past_days=92 & 同一时区），按时间串对齐 ──
@@ -660,7 +1059,7 @@
     if (reg && reg.time && reg.time.length) {
       regMap = {};
       for (let k = 0; k < reg.time.length; k++) regMap[reg.time[k]] = k;
-      // 拿本地这一局的时间轴去取大盘值，拼成等长的"虚拟城市"再套同一套 severity()
+      // 拿本地这一局的时间轴去取大盘值，拼成等长的"虚拟城市"再套同一套 comfort()/severity()
       const rv = { time: [], temp: [], gust: [], precip: [], wcode: [], cape: [], dew: [] };
       for (let k = 0; k < n; k++) {
         const j = regMap[mn.time[k]];
@@ -674,7 +1073,7 @@
       // severity() 里对 null 是当 0 处理的，所以只有大盘真的对齐上了才算数
       let hit = 0;
       for (let k = 0; k < Math.min(200, n); k++) if (rv.cape[k] != null && rv.gust[k] != null) hit++;
-      if (hit > 100) { regSev = severity(rv); regTr = ema(regSev, EMA_A); }
+      if (hit > 100) { regSev = severity(rv, null); regTr = ema(regSev, P.EMA_A); }
     }
 
     // ── 露点（湿热）项：真数据，15 分钟粒度 ──
@@ -683,7 +1082,7 @@
     const mDew = dOk.length ? median(dOk) : 0, sDew = dOk.length ? robustScale(dOk, mDew) : 1;
 
     // ── 盘子扰动：带衰减的随机游走。小地方振幅更大（庄家操盘）──
-    const dScale = dishScale(city) * DISH_K;
+    const dScale = dishScale(city) * P.DISH_K;
 
     // ══ 四个压力源：时刻 / 强度 / 位置全部来自真数据，只做"怎么折成点数"的建模 ══
     // 定位根号一律用**时间差**（barT0 与事件时刻都用同一个 Date.parse 口径），
@@ -692,25 +1091,15 @@
     const barT0 = mn.time.length ? Date.parse(mn.time[0]) : 0;
     const idxOf = t => (barT0 && t) ? Math.round((t - barT0) / BAR_MS) : -1;
 
-    // ① 空气质量：小时级慢变量。PM2.5 按小时键对齐到每根 15 分钟 K。
-    let airN = null, airRaw = null;
-    if (extra && extra.air && extra.air.time && extra.air.time.length) {
-      const A = extra.air, am = {};
-      for (let k = 0; k < A.time.length; k++) if (A.pm25[k] != null) am[A.time[k]] = +A.pm25[k];
-      const hourOf = t => t.slice(0, 13) + ':00';      // "2026-10-05T13:45" → "2026-10-05T13:00"
-      const vals = [];
-      const raw = new Array(n).fill(null);
-      for (let k = 0; k < n; k++) {
-        const v = am[hourOf(mn.time[k])];
-        if (v != null) { raw[k] = v; vals.push(v); }
-      }
-      // 覆盖不到一半就不认 —— 否则拿零星半小时的 PM2.5 去推整局，等于编数据
-      if (vals.length > n * 0.5) {
-        const mA = median(vals), sA = robustScale(vals, mA) || 1;
-        airN = new Array(n).fill(0);
-        for (let k = 0; k < n; k++) airN[k] = raw[k] == null ? 0 : (raw[k] - mA) / sA;
-        airRaw = raw;
-      }
+    /* ① 空气质量：已经在上面 comfort() 之前对齐好了（airRaw）。
+       这里只把原始 PM2.5 归一化成零中心的 airN，给价格模型当**慢变量偏置**用 ——
+       comfort 里的空气项是"绝对好坏"，这里的 airN 是"相对这段的中位"，两者用途不同。 */
+    let airN = null;
+    if (airRaw) {
+      const vals = airRaw.filter(v => v != null);
+      const mA = median(vals), sA = robustScale(vals, mA) || 1;
+      airN = new Array(n).fill(0);
+      for (let k = 0; k < n; k++) airN[k] = airRaw[k] == null ? 0 : (airRaw[k] - mA) / sA;
     }
 
     // ② 地震：事件型。每来一次就在对应根号上砸一记冲击，再按 QUAKE_DECAY 拖一段余波。
@@ -726,7 +1115,7 @@
         const dist = (e.lat != null) ? distKm(city.lat, city.lon, e.lat, e.lon) : 0;
         const near = Math.max(0, 1 - dist / QUAKE_R);
         if (near <= 0) continue;
-        const amp = QUAKE_K * d * near;
+        const amp = P.QUAKE_K * d * near;
         for (let j = Math.max(0, i); j < Math.min(n, i + 160); j++) {
           qArr[j] += amp * Math.pow(QUAKE_DECAY, j - i);
           // 播报要报"震级 + 震中"，所以顺手记下这一根上最强的那个事件
@@ -759,7 +1148,7 @@
           const w = (a.wind || 0) + ((b.wind || 0) - (a.wind || 0)) * u;
           const near = 1 - distKm(city.lat, city.lon, la, lo2) / TYPHOON_R;
           if (near > 0) {
-            const add = TYPHOON_K * (w / 30) * near * near;   // 平方衰减，边缘影响小
+            const add = P.TYPHOON_K * (w / 30) * near * near;   // 平方衰减，边缘影响小
             tArr[k] += add;
             if (add > tWind[k]) {                            // 播报取影响最大的那个台风
               tWind[k] = add;
@@ -828,56 +1217,188 @@
 
       const win = tr.slice(s2, s2 + need);
       const m = median(win);
+      /* 基本面用的两条：
+         cfSlow —— 舒适度的**慢速 EMA**（半衰期约 12 小时 = 48 根）。
+                   用慢速是因为即时 comfort 会被单根雷暴砸出大坑
+                   （实测 |Δcomfort| 的 p99 是中位的 61 倍），直接当价格就是尖刺序列。
+         cfMed  —— 本局窗口内 cfSlow 的中位，用来把指数**居中到 BASE**。
+                   不居中的话，一段整体舒服的天气会让指数常年停在 1150 以上，
+                   "1000 代表天气一般"这个语义就没了。 */
+      const cfSlow = ema(cf, 1 - Math.pow(0.5, 1 / 48));
+      const cfMed = median(cfSlow.slice(s2, s2 + need));
       const series = [];
       const seeds = [];
       const regLine = [];          // 画在副图上的"大盘"（跟主图同一根数）
+      // 城市 → 波动放大倍数。整局只算一次（它只跟城市有关），下面所有随机项都乘它。
+      const amp = cityAmp(city);
       let carry = 0, dish = 0, noiseEma = 0, micro = 0;
+      let calm = 0;                                             // 平静度：连续多少根波动很小
+      let pxPrev = BASE + (cfSlow[s2] - cfMed) * P.COMFORT_K;   // 慢通道状态：起点 = 当前基本面
+      let impactState = 0;                                      // 冲击状态：未衰减完的价格冲击（事件驱动）
+      let flow = 0;                                             // 事件到达率的自激强度
+      let heatEma = 0;                                          // 波动率聚集
+      let prevPx = pxPrev;                                      // 上一根的价（算 heat 用）
+      /* ⚠ prevPx 必须写在 pxPrev **之后** —— 写成 `let heatEma = 0, prevPx = pxPrev;`
+         放在 pxPrev 前面会踩 TDZ（`Cannot access 'pxPrev' before initialization`），
+         而 pickSeries 是被 try 包着的，于是表现成"取不到序列"、五个城市全跳过，
+         排查时完全看不出是这里。教训：**初始化顺序也是逻辑**，别图省事写到一行。 */
+
+      /* ── 空转预热：让价格先进入稳态 ──
+         ⚠ 少了这一步会有一个**很显眼**的 bug：起点被放在 anchor 上，但噪声通道是 0，
+           而 anchor 每根还在动 —— 于是开局几十根全在"追"锚点，实体大得离谱
+           （实测第 2 根 body = 50 点，是稳态中位的 27 倍；最大 body 101 点）。
+           更糟的是它会**污染插针**：插针幅度以 body 为基准，body 一大针就打穿
+           （实测出现 420 点、903 点的影线，整根 K 线糊成一条线）。
+         做法：从窗口开始处往前空转 200 根（≈2 天），把这 200 根的迭代结果丢掉，
+           只保留稳态后的状态。因为 anchor 本身在慢变，预热要用**真实的前置数据**，
+           不能随便填常数。 */
+      for (let w = 200; w >= 1; w--) {
+        const kw = Math.max(0, s2 - w);
+        const an = BASE + (cfSlow[kw] - cfMed) * P.COMFORT_K;
+        const sh = (Math.random() - 0.5) * 2 * BASE * 0.002 * amp * P.NOISE_AMP;
+        impactState = impactState * (1 - P.INERTIA) + sh;
+        pxPrev = an + impactState;
+      }
       for (let j = 0; j < need; j++) {
         const k2 = s2 + j;
-        // 「突发行情」：某根 15 分钟里天气本身剧烈变化（CAPE 炸了、阵风猛增、开始下暴雨）时，
-        // 除了常规的噪声项，再砸进去一记冲击 —— 这就是久留美里那种"蜡烛图突然拉到底"。
-        //
-        // shock 是「这一刻打多狠」，carry 是「余波还走多远」。只有 shock 的话就出一根长阴、
-        // 下一根立刻回弹，不像崩盘；加上 carry（按 JUMP_DECAY 衰减的动量）才有连续几根
-        // 顺势砸下去的样子。系数是拿广州/哈尔滨 92 天的真实 minutely_15 调出来的：
-        // 单根中位涨跌仍是 0.167%（平时盘感不变），但每局会出现几次连续 3 根跌 8~15% 的段。
-        // 注意它**不是随机数** —— 触发条件是真实观测到的剧烈变化。
+        /* 「突发行情」：某根 15 分钟里天气本身剧烈变化（雷暴压境、阵风猛增、开始下暴雨）
+           → severity 跳变 → 除了常规项再砸一记冲击。这就是"蜡烛图突然拉到底"。
+           `shock` 是「这一刻打多狠」，`carry` 是「余波还走多远」：只有 shock 的话出一根长阴、
+           下一根立刻回弹，不像崩盘；加上 carry（按 JUMP_DECAY 衰减的动量）才有连续几根
+           顺势砸下去的样子。**它不是随机数** —— 触发条件是真实观测到的剧烈变化。
+
+           ⚠ 门槛 `JUMP_AT` 是拿**新的** severity（= −Δcomfort/10）标定的。
+             实测它的 p99 是 2.03，所以 JUMP_AT=1.8 大约只覆盖最猛的 1% —— 
+             改 comfort 的权重时要回头重新看这个门槛，否则这一项会退化成空转
+             （旧版就踩过：门槛比 p99 还高，一次都触发不了）。 */
         const dsev = k2 > 0 ? (sev[k2] - sev[k2 - 1]) : 0;
-        const shock = Math.abs(dsev) > JUMP_AT
-          ? (Math.abs(dsev) - JUMP_AT) * JUMP_K * (dsev > 0 ? 1 : -1)
+        const shock = Math.abs(dsev) > P.JUMP_AT
+          ? (Math.abs(dsev) - P.JUMP_AT) * P.JUMP_K * (dsev > 0 ? 1 : -1)
           : 0;
-        carry = carry * JUMP_DECAY + shock;
+        carry = carry * P.JUMP_DECAY + shock;
 
         // 大盘的快分量：本地天气是一城一地，大盘是整省的天气过程。
         // 只取"快分量"（减去自己的 EMA）是有意的 —— 趋势项已经由本地负责，
         // 大盘再贡献一遍慢趋势就成了同一个信号算两次。
         let regFast = 0;
-        if (regSev) regFast = (regSev[k2] - regTr[k2]) * REG_K;
+        if (regSev) regFast = (regSev[k2] - regTr[k2]) * P.REG_K;
 
         const dnorm = D[k2] == null ? 0 : (D[k2] - mDew) / sDew;
 
-        // 盘子扰动：AR(1)。用噪声当驱动、按 DISH_DECAY 衰减，
+        // 盘子扰动：AR(1)。用噪声当驱动、按 P.DISH_DECAY 衰减，
         // 所以它是一条"能看出有人在推"的平滑曲线，而不是每根乱跳的雪花点。
-        dish = dish * DISH_DECAY + (Math.random() - 0.5) * 2 * dScale;
+        dish = dish * P.DISH_DECAY + (Math.random() - 0.5) * 2 * dScale;
 
         // 微观游走：比盘子扰动快、比单根噪声慢的一层毛刺，让盘口看着"有人在成交"。
-        micro = micro * MICRO_DECAY + (Math.random() - 0.5) * 2 * MICRO_K;
+        micro = micro * P.MICRO_DECAY + (Math.random() - 0.5) * 2 * P.MICRO_K;
 
         // 快分量过一道轻 EMA —— 相邻两根因此变得相关，走势才会"成段"。
-        // NOISE_BOOST 补回 EMA 削掉的方差，整体波动幅度保持不变。
-        noiseEma = noiseEma * NOISE_A + (sev[k2] - tr[k2]) * (1 - NOISE_A);
-        const noiseTerm = noiseEma * NOISE_K * NOISE_BOOST;
+        // P.NOISE_BOOST 补回 EMA 削掉的方差，整体波动幅度保持不变。
+        noiseEma = noiseEma * P.NOISE_A + (sev[k2] - tr[k2]) * (1 - P.NOISE_A);
+        const noiseTerm = noiseEma * P.NOISE_K * P.NOISE_BOOST;
 
         // 四个压力源（缺数据的项 airN/fN 为 null、qArr/tArr 天然为 0）
-        const airTerm  = airN ? airN[k2] * AIR_K : 0;
+        const airTerm  = airN ? airN[k2] * P.AIR_K : 0;
         const quakeTerm = qArr[k2];
         const typhTerm = tArr[k2];
-        const fcstTerm = fN ? fN[k2] * FCST_K : 0;
+        const fcstTerm = fN ? fN[k2] * P.FCST_K : 0;
 
-        const px = BASE + (tr[k2] - m) * TREND_K + noiseTerm + carry
-          + regFast + dnorm * DEW_K + dish + micro
-          + airTerm + quakeTerm + typhTerm + fcstTerm;
+        /* ══ 天气 → 指数 ══
+           指数在语义上就是**当地天气的好坏程度**，所以先有一条"基本面"：
+
+               anchor = BASE + (cfSlow − 中位) × COMFORT_K
+
+           cfSlow 是舒适度的慢速 EMA（半衰期约 12 小时）。为什么要慢速而不是用即时值：
+           即时 comfort 会被单根雷暴砸出一个大坑（实测 |Δcomfort| 的 p99 是中位的 61 倍），
+           价格要是直接等于它，就成了"平时一动不动、偶尔跳一下"的尖刺序列。
+           真实标的是**围绕价值波动**，价值本身随基本面缓慢移动 —— 所以：
+             · 基本面（anchor）走慢速 comfort，管"这段天气好不好"；
+             · 盘面（下面的噪声项）管"市场此刻怎么定价"，均值回归把它拉回 anchor。
+           这也正是原来那版缺的东西：原模型里天气只以"零中心异常度"进噪声，
+           指数高低和天气好坏**完全无关**，你说要"描绘成天气好坏"就是这个意思。 */
+        const anchor = BASE + (cfSlow[k2] - cfMed) * P.COMFORT_K;
+
+        /* 所有**随机项**乘 cityAmp —— 这一行就是"大城市像主流币、小城市像山寨币"的落点。
+           为什么必须一次乘完而不是各写各的：旧模型只有 dish 受城市影响，
+           而 dish 只占波动方差的 ~4%，noise/carry/micro 全与城市无关，
+           于是实测梯度被稀释成 1.78×，而真实交易所是 3.09×。
+           ⚠ 基本面 anchor **不乘 cityAmp** —— 天气过程本身对大小城市是一样的，
+             差别该体现在"盘面反应"（噪声、冲击）而不是"天气不同"。
+             这也正是"小地方更容易被推着走"的物理含义：同样的消息，薄盘子动得更狠。 */
+        /* ══════════════ 事件驱动的价格冲击 ══════════════
+           这一段是**架构级**的改动，解决的是对账里差最多的那一项：
+           真实 15 分钟 lag-1 自相关 **−0.01 ~ +0.02**（几乎无记忆），
+           而旧架构（连续噪声 + 慢速均值回归）实测锁在 **0.38**，扫 27 组参数都下不来。
+
+           原因是数学上的：`每根回归 REVERT 比例` 会把「噪声」变成 AR(1)，
+           它的滞后一阶相关 ≈ 1−REVERT —— 只要回归慢（为了钉住基本面），
+           自相关就必然高。**慢回归和低自相关不可兼得。**
+
+           真市场不是"连续信号"，是**事件驱动**的：
+             一笔成交到达 → 造成一次价格冲击 → 冲击按**韧性**(resilience)快速衰减
+             下一笔成交再来。所以价格是「跳跃的累加 + 快速衰减」，
+             而不是"平滑随机游走在慢慢回归"。
+
+           关键差别在于**衰减速率与到达速率的关系**：
+             · 衰减慢于到达 → 冲击首尾相接 → 又是 AR(1)（自相关高）
+             · 衰减快于到达 → 每笔冲击基本独立 → 自相关 ≈ 0  ✅
+           韧性半衰期取 ~2 根（INERTIA），到达率每根 1~2 笔，正好落在第二档。
+
+           另外两个真市场特征也在这里落地：
+             · **波动聚集**：到达率**自激** —— 来的事件越多，下一根的到达率越高
+               （`flow` 累积 → `arrival` 上升）。这就是"大波动成群出现"。
+             · **肥尾**：单笔冲击的幅度用幂律尾巴，多数小、偶尔一次清算瀑布。 */
+        const flowRet = impactState / BASE;                   // 当前未衰减完的冲击（→ 自激强度）
+        flow = flow * P.FLOW_DECAY + Math.abs(flowRet) * 60;
+        const arrival = P.FLOW_RATE * (1 + Math.min(6, flow)) * (1 + calm / 30);
+        const nEvents = arrival > 3
+          ? Math.floor(arrival) + (Math.random() < (arrival % 1) ? 1 : 0)
+          : (Math.random() < arrival ? 1 : 0);               // 泊松近似
+        let evSum = 0;
+        for (let e = 0; e < nEvents; e++) {
+          /* 单笔冲击的**方向**与**幅度**：
+             方向由天气与盘面的快分量决定（这就是"天气好 → 买盘多"的落点）；
+             幅度用幂律尾巴 —— `pow(rand,3)*4.5` 让它绝大多数很小、偶尔极大。 */
+          const bias = (noiseTerm + carry + regFast + dnorm * P.DEW_K + dish + micro
+                        + airTerm + quakeTerm + typhTerm + fcstTerm) * amp * P.NOISE_AMP;
+          const mag = BASE * P.EVENT_K * (Math.pow(Math.random(), 3) * 4.5 + 0.05) * amp;
+          evSum += (bias >= 0 ? 1 : -1) * mag + bias * 0.35;
+        }
+        /* 混沌跳跃 = **特别大的一笔**（清算瀑布）。它不是另一套机制，
+           只是同一个事件过程里尾巴拉满的那一次 —— 所以直接并进 evSum。
+           触发条件仍带 `calm`（平静越久越容易爆发），见 docs/CHAOS_DESIGN.md。 */
+        const heat = Math.abs(pxPrev - prevPx) / BASE;
+        heatEma = heatEma * 0.94 + heat * 0.06;
+        calm = (heat < 0.0008) ? Math.min(60, calm + 1) : 0;
+        if (Math.random() < P.CHAOS_P * (1 + calm / 25) * (1 + heatEma * 400)) {
+          const tailv = Math.pow(Math.random(), 3) * 5.5 + 0.08;
+          evSum += (Math.random() < 0.5 ? -1 : 1) * BASE * P.CHAOS_K * tailv * amp;
+          calm = 0;
+        }
+        prevPx = pxPrev;
+
+        /* 冲击状态按韧性衰减，再把本根的新事件累加进去。
+           ⚠ 事件**不进 `noisePrev`**（那是旧的快通道，已废弃）——
+             它们只由 `INERTIA` 衰减，这是"短记忆"的来源。 */
+        impactState = impactState * (1 - P.INERTIA) + evSum;
+
+        /* ── 价格 = 基本面 + 未衰减完的冲击 ──
+           ⚠ 这里就是架构改动最核心的一行。旧版是：
+               px = pxPrev + (anchor − pxPrev)·REVERT − noisePrev·NOISE_REVERT + shock
+             那个式子里**前景价格依赖自身**，所以必然产生 AR(1) 记忆（实测自相关 0.38）。
+           新版把价格**定义**成两个不互相依赖的状态之和：
+               · anchor       —— 天气决定的慢变量（管长期方向）
+               · impactState  —— 事件冲击的累加，按 INERTIA 快速衰减（管短周期抖动）
+           前景价格不再出现在等式右边，所以没有"自我回归"，
+           自相关只由冲击的衰减速率决定 —— 调快到 2 根半衰期就能压到 0 附近。 */
+        const px = anchor + impactState;
+        const pxRet = pxPrev > 0 ? (px - pxPrev) / pxPrev : 0;
+        void pxRet;
+        pxPrev = px;
         series.push({ t: mn.time[k2], c: px });
+        // 标定用：把每一项单独记下来。开关关着时只是往一个数组 push 一次，
+        // 没有性能影响；开着就能量出"是哪一项在主导波动"（见 tools/probe_components.js）。
+        if (DBG_COMP) dbgComp.push({ noise: noiseTerm * amp, carry: carry * amp, reg: regFast * amp, dew: dnorm * P.DEW_K * amp, dish: dish * amp, micro: micro * amp, air: airTerm * amp, quake: quakeTerm * amp, typh: typhTerm * amp, fcst: fcstTerm * amp, anchor: anchor - BASE, revertPx: pxPrev - anchor });
         regLine.push(BASE + regFast * 3 + dish * 0.2);
         seeds.push({
           cape: mn.cape[k2] | 0,
@@ -897,16 +1418,97 @@
           fcst: +fcstTerm.toFixed(2)
         });
       }
-      // 补 OHLC：开 = 上一根收，收 = 本根指数（都是真采样）；
-      // 影线按 |本根涨跌| × WICK_K 建模（15 分钟粒度拿不到根内极值）。
+      /* ── 立靶子：把多维压力表要用的数据一并算好存进 seeds ──
+         面板**只读这里**，不自己算 —— 这就是"先画靶子再射箭"。
+         存四样东西，够面板显示"当前值 / 近7天分位 / 方向 / 对指数贡献"：
+           cparts  六个维度各自的 {v, score, contrib}（贡献之和 === comfort）
+           ctotal  = Σ contrib，也就是这一根的舒适度
+           pct     各维度在**本局窗口内**的百分位（[0,1]）
+           dir     各维度的方向：和上一根比是升是降
+         为什么分位要在**生成时**算：它依赖本局窗口的整段分布，
+         放到面板里每帧重算就得每次扫 3552 个点 × 6 个维度，白烧 CPU。 */
+      {
+        const cpWin = comfortParts(mn, airRaw).slice(s2, s2 + need);
+        const byDim = {};
+        for (const d of DIMS) byDim[d.key] = cpWin.map(p => p[d.key].v).filter(v => v != null).sort((a, b) => a - b);
+        for (let j = 0; j < seeds.length; j++) {
+          const cp = cpWin[j];
+          if (!cp) continue;
+          const pct = {};
+          for (const d of DIMS) {
+            const arr = byDim[d.key];
+            const v = cp[d.key].v;
+            if (v == null || !arr.length) { pct[d.key] = null; continue; }
+            // 二分找插入位置 → 百分位
+            let lo = 0, hi = arr.length;
+            while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid] < v) lo = mid + 1; else hi = mid; }
+            pct[d.key] = lo / arr.length;
+          }
+          const cpPrev = j > 0 ? cpWin[j - 1] : null;
+          const dir = {};
+          for (const d of DIMS) {
+            const a = cp[d.key].v, b = cpPrev ? cpPrev[d.key].v : null;
+            dir[d.key] = (a == null || b == null) ? 0 : Math.sign(a - b);
+          }
+          seeds[j].cparts = cp;
+          seeds[j].ctotal = cp.total;
+          seeds[j].cpct = pct;
+          seeds[j].cdir = dir;
+        }
+      }
+      /* ── 补 OHLC + **插针** ──
+         开 = 上一根收、收 = 本根指数（都是真采样）。影线不能用 `|涨跌| × 常数` 了 ——
+         那是个**确定性**关系（大实体必然大影线），而真实币圈的插针完全不是这样：
+
+           插针 = **流动性被吃穿**那一刻。一笔大单扫掉几档挂单，价格瞬间打到一个
+           几乎没人成交的价位，然后立刻缩回来（清算瀑布 / 止损猎杀）。
+           特征是「**影线远大于实体，且收盘回到原处**」——
+           K 线上就是一根长针，实体却很小。
+
+         拆成两部分：
+           ① 基础影线  |涨跌| × WICK_K        正常的盘中波动，仍与实体相关
+           ② 插针      SPIKE 事件 × 幅度      罕见、很大、**与实体无关**
+
+         插针幅度按**流动性**定：小城市盘子薄，同样的扫单打得更深
+         （除以 dishScale —— 和 cityAmp 是同一个物理含义，但走独立通道）。
+
+         ⚠ 插针**只改影线，不改收盘**，所以不会动已经标定好的收益分布
+           （中位涨跌、自相关都不受影响），只在盘面上多出几根长针。
+         ⚠ 触发概率挂**真实天气活跃度**（volOf）：暴雨/雷暴天成交更活跃、流动性更薄，
+           插针更容易发生。这样针不是纯随机撒的，而是"天气越疯、盘面越疯"。 */
       for (let j = series.length - 1; j >= 0; j--) {
         const c = series[j].c;
         const o = j > 0 ? series[j - 1].c : c;
-        const w = Math.abs(c - o) * WICK_K;
+        const body = Math.abs(c - o);
+        let w = body * WICK_K;
+        const act = Math.min(3, volOf(seeds[j]) / 4);          // 活跃度 → 约 [0,3]
+        if (Math.random() < P.SPIKE_P * (0.5 + act) * spikeMul()) {
+          /* 插针幅度：基准 = 价格 × SPIKE_DEPTH ÷ 盘子厚度，再乘一个**幂律尾巴**。
+             ⚠ 第一版用 `(0.25 + rand*0.85)` 均匀分布 → 每根针差不多深，
+               看着像规律锯齿而不是"突然的针"。
+             真实插针是**罕见且深浅悬殊**的：多数是普通扫单（百分之几），
+             偶尔一次清算瀑布（十几）。所以用 `pow(rand, 2.5)` ——
+             rand 均匀时它偏小（大多数针浅），但偶尔接近 1（深针）。
+             再除以 dishScale(城市)：小城市盘子薄，同样的扫单打得更深。 */
+          const tail = Math.min(2.0, Math.pow(Math.random(), 2.5) * 2.6 + 0.06);
+          const size = c * P.SPIKE_DEPTH * tail / dishScale(city);
+          w += size;
+          series[j].spike = size;
+          series[j].spikeDir = Math.random() < 0.5 ? -1 : 1;   // 向上针还是向下针
+        } else {
+          series[j].spike = 0;
+          series[j].spikeDir = 0;
+        }
         series[j].o = o;
         series[j].h = Math.max(o, c) + w;
         series[j].l = Math.min(o, c) - w;
       }
+      /* ⚠ 插针**必须先在这里定死**（这一步就是"靶子"），动画只许读、不许自己算。
+         我第一版是让 `liveAt()` 现算的 —— 结果每次读都重新掷骰子，
+         同一根未收盘的蜡烛前后看到的针不一样（有时有、有时没有）。
+         `pickSeries` 是这套数据唯一的生成点，所以靶子只能在这里立。
+         `resample` 的两条路径（聚合 / 展开）都负责把 spike 字段**原样带下去**，
+         于是从 1 分钟到 1 日、从已收盘到未收盘，看到的都是同一根针。 */
       if (!series.every(b => isFinite(b.o) && isFinite(b.c))) continue;
       // 按玩家选的 K 线周期重采样（15 分钟源 → 目标周期），价格模型本身不动。
       const rs = resample(series, seeds, regSev ? regLine : null);
@@ -918,7 +1520,8 @@
         regCities: (reg && reg.cities) || null,
         // 15 分钟原样那一份也带出来 —— 局中换 K 线周期时不用重新取数据，
         // 直接拿它重采样再把已推进的天气时间映射过去就行。
-        base: series, baseSeeds: seeds, baseReg: raw
+        base: series, baseSeeds: seeds, baseReg: raw,
+        comp: DBG_COMP ? dbgComp : null
       };
     }
     return null;
@@ -930,20 +1533,258 @@
     return (m === 0) ? ('第 ' + day + ' 天') : ('D' + day + ' ' + hh + ':' + mm);
   }
 
+  /* ═══════════════ 未收盘的那根 K 线（live bar） ═══════════════
+     真实行情软件里最后那根蜡烛是**一直在变的**：收盘价跟着最新价走、上下影线被不断刷新、
+     甚至中途由阳翻阴。原来这里不是这样 —— `tick()` 只在"攒够一整根"时才把 G.price 设成
+     新一根的收盘价，没攒够就直接 return（连 render 都不调），于是：
+        · 1 日档 + 正常速度 = 每 1440/45 = 32 秒才推进一根，这 32 秒画面是完全静止的；
+        · 4 时档 = 每 5.3 秒一跳。
+     现在补上那根 live bar：它挂在 G.i+1 的位置，逐帧跟着真实数据往前走。
+
+     ★ **这里没有任何凭空发明的参数。** 价格怎么走，是让光标沿着**真实的 15 分钟源序列**
+       （`G.base`，长度 srcBars() = 3552 根，`pickSeries` 存下来的那一份原样数据）往前走：
+
+           dpb  = barMin / 15                       // 一根 K 线 = 几根 15 分钟源
+           srcF = G.i * dpb + dpb - 1               // 光标起点 = 上一根的**收盘**那根源数据
+                  + u * ((G.i + 2) * dpb - 1        // 终点 = 本根的收盘那根源数据
+                         - (G.i * dpb + dpb - 1))   //       两者之差 = (G.i+1)*dpb
+           c    = base[s0].c + (base[s1].c - base[s0].c) * kf
+
+       写"起点 + u × (终点 − 起点)"而不是"起点 + u × 某个偏移"，是被探针逼出来的：
+       偏移写成 `(u*dpb + dpb - 1)/dpb` 时，整根走完光标只前进 **1 根源数据** ——
+       4 时档一根跨 16 根样本，结果盘中也只穿过 2 根（`seen={320,321}`），
+       1 日档同样只有 2 根。差就差在没乘上 dpb。现在这个写法对 dpb > 1 和 dpb < 1
+       都自动成立（1 分档 dpb=0.067，起终点是相邻两根源数据的收盘，跨度天然是对的）。
+
+       一根 K 线里能穿过多少根真样本，完全由周期算出来，不是我给的系数：
+         1 分 / 5 分 → 0.07 / 0.33 根（这两档本身就是插值展开的，文档里写明了）
+         15 分       → 1 根
+         30 分 / 1 时 / 4 时 / 1 日 → 2 / 4 / 16 / 96 根
+       1 日档那根蜡烛，一天里会被 96 个真实的 15 分钟观测逐格推着走。
+
+     ★ **收盘瞬间零跳变**：u 走到 1 时光标正好落在 `(G.i+2)*dpb - 1` 这个整数上 →
+       kf = 0 → `c` 精确等于 base[(G.i+2)*dpb-1].c，也就是那根真 K 线的收盘价。
+       高/低在那一刻也等于它。所以"live bar 变成真 K 线"这一下不需要任何补正。 */
+  function liveAt() {
+    if (!G.running || G.ended) return null;
+    if (G.i < 0 || !G.base || !G.base.length) return null;
+    if (G.i + 1 >= G.series.length) return null;      // 已经是最后一根，没有"下一根"可走
+    const tgt = G.series[G.i + 1];
+    if (!tgt) return null;
+
+    const u = Math.max(0, Math.min(1, G.acc));        // 这一根的完成度
+    const N = G.base.length;
+    const dpb = barMin() / SRC_MIN;                   // 一根 K 线 = 几根 15 分钟源
+    /* ⚠ 源窗口必须对齐 **series[G.i]**（live bar 占的那一格），而且
+       `dpb > 1`（聚合）与 `dpb < 1`（插值展开）要用**同一个公式**：
+
+           last(j) = ceil((j+1)·dpb) - 1        第 j 根 K 线覆盖的**最后一根**源样本
+
+       验算（三种情形都成立）：
+         dpb=1  → last(30)=30            两根 K 线各占 1 根源样本
+         dpb=2  → last(30)=61，last(29)=59   一跳一根，不重不漏
+         dpb=96 → last(30)=2975
+         dpb=1/15（1 分档）→ 同一根源样本被 15 根 K 线共用 → last 会对相邻几根相同，
+                              这是对的：那几根本来就是同一根 15 分钟的展开
+
+       ⚠ 这里错了三次，全是"只在一个档位验过"：
+         ① 按 series[G.i+1] 的窗口写 → 占位改到 G.i 后整段偏一根；
+         ② 改成往回挪一个**周期**→ 又多挪了（u=1 差 -0.2457/3.66/4.74）；
+         ③ 用 `(G.i+1)*dpb-1` → dpb=1 时退化错，15 分档差 3.43。
+         自检：`series[G.i].c` 必须等于 `base[last(G.i)].c`，**全档位**都要成立。 */
+    const spb = Math.max(1, Math.round(dpb));
+    const lastOf = j => Math.ceil((j + 1) * dpb) - 1;
+    const start = lastOf(G.i - 1);                    // 本根开盘那一刻的源数据下标
+    const end = lastOf(G.i);                          // 本根收盘那一刻的源数据下标
+    const srcF = start + u * (end - start);
+    const endI = Math.round(end);
+
+    /* 开盘价 = **左邻那根的收盘价**，也就是 series[G.i-1].c。
+       ⚠ 这里错了一个下标，正是用户报的"最新那根跟左边接不上"：
+         · 图表里 live bar 占的是**第 G.i 格**（liveNote 用 n-1 = G.i 替换掉 series[G.i]），
+           所以它的左邻是 series[G.i-1]，不是 series[G.i]；
+         · 我原来写的是 series[G.i].c —— 那是**它自己**的收盘价（=下一根真 K 线的开盘），
+           结果 live bar 的开盘比左邻的收盘高出整整一根的涨幅（实测恒差 0.25），
+           看上去就是一块独立出去的蜡烛。
+       换对之后接缝恒为 0（tools/dbg_chartdata.js 可直接看到）。 */
+    const prevIdx = Math.max(0, G.i - 1);
+    const o = G.series[prevIdx].c;
+
+    /* 本根在系列里的身份是 series[G.i]（live bar 占的就是这一格）。
+       u=1 时要精确等于它，所以收盘价与极值的窗口都以 G.i 这根为基准。
+       源样本区间：[base0, base1]，其中 base0 = start+1、base1 = endI。
+       自检：series[G.i].c 必须等于 base[G.i*SRC_MIN … ] 那一段的最后一根收盘，
+       而 series[G.i-1].c 是它的上一根 —— 两者都在 base 里，所以下面的窗口是自洽的。 */
+    /* 源窗口：series[G.i] 覆盖 base[G.i*spb .. (G.i+1)*spb-1]（已用对账脚本核过四种档位）。
+       start 取的是**上一根的收盘样本**（= G.i*spb-1），也就是本根开盘那一刻。 */
+    const bLo = start + 1, bHi = endI;
+    /* cur 用 floor(srcF)，**不钳到 bLo** —— 这样 u=0 时 cur=start、本根一格都没开始，
+       极值为空、h=l=c=o，正好是一个点（"新 K 线刚开盘"该有的样子）。
+       上一版我把下限钳成 bLo，结果 u=0 就把第一格的整根高低算了进来，
+       h/l 直接是一个宽区间（实测 h=1032.482 l=1029.075 而 o=1029.714）。
+       ⚠ 但插值那边必须补一个"光标还在上一根样本里"的分支，否则开头十几帧
+         cDraw 会卡在 o 不动（实测 30 Hz 下连续 10 帧纹丝不动）——见下面。 */
+    const cur = Math.min(bHi, Math.floor(srcF + 1e-9));
+    const fb = formBar(o, bLo, cur);
+    const c = (cur >= bLo && cur <= bHi) ? G.base[cur].c : o;
+
+    /* 画图用的价：**在整根范围内跟着光标连续走**，而不是在每个源样本内部插值。
+       为什么要分成"画图价"和"成交价"（这是"长档位变化不够快"的解法）：
+
+         · 极值（h/l）必须**按整格跳**：只有整根样本走完，它的真实高低才算数 ——
+           这是"不丢上下限"的前提（上一轮的核心修复）。
+         · 画出来那一端如果也跟着整格跳，粗档位就会**碎步卡顿**：
+           光标（srcF）每 tick 只推进 `SPEED/barMin/TICK_HZ` 格，
+             · 15 分档 = 0.3 格/tick → 每 tick 都在跨格，看着在动
+             · 1 日档 = 0.003 格/tick → **要 3.3 个 tick 才跨一格**，
+               于是连续 3 帧价格完全不动、第 4 帧跳一下 —— 实测就是这样（见下）
+           样本内插值救不了：kf 只在跨格时才从 0 走到 1，跨格前那个价是死的。
+
+       所以这里把插值提到**整根层面**，但**沿着真实样本收盘价那条折线走**，
+       而不是从开盘直连收盘：
+
+           cDraw = 折线( base[bLo..cur].c ) 在相位 kf 处取值
+
+         · 每帧都在动 —— 因为光标每帧都在推进，不跨格也在折线上走（手感快）
+         · 走到每个样本的收盘点时会**真的换向** —— 那些拐点来自真实数据，
+           不是编出来的（实测 15 分档换向 0% 的原因就是它只有 1 格、走不出折线；
+           粗档位有几十上百个拐点，自然有来回）
+         · 端点自洽：u=0 → cur=start 且 kf=0 → 取到 o（一个点）；
+                    u=1 → cur=end 且 kf=1 → 精确等于 series[G.i].c
+
+       ⚠ 我上一版写成 `o + (cTrue - o) * u`（开盘直连收盘）—— 结果换向率 **0%**，
+         整根变成一条直线，比改之前更假。教训：**插值要沿着数据的形状走，
+         不能自己造一条更"顺"的线。**
+       ⚠ **只用于画图**：成交价（G.price / cFill）走的仍是离散的真收盘，
+         不能让玩家在"并不存在的插值价"上成交。
+       ⚠ cDraw 也要并进 h/l 的包络，否则"极值包住实体"这条渲染硬要求会被破坏。 */
+    const kf = (u >= 1) ? 1 : Math.max(0, Math.min(1, srcF - Math.floor(srcF)));
+    let cDraw;
+    if (cur >= bLo && cur <= bHi) {
+      /* 折线段的两端：起点是"上一格收盘"（第一格时就是本根开盘 o），
+         终点是光标所在这一格的收盘。kf=1 时正好落到 G.base[cur].c。 */
+      const a = (cur > start) ? G.base[cur - 1].c : o;
+      cDraw = a + (G.base[cur].c - a) * kf;
+    } else {
+      /* 光标还在上一根的那个收盘样本里（u 刚起步）。这时本根还没数据 ——
+         但**不能就此卡住不动**：上一版这里直接给 o，于是开头十几帧价格纹丝不动，
+         然后猛地跳一下（实测 30 Hz 下连续 10 帧不变）。
+         做法：折线的起点仍是 o，终点用本根第一格的收盘，按 kf 走 ——
+         kf 到 1 时正好接上 G.base[bLo].c，与下面的分支无缝衔接。 */
+      const a = o, b2 = G.base[Math.min(bHi, bLo)].c;
+      cDraw = a + (b2 - a) * kf;
+    }
+
+    const h = Math.max(fb.h, o, c, cDraw);
+    const l = Math.min(fb.l, o, c, cDraw);
+
+    return { t: tgt.t, o: o, h: h, l: l, c: cDraw, cFill: c, i: G.i + 1, u: u, s0: cur };
+  }
+
+  /** 清空"正在形成的那根"（换根 / 换周期 / 探针重置时调用） */
+  function fbReset() {
+    G.fbKey = null; G.fbLast = -1; G.fbH = -Infinity; G.fbL = Infinity;
+  }
+
+  /**
+   * 把"正在形成的那根 K 线"推进到第 lastStarted 根源样本，返回累积极值。
+   *
+   * 幂等且只进不退：
+   *   · 本根身份（key = G.i + 周期）没变时，只把**新出现**的样本并进累加器；
+   *   · lastStarted 比上次小（回退）→ 整体重建，结果与顺序推进完全一致；
+   *   · 换根 → key 变了 → 清空重来。
+   * 于是 h 只增、l 只减是**构造性**的，不依赖任何边界特判。
+   *
+   * @param {number} o           本根开盘价（上一根的收盘）
+   * @param {number} lastStarted 已经开始的最后一根源样本下标
+   * @param {number} endI        本根最后一根源样本下标
+   */
+  function formBar(o, lo, hi) {
+    const key = G.i + '@' + barMin();
+    /* 需要重建的两种情况：
+       ① 换根（key 变了）；
+       ② hi 比上次小 —— 说明光标**回退**了。这不只是探针会做的事：局中切换 K 线周期
+          （setBar）就会把 G.i / G.acc 一起回退，累加器若跟着沿用，就会把**上一个周期**
+          的极值带进当前这根，表现就是用户看到的"最新那根像独立出去的一样"。
+       重建结果与顺序推进一致，所以这是幂等的（tools/test_live_wick.js ④ 验这条）。 */
+    if (G.fbKey !== key || hi < G.fbLast) fbReset();
+    if (G.fbKey !== key) { G.fbKey = key; G.fbLast = lo - 1; }
+    const N = G.base.length;
+    /* ⚠ 这里 k 必须是**绝对下标**。第一版我写成 `for (k = G.fbLast+1; k <= lastStarted; k++)`
+       而 fbLast 起手是 -1 —— 于是把 base[0]、base[1] 当成了本根的样本
+       （实测 u=1 时 h=1056 而真值只有 1019）。起手必须落在本根第一个样本上。 */
+    const from = Math.max(lo, G.fbLast + 1);
+    for (let k = from; k <= hi; k++) {
+      if (k < 0 || k >= N) continue;
+      const b = G.base[k];
+      if (b.h > G.fbH) G.fbH = b.h;
+      if (b.l < G.fbL) G.fbL = b.l;
+    }
+    if (hi > G.fbLast) G.fbLast = hi;
+    return { h: isFinite(G.fbH) ? G.fbH : o, l: isFinite(G.fbL) ? G.fbL : o };
+  }
+
+  /** 当前这一刻"可成交"的价格。有 live bar 就用它（所见即所得），否则退回已完成那根的收盘。 */
+  function livePrice() {
+    const L = liveAt();
+    /* ⚠ 必须返回 cFill（离散的**真实**收盘），不是 c（画图用的平滑插值价）。
+       画出来那一端为了"每帧都在动"做了插值，但 **成交必须落在真实发生过的价格上** ——
+       否则玩家会在一个并不存在的价上成交，回测和结算都对不上。
+       liveAt().c 只给图表用，这里永远拿 cFill。 */
+    return L ? L.cFill : G.price;
+  }
+
+  /** 第 k 格该显示的量柱（活跃度是真值，颜色跟着蜡烛判，免得"上面绿 K、下面红柱"） */
+  function volNote(k, bd) {
+    return {
+      value: +volOf(G.seeds[k]).toFixed(2),
+      itemStyle: { color: bd.c >= bd.o ? 'rgba(255,77,79,.55)' : 'rgba(0,181,120,.55)' }
+    };
+  }
+
+  /**
+   * 把 [from, n) 这一段整理成画图要用的各类数组，**最后一格换成 live bar**。
+   *
+   * ★ 为什么抽成一个函数、而且必须返回**完整**数组：
+   *   `liveTick()` 走的是 `setOption` 的**合并**模式（不能传 notMerge，否则横轴、
+   *   均线、大盘线、dataZoom 全被清掉）。而 ECharts 的 merge 是
+   *     `!n && i in t || (t[i] = T(e[i]))`
+   *   —— `data` 是数组，命中 `Y(o)`（isArray）那条分支 → **整个数组被替换**，
+   *   不是逐元素合并。所以局部重绘也只能整段重传，传一根等于把 90 根蜡烛全删了。
+   *   两个调用点共用这一份，就不会出现"重绘时口径和全量渲染时不一样"。
+   */
+  function liveNote(from, n) {
+    const L = liveAt();
+    const liveIdx = L ? n - 1 : -1;
+    const xs = [], bars = [], vols = [];
+    let lo = Infinity, hi = -Infinity;
+    for (let i = from; i < n; i++) {
+      const isLive = (i === liveIdx);
+      const bd = isLive ? L : G.series[i];
+      if (!bd) continue;
+      xs.push(labelAt(i));
+      bars.push([+bd.o.toFixed(2), +bd.c.toFixed(2), +bd.l.toFixed(2), +bd.h.toFixed(2)]);
+      if (bd.l < lo) lo = bd.l;
+      if (bd.h > hi) hi = bd.h;
+      vols.push(volNote(i, bd));
+    }
+    return { L: L, xs: xs, bars: bars, vols: vols, lo: lo, hi: hi };
+  }
+
   /* ═══════════════ 天气日历 ═══════════════
      财经日历告诉你「20:30 有非农」，但不会告诉你数据是好是坏 —— 这个日历一样：
      它只标出**未来一天里天气什么时候会剧变**，一个字都不提往哪边。
 
      判定用的是 |Δseverity|，也就是"变化得多猛"。CAPE 炸上去和塌下来
      算出来是同一个数，所以强度条本身不泄露方向。
-     触发门槛跟价格冲击用的同一个 JUMP_AT —— 日历上标了的，盘面上就真会动。 */
+     触发门槛跟价格冲击用的同一个 P.JUMP_AT —— 日历上标了的，盘面上就真会动。 */
   function calendarAt(i, horizon) {
     if (!G.sev || !G.series.length) return [];
     const end = Math.min(G.series.length - 1, i + (horizon || perDay()));
     const raw = [];
     for (let k = Math.max(1, i + 1); k <= end; k++) {
       const d = Math.abs(G.sev[k] - G.sev[k - 1]);
-      if (d > JUMP_AT) raw.push({ at: k, d: d });
+      if (d > P.JUMP_AT) raw.push({ at: k, d: d });
     }
     // 同一场天气过程会连着好几根都在变，合并成一段
     const out = [];
@@ -987,11 +1828,11 @@
     if (rise('pm25', 200)) return { k: 'airBad', t: '😷 空气爆表', v: 'PM2.5 ' + s.pm25 };
     if (s.pm25 != null && fall('pm25', 10)) return { k: 'airGood', t: '🍃 空气通透', v: 'PM2.5 ' + s.pm25 };
     // 盘子扰动其次 —— 它是"资金面"消息，比天气更能解释一根莫名的长阳/长阴。
-    // 门槛 DISH_K × 2.5（约 p98）：实测 dish 的 p90 才 4.6，
+    // 门槛 P.DISH_K × 2.5（约 p98）：实测 dish 的 p90 才 4.6，
     // 按 1.5 倍设会让 17% 的 K 线都弹一次"大单扫货"，那就成了噪音而不是消息。
     if (s.dish != null) {
-      if (rise('dish', DISH_K * 2.5)) return { k: 'pump', t: '🏦 大单扫货', v: '盘子异动 +' + n1(s.dish) };
-      if (fall('dish', -DISH_K * 2.5)) return { k: 'dump', t: '📉 有人出货', v: '盘子异动 ' + n1(s.dish) };
+      if (rise('dish', P.DISH_K * 2.5)) return { k: 'pump', t: '🏦 大单扫货', v: '盘子异动 +' + n1(s.dish) };
+      if (fall('dish', -P.DISH_K * 2.5)) return { k: 'dump', t: '📉 有人出货', v: '盘子异动 ' + n1(s.dish) };
     }
     // 天气本身也是「状态」，同样只播上升沿 —— 一场雷暴持续两小时不该弹 8 次
     const pwc = prev ? prev.wcode : 0;
@@ -1047,11 +1888,13 @@
           if (!ai) return;
           const cats = (G.main.getOption().xAxis[0] || {}).data || [];
           const k = cats.indexOf(ai.value);
-          if (k >= 0) updateOhlc((G._from || 0) + k);
+          // 记住鼠标停在第几根：liveTick 的 10Hz 重绘要不抢悬停读数，
+          // 否则鼠标按住某一根看的时候，左上角那行会被"最新一根"顶掉。
+          if (k >= 0) { G.hoverIdx = (G._from || 0) + k; updateOhlc(G.hoverIdx); renderPress(); }
         } catch (e) { }
       });
       // 鼠标离开图表就回到最新一根
-      G.main.getZr().on('globalout', () => updateOhlc(G.i));
+      G.main.getZr().on('globalout', () => { G.hoverIdx = null; updateOhlc(G.i); renderPress(); });
     }
     if (!G.eqc) G.eqc = echarts.init($('#ggEqChart'), null, { renderer: 'canvas' });
   }
@@ -1089,6 +1932,13 @@
     return Math.max(0.4, 1 + p * 10 + Math.max(0, g - 6) * 2 + c / 60 + d * 0.5);
   }
 
+  /** 取第 k 格该显示的那根 K 线。最后一格且开盘时段中 → 未收盘那根（live bar）。 */
+  function barAt(k) {
+    const L = liveAt();
+    if (L && k === L.i) return L;
+    return G.series[k] || null;
+  }
+
   /**
    * 图表左上角那行读数 —— TradingView / MT4 的图例。
    * 不悬停时跟着最新一根走，鼠标在图上来回划就显示划到的那根。
@@ -1096,7 +1946,7 @@
   function updateOhlc(gi) {
     const box = $('#ggOhlc'); if (!box || !G.series.length) return;
     const k = Math.max(0, Math.min(gi, G.series.length - 1));
-    const b = G.series[k]; if (!b) return;
+    const b = barAt(k); if (!b) return;
     const d = b.c - b.o, col = colorOf(d);
     let ma = '';
     if (G._ma) {
@@ -1123,20 +1973,15 @@
     const want = Math.max(3, Math.floor(cw / 76));
     const vis = visBars();
     const from = Math.max(0, n - vis);
+    G._from = from;
 
-    const xs = [], bars = [], vols = [];
-    let lo = Infinity, hi = -Infinity;
-    for (let i = from; i < n; i++) {
-      const b = G.series[i];
-      xs.push(labelAt(i));
-      bars.push([+b.o.toFixed(2), +b.c.toFixed(2), +b.l.toFixed(2), +b.h.toFixed(2)]);
-      if (b.l < lo) lo = b.l;
-      if (b.h > hi) hi = b.h;
-      vols.push({
-        value: +volOf(G.seeds[i]).toFixed(2),
-        itemStyle: { color: b.c >= b.o ? 'rgba(255,77,79,.55)' : 'rgba(0,181,120,.55)' }
-      });
-    }
+    // 「未收盘的那根」：把 n-1 这一格换成 live bar，它逐帧在动。
+    // 注意**不是往后加一根** —— 真实行情软件里那根未收盘的蜡烛本来就占着最后一个格子，
+    // 加一根会让横轴在收盘时整体左移一格、看着像画面抖了一下。
+    // 数组的构造在 liveNote() 里，liveTick() 的 10Hz 局部重绘吃的是同一份，口径不会漂。
+    const d = liveNote(from, n);
+    const live = d.L, xs = d.xs, bars = d.bars, vols = d.vols;
+    let lo = d.lo, hi = d.hi;
     // 均线：真实看盘软件都有，而且它让「现在处在什么位置」一眼可见。
     // 注意要拿**整段** series 算再切片 —— 只拿可视段算的话，每次窗口滑动
     // 均线都会整体跳一下，看着像在抽搐。
@@ -1294,7 +2139,7 @@
         lineStyle: { width: 1.2, color: REG_C, opacity: .8, type: 'dashed' }
       }] : [])
     }, true);
-    G._from = from;
+    G.liveOn = !!live;              // live bar 会不会显示（没有就跳过 10Hz 的局部重绘）
     updateOhlc(G.i < 0 ? 0 : G.i);   // 没有悬停时，读数跟着最新一根走
 
     // 权益图的基准标签：本金可改，这个数字必须跟着走（原来写死在 HTML 里，改成 30 万后就不对了）
@@ -1302,9 +2147,10 @@
     if (eqb) eqb.textContent = '¥' + G.cash0.toLocaleString('en-US');
 
     // ── 现价标签：贴在右侧价格轴上，就是 MT4 那条「当前价」──
+    // 开盘时段中贴的是 live bar 的收盘（屏幕上那根蜡烛的收），不是"上一根的真收盘"。
     const tag = $('#ggLastTag');
     if (tag) {
-      const last = G.series[Math.min(G.i, G.series.length - 1)];
+      const last = barAt(Math.min(G.i, G.series.length - 1));
       const c = (last && last.c >= last.o) ? THEME.up : THEME.down;
       tag.textContent = n1(G.price);
       tag.style.background = c;
@@ -1316,8 +2162,8 @@
 
     // 大单爆点：最后一根波动特别大就闪一下
     if (n > from + 1) {
-      const b = G.series[n - 1], d = b.c - b.o;
-      if (Math.abs(d) / Math.max(1, b.o) > 0.025) floatText((d > 0 ? '▲ +' : '▼ ') + n1(d), colorOf(d), 30);
+      const b = barAt(n - 1), d = b ? (b.c - b.o) : 0;
+      if (Math.abs(d) / Math.max(1, b ? b.o : 1) > 0.025) floatText((d > 0 ? '▲ +' : '▼ ') + n1(d), colorOf(d), 30);
     }
 
     const e = G.hist.length ? G.hist : [G.cash];
@@ -1347,19 +2193,103 @@
     }, true);
   }
 
-  /* ═══════════════ 面板渲染 ═══════════════ */
-  function render() {
+  /* ═══════════════ 盘中局部重绘（TICK_HZ Hz） ═══════════════
+     半根那一步不能调 render()：那个函数会把右栏全部 innerHTML 重建一遍（成交记录、
+     挂单列表、天气日历、下单预估卡…），1 日档下每秒来几十次纯属浪费。
+     这里只做两件事：① 把最后一格蜡烛/量柱 patch 成 live bar；② 更新跟着价格走的几个数字。
+
+     ⚠ setOption 这里**不能传 true**（notMerge）：传了就只认这一小份 option，
+       横轴类别、均线、大盘线、dataZoom 全会被清掉。默认合并模式下，
+       只给 series[0].data 的最后一项，其余字段原样保留。 */
+  function liveTick() {
+    if (!G.main || !G.series.length || !G.liveOn) return;
+    const L = liveAt(); if (!L) return;
+    const n = Math.min(G.i + 1, G.series.length);
+    const from = Math.max(0, n - visBars());
+    const d = liveNote(from, n);
+    if (!d.bars.length) return;
+
+    const marks = [{ yAxis: +G.price.toFixed(2), lineStyle: { color: 'rgba(255,255,255,.20)', type: 'solid', width: 1 } }];
+    if (G.pos) {
+      marks.push({
+        yAxis: G.avg, lineStyle: { color: THEME.ac, type: 'dashed', width: 1 },
+        label: { formatter: '持仓均价 ' + n1(G.avg), color: THEME.ac, fontSize: 10, position: 'insideEndTop' }
+      });
+      const lp = liqPriceOf();
+      if (lp != null && isFinite(lp)) {
+        marks.push({
+          yAxis: lp, lineStyle: { color: THEME.down, type: 'dotted', width: 1.2 },
+          label: { formatter: '强平价 ' + n1(lp), color: THEME.down, fontSize: 10, position: 'insideEndBottom' }
+        });
+      }
+    }
+    try {
+      G.main.setOption({
+        series: [
+          { data: d.bars, markLine: { silent: true, symbol: 'none', data: marks } },
+          { data: d.vols }
+        ]
+      }, false, true);   // notMerge=false 保留其余字段；lazyUpdate=true 交给 ECharts 合并到下一帧画
+    } catch (e) { /* 合并失败就算了，下一根收盘时 render() 会整个重画 */ }
+
+    // 左上角读数：没有悬停时应该跟着这根在动的蜡烛走
+    const hov = G.hoverIdx;
+    updateOhlc(hov == null ? L.i : hov);
+    syncPriceUI();
+    renderLiveNums();
+  }
+
+  /* ═══════════════ 跟着价格走的那些数字 ═══════════════
+     拆出来是为了 liveTick()：盘中（半根那一步）只有价格在变，别的一律不动。
+     凡是"随价格实时变"的读数都收在这里，render() 和 liveTick() 共用一份，
+     免得两处各写一遍、迟早对不上。 */
+
+  /** 终端行情条：买卖价 / 点差 / 品种 / 大号下单键上的价格。
+   *  行情时间与连接状态是**整根**概念（"第 3 天 14:15" 对的是那根蜡烛的标签），
+   *  盘中不动，所以留在 render() 里。 */
+  function syncPriceUI() {
+    const setT = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
+    const px = (G.pos || G.i) ? G.price : 0;
+    if (!px) {
+      ['#ggTbSell', '#ggTbBuy', '#ggTbSpread', '#ggTbTime', '#ggLongPx', '#ggShortPx'].forEach(s => setT(s, '—'));
+      setT('#ggTbConn', '未开局');
+      return;
+    }
+    // 「点差」显示的是**真实成本**：一手开 + 平两次手续费，既折成指数点也给出金额
+    const costYuan = px * LOT_MULT * FEE_RATE * 2;
+    setT('#ggTbSell', n1(px));
+    setT('#ggTbBuy', n1(px));
+    setT('#ggTbSpread', (px * FEE_RATE * 2).toFixed(1) + ' 点');
+    const cost = $('#ggTbSpread');
+    if (cost) cost.title = '一手开+平的手续费，合计 ¥' + costYuan.toFixed(2);
+    const lp2 = $('#ggLongPx'), sp2 = $('#ggShortPx');
+    if (lp2) lp2.textContent = n1(px);
+    if (sp2) sp2.textContent = n1(px);
+    setT('#ggTbConn', G.ended ? '已收盘' : (G.running ? '行情推送中' : '已暂停'));
+  }
+
+  /** 账户明细里**随价格实时变**的那几行 + 权益大数字 + 挂单距离。
+   *  市值口径全部走 equity()/unreal()，而它俩读的是 G.price —— 盘中就是 live 价，
+   *  所以浮盈浮亏、可用保证金、爆仓距离都是逐帧在动的。 */
+  function renderLiveNums() {
     const e = equity(), diff = e - G.cash0, pct = diff / G.cash0 * 100;
     const col = colorOf(diff);
-
     const eqEl = $('#ggEquity');
     if (eqEl) {
-      if (eqEl.textContent !== n0(e)) {
-        eqEl.classList.remove('gg-pop');
-        void eqEl.offsetWidth;
-        eqEl.classList.add('gg-pop');
+      const txt = n0(e);
+      if (eqEl.textContent !== txt) {
+        /* ⚠ `void offsetWidth` 会**强制同步回流**。原来 10 Hz 下每次权益数字变化都触发，
+           提到 30 Hz 后刷新更频繁 —— 必须限流，否则主线程被浏览器布局吃掉。
+           120 ms 一次足够看清"跳一下"的动效（人眼也分不出更快的）。 */
+        const now = Date.now();
+        if (!G._popAt || now - G._popAt > 120) {
+          G._popAt = now;
+          eqEl.classList.remove('gg-pop');
+          void eqEl.offsetWidth;
+          eqEl.classList.add('gg-pop');
+        }
+        eqEl.textContent = txt;
       }
-      eqEl.textContent = n0(e);
       eqEl.style.color = col;
     }
     const chgEl = $('#ggEqChg');
@@ -1381,11 +2311,112 @@
     ];
     const box = $('#ggStats');
     if (box) {
-      box.innerHTML = rows.map(r =>
+      /* ⚠ 必须"没变就不写 DOM"。这里是整块 innerHTML 重建，而 renderLiveNums() 每个
+         tick 都跑 —— 原来 10 Hz 时每秒 10 次已经偏重，提到 30 Hz 就是每秒 30 次整树重建，
+         会把主线程吃掉、蜡烛反而更卡。
+         加了这个值比较之后：读数没变（价格只动了零点几个点时 n1() 出来是一样的）
+         就一次 DOM 都不碰。这也是能把 TICK_HZ 提到 30 的前提。 */
+      const html = rows.map(r =>
         '<div class="gg-row' + (r[2] < 0 ? ' gg-warn-row' : '') + '"><span>' + r[0] + '</span><span style="color:' +
         (r[2] ? colorOf(r[2]) : '') + '">' + r[1] + '</span></div>'
       ).join('');
+      if (html !== G._statsHtml) { G._statsHtml = html; box.innerHTML = html; }
     }
+
+    // 挂单列表里那个"离现价还有几个点"也要跟着动，否则盘中看到的距离是过期的
+    const ordBox = $('#ggOrders');
+    if (ordBox && G.orders.length) {
+      const oHtml = G.orders.map(o => {
+        const isL = o.kind === 'limit';
+        const c2 = isL ? '#4fc3f7' : (o.kind === 'sl' ? THEME.down : THEME.up);
+        const name = isL ? (o.dir > 0 ? '限价多' : '限价空') : (o.kind === 'sl' ? '止损' : '止盈');
+        const dist = G.price ? ((o.price - G.price) / G.price * 100) : 0;
+        return '<div class="gg-o"><span style="color:' + c2 + '">' + name + '</span>' +
+          '<span>' + (isL ? o.lots + ' 手' : '全平') + '</span>' +
+          '<span>' + n1(o.price) + '</span>' +
+          '<span class="dim">' + (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%</span>' +
+          '<button class="gg-x" data-cancel="' + o.id + '" title="撤单">×</button></div>';
+      }).join('');
+      if (oHtml !== G._ordHtml) { G._ordHtml = oHtml; ordBox.innerHTML = oHtml; }
+    }
+
+    // 保证金告急的边框脉冲
+    const panel = $('.game-panel');
+    if (panel) {
+      const ratio = mu > 0 ? e / mu : 9;
+      panel.classList.toggle('danger2', mu > 0 && ratio < 1 + MAINTAIN * 3);
+      panel.classList.toggle('danger', mu > 0 && ratio < 1 + MAINTAIN * 9 && ratio >= 1 + MAINTAIN * 3);
+    }
+    const live = $('#ggLive');
+    if (live) {
+      const hot = mu > 0 && e < mu * 2;
+      live.textContent = G.ended ? '已收盘' : (G.running ? (hot ? '⚠ 保证金告急' : '做盘中') : '已暂停');
+      live.className = 'gg-live' + (G.ended || !G.running ? ' off' : hot ? ' hot' : '');
+    }
+  }
+
+  /* ═══════════════ 面板渲染 ═══════════════ */
+  /* ═══════════════ 多维压力表 ═══════════════
+     把"天气好坏"拆回六个维度，各自显示：当前值 / 近 7 天分位 / 方向 / **对指数贡献多少点**。
+
+     ★ 它是"先画靶子再射箭"的：六个维度的数值全部**在 pickSeries 里算好、存进 seeds**
+       （`cparts` / `ctotal` / `cpct` / `cdir`），这里**只做读取和排版**。
+       分位是拿本局窗口的整段分布算的 —— 放在渲染里每帧扫 3552 点 × 6 维会白烧 CPU。
+
+     ★ 最后一行"合计"就是这一格的舒适度，和指数那边**共用同一份计算**
+       （comfort() = Σ contrib）。所以面板不是在讲故事，而是指数的另一种读法。
+
+     为什么用**分位**而不是绝对值：玩家看到"31.4℃"没有直觉，
+     但"近 7 天 88% 分位"立刻能懂 —— 和行情里的 RSI 88 是一回事。 */
+  function renderPress() {
+    const box = $('#ggPress');
+    if (!box || !G.seeds || !G.seeds.length) return;
+    // 没悬停时跟着最新一根走（和左上角读数同一个口径）
+    const hov = G.hoverIdx;
+    const k = (hov == null) ? Math.min(G.i, G.seeds.length - 1) : Math.max(0, Math.min(G.seeds.length - 1, hov));
+    const s = G.seeds[k];
+    if (!s || !s.cparts) {
+      if (box.innerHTML !== '<div class="gg-empty">等待天气数据…</div>') {
+        box.innerHTML = '<div class="gg-empty">等待天气数据…</div>';
+      }
+      return;
+    }
+    const cp = s.cparts;
+    // 分位 → 颜色：越靠两端越显眼。低分位 = 这一维很差（对指数是拖累），用红；高分位用绿
+    const colOf = p => p >= 0.8 ? THEME.up : p <= 0.2 ? THEME.down : 'rgba(255,255,255,.45)';
+    const rows = DIMS.map(d => {
+      const x = cp[d.key];
+      const p = (s.cpct && s.cpct[d.key] != null) ? s.cpct[d.key] : null;
+      const dir = (s.cdir && s.cdir[d.key]) || 0;
+      const arrow = dir > 0 ? '↑' : dir < 0 ? '↓' : '→';
+      const valTxt = x.v == null ? '—' : d.fmt(x.v);
+      const pctTxt = p == null ? '—' : (p * 100).toFixed(0) + '%';
+      const barW = p == null ? 0 : Math.max(2, Math.min(100, p * 100));
+      return '<div class="gg-pr" title="' + d.nm + ' 得分 ' + x.score.toFixed(0) + '/100，' +
+          '对舒适度贡献 ' + x.contrib.toFixed(1) + ' 分（满分 ' + (d.w * 100).toFixed(0) + '）">' +
+        '<span class="n">' + d.nm + '</span>' +
+        '<span class="v">' + valTxt + (d.unit ? '<i>' + d.unit + '</i>' : '') + '</span>' +
+        '<span class="gg-bar"><i style="width:' + barW.toFixed(0) + '%;background:' + colOf(p == null ? 0.5 : p) + '"></i></span>' +
+        '<span class="d" style="color:' + (dir > 0 ? THEME.up : dir < 0 ? THEME.down : THEME.dim) + '">' + arrow + '</span>' +
+        '<span class="c">' + pctTxt + '</span>' +
+      '</div>';
+    }).join('');
+    const total = s.ctotal;
+    const html = rows +
+      '<div class="gg-pr sum"><span class="n">舒适度合计</span>' +
+      '<span class="c" style="color:' + (total >= 70 ? THEME.up : total <= 50 ? THEME.down : THEME.fg) + '">' +
+      total.toFixed(1) + ' / 100</span></div>';
+    /* ⚠ 必须"没变就不写"：renderLiveNums() 每 tick 都跑，这里是整块 innerHTML 重建。
+       面板只在**换格或悬停位置变了**才需要重画，所以用 k + 内容一起做缓存键。 */
+    const key = k + '|' + html;
+    if (key !== G._pressKey) { G._pressKey = key; box.innerHTML = html; }
+  }
+
+  function render() {
+    // 权益大数字、账户明细、保证金告急、挂单距离这些都**随价格实时变**，
+    // 所以统一由 renderLiveNums() 画 —— 盘中那一刻也复用它。
+    renderLiveNums();
+    renderPress();
 
     const sub = $('#ggSub');
     if (sub) {
@@ -1443,28 +2474,14 @@
     }
 
     // ── 挂单列表 ──
+    // 逐条内容（含"离现价几个点"）由 renderLiveNums() 画，盘中那一刻会重画它；
+    // 这里只需要把"没有挂单"这个空状态和右上角计数补上。
     const ordBox = $('#ggOrders'), ordTip = $('#ggOrdTip');
-    if (ordBox) {
-      if (!G.orders.length) {
-        ordBox.innerHTML = '<div class="gg-empty">没有挂单</div>';
-      } else {
-        ordBox.innerHTML = G.orders.map(o => {
-          const isL = o.kind === 'limit';
-          const col = isL ? '#4fc3f7' : (o.kind === 'sl' ? THEME.down : THEME.up);
-          const name = isL ? (o.dir > 0 ? '限价多' : '限价空') : (o.kind === 'sl' ? '止损' : '止盈');
-          const dist = G.price ? ((o.price - G.price) / G.price * 100) : 0;
-          return '<div class="gg-o"><span style="color:' + col + '">' + name + '</span>' +
-            '<span>' + (isL ? o.lots + ' 手' : '全平') + '</span>' +
-            '<span>' + n1(o.price) + '</span>' +
-            '<span class="dim">' + (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%</span>' +
-            '<button class="gg-x" data-cancel="' + o.id + '" title="撤单">×</button></div>';
-        }).join('');
-      }
-      if (ordTip) {
-        const nL = G.orders.filter(o => o.kind === 'limit').length;
-        const nS = G.orders.length - nL;
-        ordTip.textContent = G.orders.length ? (nL + ' 个限价 · ' + nS + ' 个止损止盈') : '碰到价才成交';
-      }
+    if (ordBox && !G.orders.length) ordBox.innerHTML = '<div class="gg-empty">没有挂单</div>';
+    if (ordTip) {
+      const nL = G.orders.filter(o => o.kind === 'limit').length;
+      const nS = G.orders.length - nL;
+      ordTip.textContent = G.orders.length ? (nL + ' 个限价 · ' + nS + ' 个止损止盈') : '碰到价才成交';
     }
 
     // ── 天气日历 ──
@@ -1478,7 +2495,7 @@
       } else {
         calBox.innerHTML = evs.slice(0, 6).map(e => {
           // 强度档是按实测 |Δsev| 分布定的：整局中位 0.06、p99 约 1.7、max 约 2.5，
-          // 门槛 JUMP_AT=0.9 之上才进日历。所以「剧烈」是真的少见。
+          // 门槛 P.JUMP_AT=0.9 之上才进日历。所以「剧烈」是真的少见。
           const bars = Math.min(4, Math.max(1, Math.ceil(e.d / 0.7)));
           const when = labelAt(e.from) + (e.to > e.from ? '–' + labelAt(e.to).replace(/^D\d+ /, '') : '');
           return '<div class="gg-c"><span>' + when + '</span>' +
@@ -1497,48 +2514,24 @@
     // 学 MT4/MT5：买卖价直接印在按钮上，不用先去看报价再回来点。
     // 「点差」这里显示的是**真实成本**：一手开+平的两次手续费，
     // 既折算成指数点数也给出金额 —— 不是装样子的假数字。
-    const px = (G.pos || G.i) ? G.price : 0;
-    const setT = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
-    if (px) {
-      const costPts = px * FEE_RATE * 2;                       // 指数点
-      const costYuan = px * LOT_MULT * FEE_RATE * 2;           // 每手 ¥
-      setT('#ggTbSell', n1(px));
-      setT('#ggTbBuy', n1(px));
-      setT('#ggTbSpread', costPts.toFixed(1) + ' 点');
+    syncPriceUI();
+    // 行情时间 / 连接状态 / 速度提示是**整根**概念，盘中不动，所以留在这里
+    {
+      const setT = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
       setT('#ggSym', (G.city ? G.city.name : 'WXI') + ' WXI');
       // 把大盘是由哪几个城市平均出来的写进 title，鼠标停一下就能看到
       const symEl = $('#ggSym');
       if (symEl) symEl.title = G.regCities && G.regCities.length
         ? ('区域大盘 = ' + G.regCities.join(' / ') + ' 的等权平均（15 分钟，同省最多 8 城）')
         : '这台设备的区域大盘取不到，本局是纯本地行情';
-      const mm = (G.i % perDay()) * barMin();
-      setT('#ggTbTime', '第 ' + (Math.floor(G.i / perDay()) + 1) + ' 天 ' +
-        U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60));
-      const cost = $('#ggTbSpread');
-      if (cost) cost.title = '一手开+平的手续费，合计 ¥' + costYuan.toFixed(2);
-      setT('#ggTbConn', G.ended ? '已收盘' : (G.running ? '行情推送中' : '已暂停'));
+      if (G.series.length) {
+        const mm = (G.i % perDay()) * barMin();
+        setT('#ggTbTime', '第 ' + (Math.floor(G.i / perDay()) + 1) + ' 天 ' +
+          U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60));
+      }
       // 「行情速度」那一行右边实时报一局大概要跑多久 —— 光看数字没有体感
       const secs = roundSecs();
       setT('#ggSpeedTip', '一局约 ' + (secs >= 90 ? (secs / 60).toFixed(1) + ' 分钟' : Math.round(secs) + ' 秒'));
-      const lp2 = $('#ggLongPx'), sp2 = $('#ggShortPx');
-      if (lp2) lp2.textContent = n1(px);
-      if (sp2) sp2.textContent = n1(px);
-    } else {
-      ['#ggTbSell', '#ggTbBuy', '#ggTbSpread', '#ggTbTime', '#ggLongPx', '#ggShortPx'].forEach(s => setT(s, '—'));
-      setT('#ggTbConn', '未开局');
-    }
-
-    const panel = $('.game-panel');
-    if (panel) {
-      const ratio = mu > 0 ? e / mu : 9;
-      panel.classList.toggle('danger2', mu > 0 && ratio < 1 + MAINTAIN * 3);
-      panel.classList.toggle('danger', mu > 0 && ratio < 1 + MAINTAIN * 9 && ratio >= 1 + MAINTAIN * 3);
-    }
-    const live = $('#ggLive');
-    if (live) {
-      const hot = mu > 0 && e < mu * 2;
-      live.textContent = G.ended ? '已收盘' : (G.running ? (hot ? '⚠ 保证金告急' : '做盘中') : '已暂停');
-      live.className = 'gg-live' + (G.ended || !G.running ? ' off' : hot ? ' hot' : '');
     }
 
     drawCharts();
@@ -1564,13 +2557,23 @@
    *  一帧可能推进好几根（60 分钟档 + 狂暴 = 90/60/10 = 0.15 根/帧，不会；
    *  但 1 分钟档 + 狂暴 = 90/1/10 = 9 根/帧），所以循环里逐根走、
    *  只在整批结束后 render 一次。挂单/爆仓仍然**逐根**判定 —— 影线扫到
-   *  止损价就该在那一根成交，不能等这一批走完才看。 */
+   *  止损价就该在那一根成交，不能等这一批走完才看。
+   *
+   *  ⚠ **没攒够一根时不能再直接 return 了**：那样 1 日档会静止 32 秒。
+   *  现在走"半根"分支 —— 保留 G.acc 那个小数，用 live bar 把盘中价体现出来
+   *  （见 liveAt()），只做一次局部重绘。 */
   function tick() {
     if (!G.running || G.ended) return;
     G.acc += (SPEEDS[G.speedIdx] / barMin()) / TICK_HZ;
     let step = Math.floor(G.acc);
-    if (step < 1) return;                       // 还没攒够一根
     G.acc -= step;
+
+    // ── 半根：这一步还没走满一根 K 线，但行情得动 ──
+    if (step < 1) {
+      const lp = livePrice();
+      if (lp !== G.price) { G.price = lp; liveTick(); }
+      return;
+    }
 
     const eqBefore = equity();
     let news = null;
@@ -1580,7 +2583,11 @@
 
       const prevPx = G.price;
       G.i++;
-      G.price = G.series[G.i].c;
+      // 收盘价是**真采样**：这一根 15 分钟数据最后的那个值。
+      const closePx = G.series[G.i].c;
+      // 挂单判定要的是「这一根里价格走过的那段区间」，所以用开盘→收盘 + 本根影线，
+      // 而不是那个只走到一半的盘中价 —— 否则止损永远只在收盘后才可能被扫到。
+      G.price = closePx;
 
       // 挂单 / 止损止盈先跑，再判爆仓 —— 顺序反了的话，止损单会因为
       // "这一根已经先爆仓了"而永远来不及救你。
@@ -1599,6 +2606,8 @@
         return;
       }
 
+      // 权益曲线的采样点仍然**逐根**落（保持和蜡烛一一对应、数组长度不变），
+      // 用的是这一根的真收盘；盘中那条曲线由 liveTick 画的浮动值来体现。
       const e = equity();
       G.hist.push(e);
       G.peak = Math.max(G.peak, e);
@@ -1633,6 +2642,7 @@
     // 开局光标停在**预热段的最后一根**上：前面一周（7 天）的 K 线已经画好、已经走完了，
     // 你从下一根开始交易。所以第一根能下单的 K 线是 series[warmBars()]。
     G.i = Math.max(0, Math.min(G.series.length - 1, warmBars() - 1));
+    fbReset();   // 新一局：形成中那根从头开始
     G.price = G.series.length ? G.series[G.i].c : 0;
     G.cash = G.cash0;
     G.pos = 0; G.avg = 0;
@@ -1910,6 +2920,7 @@
     // G.i = floor(nowMin / 周期) - 1。用 ceil/round 会往前跳到一段**未来**天气的
     // 收盘价上，白白扫掉止损；宁向往回退，退后不会超过一个周期。
     G.i = Math.max(0, Math.min(G.series.length - 1, Math.floor(nowMin / barMin()) - 1));
+    fbReset();   // 换周期 = 换了一整套时间轴，形成中那根必须清掉，否则会带上一个周期的极值
     G.price = G.series[G.i] ? G.series[G.i].c : G.price;
     G.hist = hist;                            // 权益曲线照旧攒着，不因为换周期断掉
     syncBar();
@@ -2064,20 +3075,25 @@
 
   global.Game = {
     open, close, G, bind,
+    /* 标定/探针用的出口。
+       ⚠ 系数**只从 _t.P 取**，不要再往这里加 NOISE_K / JUMP_K 之类的别名 ——
+         那些是加载时的快照，标定脚本改了不生效（已经踩过两次，见 P 表上面的注释）。 */
     _t: {
-      pickSeries, severity, ema, median, robustScale, applyFill, applyFillAt, equity, marginUsed,
+      pickSeries, severity, comfort, comfortParts, DIMS, WCODE_N, ema, median, robustScale, applyFill, applyFillAt, equity, marginUsed,
       liqPriceOf, maxLots, beginRound, endRound, tick, beep, labelAt, newsAt, visBars,
       tolerablePct, placeLimit, setStop, cancelOrder, processOrders, calendarAt, freeEq,
-      reservedMargin, JUMP_AT, setCash, cashTip, cityWeight, dishScale,
+      reservedMargin, setCash, cashTip,
       slipOf, render, SLIP_K, SLIP_MAX, CAP_BASE, FEE_MIN,
       LEVS, LOT_MULT, MAINTAIN, FEE_RATE, SPEEDS,
       BASE, DEF_CASH, CASH_MIN, CASH_MAX, CASH_PRESETS,
-      REG_K, DEW_K, DISH_K, DISH_DECAY,
-      distKm, AIR_K, QUAKE_M0, QUAKE_K, QUAKE_R, QUAKE_DECAY, TYPHOON_R, TYPHOON_K, FCST_K,
+      QUAKE_M0, QUAKE_R, QUAKE_DECAY, TYPHOON_R,
       ROUND_DAYS, WARM_DAYS, TRADE_DAYS, BAR_MIN, BAR_N, SRC_MIN, SPEED_N, TICK_HZ,
       perDay, warmBars, tradeBars, totalBars, roundBars, srcBars, barMin, roundSecs,
       resample, aggSeed, zag, fmtMin, setBar,
-      NOISE_A, NOISE_BOOST, MICRO_K, MICRO_DECAY
+      liveAt, livePrice, liveNote, volNote, barAt,
+      setDbgComp: v => { DBG_COMP = !!v; },
+      fbReset,
+      P, cityAmp, cityWeight, dishScale
     }
   };
 
