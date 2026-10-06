@@ -27,6 +27,9 @@ android/build/
 tmp/
 *.tmp
 
+# ── 真实行情样本（欧易公开 K 线，用于给操盘手调参；十几 MB，可重新下载） ──
+data/crypto/
+
 # ── 部署时临时拷进站点的安装包（源在 dist/，由 .github/workflows/deploy.yml 拷贝） ──
 web/dist/
 
