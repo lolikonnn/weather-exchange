@@ -347,13 +347,33 @@
     const from = Math.max(0, n - vis);
 
     const xs = [], bars = [];
+    let lo = Infinity, hi = -Infinity;
     for (let i = from; i < n; i++) {
       const b = G.series[i];
       xs.push(labelAt(i));
       bars.push([+b.o.toFixed(2), +b.c.toFixed(2), +b.l.toFixed(2), +b.h.toFixed(2)]);
+      if (b.l < lo) lo = b.l;
+      if (b.h > hi) hi = b.h;
     }
+    // 把 Y 轴拉开到能容纳「持仓均价」—— 否则入场线落在可视范围外时，
+    // ECharts 会把它贴到坐标轴边缘，看起来像"价格就在最底下"，是骗人的。
+    // 强平价只在**离得够近**时才纳入：1 倍杠杆下它在 90% 以外、10 倍下也在 10% 以外，
+    // 硬拉进来会把蜡烛压成上面一小撮（试过 0.9 倍跨度的阈值，10 倍杠杆就把图压掉一半）。
+    if (G.pos && isFinite(lo) && isFinite(hi)) {
+      lo = Math.min(lo, G.avg); hi = Math.max(hi, G.avg);
+      const lp0 = liqPriceOf();
+      if (lp0 != null && isFinite(lp0)) {
+        const span = (hi - lo) || 1;
+        if (lp0 > lo - span * 0.25 && lp0 < hi + span * 0.25) { lo = Math.min(lo, lp0); hi = Math.max(hi, lp0); }
+      }
+    }
+    const yPad = ((hi - lo) || 1) * 0.08;
+    const yMin = isFinite(lo) ? +(lo - yPad).toFixed(2) : undefined;
+    const yMax = isFinite(hi) ? +(hi + yPad).toFixed(2) : undefined;
 
     const marks = [];
+    // 现价水平线：横贯整张图，眼睛不用去找最后一根 K 线在哪
+    if (G.i) marks.push({ yAxis: G.price, lineStyle: { color: 'rgba(255,255,255,.20)', type: 'solid', width: 1 } });
     if (G.pos) {
       marks.push({
         yAxis: G.avg, lineStyle: { color: THEME.ac, type: 'dashed', width: 1 },
@@ -398,7 +418,7 @@
         axisTick: { show: false }
       },
       yAxis: {
-        type: 'value', scale: true,
+        type: 'value', scale: true, min: yMin, max: yMax,
         axisLabel: { color: THEME.dim, fontSize: 10, formatter: v => v.toFixed(0) },
         splitLine: { lineStyle: { color: 'rgba(255,255,255,.05)' } }
       },
@@ -412,6 +432,20 @@
         markLine: marks.length ? { silent: true, symbol: 'none', data: marks } : undefined
       }]
     }, true);
+
+    // ── 现价标签：贴在右侧价格轴上，就是 MT4 那条「当前价」──
+    const tag = $('#ggLastTag');
+    if (tag) {
+      const last = G.series[Math.min(G.i, G.series.length - 1)];
+      const c = (last && last.c >= last.o) ? THEME.up : THEME.down;
+      tag.textContent = n1(G.price);
+      tag.style.background = c;
+      try {
+        const py = G.main.convertToPixel({ yAxisIndex: 0 }, G.price);
+        if (py != null && isFinite(py)) tag.style.top = Math.round(py) + 'px';
+      } catch (e) { }
+    }
+
     // 大单爆点：最后一根波动特别大就闪一下
     if (n > from + 1) {
       const b = G.series[n - 1], d = b.c - b.o;
@@ -502,6 +536,33 @@
     if (bl && bs) bl.disabled = bs.disabled = (G.ended || !G.running || lots < 1);
     const bc = $('#ggClosePos');
     if (bc) bc.disabled = !G.pos;
+
+    // ── 终端行情条 + 大号下单键上的价格 ──
+    // 学 MT4/MT5：买卖价直接印在按钮上，不用先去看报价再回来点。
+    // 「点差」这里显示的是**真实成本**：一手开+平的两次手续费，
+    // 既折算成指数点数也给出金额 —— 不是装样子的假数字。
+    const px = (G.pos || G.i) ? G.price : 0;
+    const setT = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
+    if (px) {
+      const costPts = px * FEE_RATE * 2;                       // 指数点
+      const costYuan = px * LOT_MULT * FEE_RATE * 2;           // 每手 ¥
+      setT('#ggTbSell', n1(px));
+      setT('#ggTbBuy', n1(px));
+      setT('#ggTbSpread', costPts.toFixed(1) + ' 点');
+      setT('#ggSym', (G.city ? G.city.name : 'WXI') + ' WXI');
+      const mm = (G.i % PER_DAY) * 15;
+      setT('#ggTbTime', '第 ' + (Math.floor(G.i / PER_DAY) + 1) + ' 天 ' +
+        U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60));
+      const cost = $('#ggTbSpread');
+      if (cost) cost.title = '一手开+平的手续费，合计 ¥' + costYuan.toFixed(2);
+      setT('#ggTbConn', G.ended ? '已收盘' : (G.running ? '行情推送中' : '已暂停'));
+      const lp2 = $('#ggLongPx'), sp2 = $('#ggShortPx');
+      if (lp2) lp2.textContent = n1(px);
+      if (sp2) sp2.textContent = n1(px);
+    } else {
+      ['#ggTbSell', '#ggTbBuy', '#ggTbSpread', '#ggTbTime', '#ggLongPx', '#ggShortPx'].forEach(s => setT(s, '—'));
+      setT('#ggTbConn', '未开局');
+    }
 
     const panel = $('.game-panel');
     if (panel) {

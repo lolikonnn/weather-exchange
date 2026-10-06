@@ -19,20 +19,24 @@
   50%      { box-shadow: 0 0 0 6px rgba(255, 167, 38, 0); }
 }
 
-/* ───────── 全屏面板 ───────── */
+/* ───────── 全屏终端 ─────────
+   这里原来是一个 min(1180px,100%) × min(760px,100%) 的居中对话框。
+   问题出在 1600 宽的屏上：面板只占中间那 ~1170px，四周露出一圈主站，
+   于是看起来就像「只有中间那块是 K 线，主站的曲线根本没被换掉」。
+   —— 那个观感和「进入游戏 = 打开一个交易终端」完全是两回事。
+   现在铺满视口，主站的东西一点都看不见。 */
 .game-mask {
   position: fixed; inset: 0; z-index: 340;
-  background: rgba(6, 8, 12, .82);
-  display: flex; align-items: center; justify-content: center;
-  padding: 18px;
+  background: #0b0e14;
+  display: flex;
+  padding: 0;
 }
 .game-panel {
-  width: min(1180px, 100%); height: min(760px, 100%);
+  width: 100%; height: 100%;
   display: flex; flex-direction: column;
   background: var(--panel, #151820);
-  border: 1px solid var(--line, #262b36);
-  border-radius: 12px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
   position: relative;
 }
@@ -41,8 +45,8 @@
 .game-panel.danger  { animation: gg-pulse 1s ease-in-out infinite; }
 .game-panel.danger2 { animation: gg-pulse .42s ease-in-out infinite, gg-shake .28s linear infinite; }
 @keyframes gg-pulse {
-  0%, 100% { box-shadow: 0 24px 70px rgba(0,0,0,.6), inset 0 0 0 2px rgba(255, 77, 79, .35); }
-  50%      { box-shadow: 0 24px 70px rgba(0,0,0,.6), inset 0 0 60px 8px rgba(255, 77, 79, .40); }
+  0%, 100% { box-shadow: inset 0 0 0 2px rgba(255, 77, 79, .35); }
+  50%      { box-shadow: inset 0 0 70px 10px rgba(255, 77, 79, .45); }
 }
 @keyframes gg-shake {
   0%, 100% { transform: translate(0, 0); }
@@ -72,11 +76,45 @@
 .gg-live.off { background: rgba(139,145,158,.14); color: var(--dim, #8b919e); border-color: var(--line, #262b36); }
 .gg-live.hot { background: rgba(255,77,79,.16); color: #ff7b7d; border-color: rgba(255,77,79,.45); }
 
+/* ───────── 终端行情条（学 MT4/MT5 顶栏那一条） ─────────
+   一行里塞：品种 / 周期 / 买卖价 / 点差 / 行情时间 / 连接状态。
+   真交易终端看惯了这一条，没有它会觉得「这不是个交易软件」。 */
+.gg-tbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 5px 12px; border-bottom: 1px solid var(--line, #262b36);
+  background: #10141c; font-size: 11.5px; color: var(--dim, #8b919e);
+  flex: none; overflow-x: auto; white-space: nowrap;
+}
+.gg-tbar .gg-sym { font-size: 14px; font-weight: 700; color: #e6ebf5; letter-spacing: .4px; }
+.gg-tbar .gg-tf {
+  padding: 1px 6px; border: 1px solid var(--line, #262b36); border-radius: 4px;
+  color: #c3cad6; font-weight: 600;
+}
+.gg-tbar .gg-sell { color: #ff7b7d; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gg-tbar .gg-buy  { color: #2bd6a0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gg-tbar .gg-sp   { color: #ffb74d; }
+.gg-tbar .gg-right-side { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+.gg-tbar .gg-dot { color: #2bd6a0; }
+
+/* 现价标签：贴在右侧价格轴上，就是 MT4 那条「当前价」 */
+.gg-last-tag {
+  position: absolute; right: 0; z-index: 4; transform: translateY(-50%);
+  padding: 1px 6px; border-radius: 3px 0 0 3px;
+  font: 700 11px/1.5 'SF Mono', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; color: #0b0e14; pointer-events: none;
+}
+
+/* ───────── 大号下单键（买/卖价直接写在按钮上） ───────── */
+.gg-btns button b { display: block; font-size: 13px; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+
 .gg-body { flex: 1; display: flex; min-height: 0; }
 .gg-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line, #262b36); }
 .gg-right { width: 322px; flex: none; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
 
 .gg-chart { flex: 1; min-height: 0; }
+/* 包一层是为了给「现价标签」一个定位父级（它要贴在右侧价格轴上） */
+.gg-chartwrap { flex: 1; min-height: 0; position: relative; display: flex; }
+.gg-chartwrap .gg-chart { flex: 1; min-width: 0; }
 .gg-eq { flex: none; height: 148px; border-top: 1px solid var(--line, #262b36); display: flex; flex-direction: column; }
 .gg-eq-head {
   display: flex; justify-content: space-between; align-items: center;

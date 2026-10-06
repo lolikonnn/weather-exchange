@@ -220,6 +220,19 @@
      一局 480 根 K 线 = 5 天。详细规则、调参依据与坑见 web/js/game.js 顶部注释。 -->
 <div class="game-mask" id="game" hidden>
   <div class="game-panel">
+    <!-- 终端行情条：品种 / 周期 / 买卖价 / 点差 / 行情时间 / 连接状态 -->
+    <div class="gg-tbar">
+      <span class="gg-sym" id="ggSym">WXI</span>
+      <span class="gg-tf">15M</span>
+      <span>卖 <b class="gg-sell" id="ggTbSell">—</b></span>
+      <span>买 <b class="gg-buy" id="ggTbBuy">—</b></span>
+      <span>点差 <b class="gg-sp" id="ggTbSpread">—</b></span>
+      <span class="gg-right-side">
+        <span id="ggTbTime">—</span>
+        <span><b class="gg-dot">●</b> <span id="ggTbConn">未开局</span></span>
+      </span>
+    </div>
+
     <div class="gg-head">
       <strong>🎮 点击做空天气</strong>
       <span class="gg-sub" id="ggSub">—</span>
@@ -230,7 +243,10 @@
 
     <div class="gg-body">
       <div class="gg-left">
-        <div class="gg-chart" id="ggChart"></div>
+        <div class="gg-chartwrap">
+          <div class="gg-chart" id="ggChart"></div>
+          <span class="gg-last-tag" id="ggLastTag">—</span>
+        </div>
         <div class="gg-eq">
           <div class="gg-eq-head"><span>账户权益曲线</span><span>虚线＝本金 ¥100,000</span></div>
           <div class="gg-chart gg-chart-sm" id="ggEqChart"></div>
@@ -266,8 +282,8 @@
           </div>
 
           <div class="gg-btns">
-            <button class="gg-long"  id="ggLong"  title="按当前仓位买入开多">做多 ↑</button>
-            <button class="gg-short" id="ggShort" title="按当前仓位卖出开空">做空 ↓</button>
+            <button class="gg-long"  id="ggLong"  title="按当前仓位买入开多">做多 ↑<b id="ggLongPx">—</b></button>
+            <button class="gg-short" id="ggShort" title="按当前仓位卖出开空">做空 ↓<b id="ggShortPx">—</b></button>
           </div>
           <div class="gg-grid2">
             <button id="ggClosePos" title="按现价平掉全部持仓">一键平仓</button>
