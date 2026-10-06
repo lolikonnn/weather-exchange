@@ -413,7 +413,7 @@ Open-Meteo 的 `minutely_15` **两个主机的历史深度不一样**：
 | 形态 | 说明 | 需要什么 |
 | --- | --- | --- |
 | **网页版** | [lolikonnn.github.io/weather-fighter](https://lolikonnn.github.io/weather-fighter/) | 一个现代浏览器 |
-| **Android APK** | `dist\天气战士.apk`，`minSdk 21` | Android 5.0+ |
+| **Android APK** | `dist\天气战士.apk`，`minSdk 21`，**版本 9.4.7**（`versionCode 90407`） | Android 5.0+ |
 
 两个版本界面**完全相同**，区别只在数据怎么取（见下）。
 

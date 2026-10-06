@@ -38,6 +38,12 @@ D8 = os.path.join(BT, "d8.bat")
 ZIPALIGN = os.path.join(BT, "zipalign.exe")
 APKSIGNER = os.path.join(BT, "apksigner.bat")
 
+# 版本号。versionName 是给人和应用商店看的，versionCode 必须是单调递增的整数
+# （Android 只认这个判断"哪个更新"），所以按 major*10000 + minor*100 + patch 折算。
+VERSION_NAME = "9.4.7"
+_V = VERSION_NAME.split(".")
+VERSION_CODE = str(int(_V[0]) * 10000 + int(_V[1]) * 100 + int(_V[2]))
+
 JAVA_HOME = r"D:\Java"
 KEYSTORE = os.path.join(ROOT, "android", "debug.keystore")
 KS_PASS = "android"
@@ -149,7 +155,7 @@ def main():
          "-A", os.path.join(ROOT, "android", "assets"),
          "--min-sdk-version", "21",
          "--target-sdk-version", "35",
-         "--version-code", "1", "--version-name", "1.0.0",
+         "--version-code", VERSION_CODE, "--version-name", VERSION_NAME,
          "--no-version-vectors",
          res_zip])
 
