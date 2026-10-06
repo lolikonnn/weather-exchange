@@ -1564,7 +1564,11 @@
 
      ★ **收盘瞬间零跳变**：u 走到 1 时光标正好落在 `(G.i+2)*dpb - 1` 这个整数上 →
        kf = 0 → `c` 精确等于 base[(G.i+2)*dpb-1].c，也就是那根真 K 线的收盘价。
-       高/低在那一刻也等于它。所以"live bar 变成真 K 线"这一下不需要任何补正。 */
+       高/低在那一刻也等于它。所以"live bar 变成真 K 线"这一下不需要任何补正。
+
+     ★ **dpb < 1（1 分 / 5 分）走的是上面公式的独立分支**，见函数中段那段注释：
+       这两档的源样本窗口会塌成空区间（start === end），不能套同一个公式。
+       分支里同样满足 u=0 是一个点、u=1 精确等于 series[G.i] 的 c/h/l。 */
   function liveAt() {
     if (!G.running || G.ended) return null;
     if (G.i < 0 || !G.base || !G.base.length) return null;
@@ -1609,6 +1613,43 @@
        换对之后接缝恒为 0（tools/dbg_chartdata.js 可直接看到）。 */
     const prevIdx = Math.max(0, G.i - 1);
     const o = G.series[prevIdx].c;
+
+    /* ── dpb < 1（1 分 / 5 分）单独一条路：这两档的 series 是**插值展开**出来的，
+       一根 15 分钟源样本被摊成 3 ~ 15 根子 K 线，子 K 线**内部没有任何源样本可走**，
+       所以不能套下面那套"按源样本窗口推光标"的公式。
+
+       ⚠ 以前就是硬套的，窗口会塌成空区间：
+         lastOf(j) = ceil((j+1)·dpb) - 1 在 dpb<1 时，同一根父 K 线的相邻子根**取值相同**
+         → start === end → bLo = start+1 > bHi = endI
+         → `cur >= bLo && cur <= bHi` 恒假 → 成交价 cFill 永远退化成 o（上一根子根的收盘）
+         → 而且 srcF 停在整数上，kf = srcF - floor(srcF) 恒为 0，画图价一整根纹丝不动。
+       实测（北京，base 3552 根）：1 分档 cFill 恰好 == series[j-1].c 占 3733/3999、
+       画出来的收盘与 series[j] 不符 3720/3999（中位差 0.04%、最大 3.74%）；
+       5 分档 2666/3999、2665/3999。**15 分及以上完全不受影响**（那时 start < end，窗口是实的）。
+
+       这里改成直接拿**本根自己**的 o/h/l/c 当目标（G.series[G.i] 就是那根子 K 线），
+       从开盘价 o 按完成度 u 线性走过去：
+         · u=0 → h=l=c=o，仍是一个点（"新 K 线刚开盘"该有的样子）
+         · u=1 → 精确等于 series[G.i] 的 c/h/l，**收盘瞬间零跳变**
+         · 因为展开时恒有 series[G.i].o === o、h ≥ max(o,c)、l ≤ min(o,c)，
+           线性插值途中 h ≥ max(o,c)、l ≤ min(o,c) 也恒成立 —— "极值包住实体"
+           这条渲染硬要求不会被破坏，h/l 也仍旧单调（h 只增、l 只减）。
+       成交价 cFill 仍守老规矩：**只认已经走完的那一根**的收盘（= o），走满了才认本根。 */
+    if (dpb < 1) {
+      const nb = G.series[G.i] || {};
+      const cT = (nb.c == null) ? o : nb.c;
+      const hT = (nb.h == null) ? cT : nb.h;
+      const lT = (nb.l == null) ? cT : nb.l;
+      const cD = o + (cT - o) * u;
+      const hD = o + (hT - o) * u;
+      const lD = o + (lT - o) * u;
+      return {
+        t: tgt.t, o: o,
+        h: Math.max(hD, o, cD), l: Math.min(lD, o, cD),
+        c: cD, cFill: (u >= 1) ? cT : o,
+        i: G.i + 1, u: u, s0: G.i
+      };
+    }
 
     /* 本根在系列里的身份是 series[G.i]（live bar 占的就是这一格）。
        u=1 时要精确等于它，所以收盘价与极值的窗口都以 G.i 这根为基准。
@@ -2970,7 +3011,7 @@
         '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
         '<li>手续费万分之五、开平都收，另有<b>滑点</b>（单子越大越贵）—— 本金越大、城市越小，成本越肉疼。</li>' +
         '<li>右侧随时看得到<b>强平价</b>和<b>爆仓距离</b> —— 碰到就结束。</li>' +
-        '<li>行情速度 <b>15 / 22 / 45 / 90 分钟天气每秒</b>，30 天交易约 <b>8 ~ 48 分钟</b>，随时能暂停。' +
+        '<li>行情速度 <b>15 / 30 / 60 / 120 / 240 分钟天气每秒</b>，30 天交易约 <b>3 ~ 48 分钟</b>，随时能暂停。' +
         '速度是"每秒推进多少天气时间"，所以跟 K 线周期无关 —— 挑 1 分钟只是看得更细，不会玩得更久。</li>' +
         '</ul>' +
         '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
