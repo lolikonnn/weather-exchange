@@ -106,10 +106,10 @@
   const JUMP_DECAY = 0.78;
   /* 一局的结构 = **预热 + 交易**。
      群里那位说得对：真实的行情软件打开就是一条已经走了很久的连续 K 线，不会从空白开始长。
-     所以进来先白送 10 天历史（画在图上、已经走完，你只能看不能交易），
-     光标停在历史末尾，「开始玩」是从这一天往后接着走，再走 30 天结算。 */
-  const WARM_DAYS  = 10;       // 开局先铺满的历史天数（只看不交易）
-  const TRADE_DAYS = 30;       // 实际要交易的天数
+     所以进来先白送 1 周（7 天）历史（画在图上、已经走完，你只能看不能交易），
+     光标停在历史末尾，「开始玩」是从这一天往后接着走，再走 1 个月（30 天）结算。 */
+  const WARM_DAYS  = 7;        // 开局先铺满的历史天数（只看不交易）—— 一周
+  const TRADE_DAYS = 30;       // 实际要交易的天数 —— 一个月
   const ROUND_DAYS = TRADE_DAYS;  // 兼容旧名字：一局 = 交易天数
   /* K 线周期档位（分钟），照参考软件的排布：分钟K / 时K / 日K 三层。
      **15 分钟是数据源的真实粒度**：Open-Meteo 的 minutely_15 已经是最细的免费粒度了
@@ -1390,7 +1390,7 @@
     const sub = $('#ggSub');
     if (sub) {
       const mm = (G.i % perDay()) * barMin();
-      // 进度按**交易段**算：预热那 10 天是白送的，不该让分母变成 40 天。
+      // 进度按**交易段**算：预热那一周是白送的，不该让分母变成 37 天。
       const done = Math.max(0, Math.min(tradeBars(), G.i + 1 - warmBars()));
       const when = G.series.length
         ? ('第 ' + (Math.floor(G.i / perDay()) + 1) + ' 天 ' + U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60) +
@@ -1630,7 +1630,7 @@
 
   /* ═══════════════ 一局的生命周期 ═══════════════ */
   function resetState() {
-    // 开局光标停在**预热段的最后一根**上：前面 10 天的 K 线已经画好、已经走完了，
+    // 开局光标停在**预热段的最后一根**上：前面一周（7 天）的 K 线已经画好、已经走完了，
     // 你从下一根开始交易。所以第一根能下单的 K 线是 series[warmBars()]。
     G.i = Math.max(0, Math.min(G.series.length - 1, warmBars() - 1));
     G.price = G.series.length ? G.series[G.i].c : 0;
