@@ -281,6 +281,10 @@
             <button data-pct="100">满仓</button>
           </div>
 
+          <!-- 下单前先让你看清这一单到底有多大 —— 名义仓位 / 手续费 / 能扛住多少反向波动。
+               这三行是照 bilibili「FX 简单!」那张下单卡搬的，比只看一个「30%」直观得多。 -->
+          <div class="gg-calc" id="ggCalc"></div>
+
           <div class="gg-btns">
             <button class="gg-long"  id="ggLong"  title="按当前仓位买入开多">做多 ↑<b id="ggLongPx">—</b></button>
             <button class="gg-short" id="ggShort" title="按当前仓位卖出开空">做空 ↓<b id="ggShortPx">—</b></button>
@@ -288,6 +292,9 @@
           <div class="gg-grid2">
             <button id="ggClosePos" title="按现价平掉全部持仓">一键平仓</button>
           </div>
+
+          <div class="gg-lab" style="margin-top:11px"><span>成交记录</span><b id="ggTrades">0 笔</b></div>
+          <div class="gg-fills" id="ggFills"><div class="gg-empty">还没下过单</div></div>
 
           <div class="gg-lab" style="margin-top:11px"><span>行情速度</span><b></b></div>
           <div class="gg-seg" id="ggSpeed">

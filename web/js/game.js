@@ -86,6 +86,7 @@
     peak: START_CASH,
     maxDD: 0,
     trades: 0,
+    fills: [],        // 最近 5 笔成交，新的在前
     hist: [],
     liqPrice: null,
     liqAt: 0,
@@ -133,6 +134,26 @@
     return G.avg + (Math.abs(G.pos) * G.avg * LOT_MULT / G.lev * MAINTAIN - G.cash) / (G.pos * LOT_MULT);
   }
 
+  /**
+   * 照现在的仓位比例下单的话，价格反向走多少就爆仓（百分数）。
+   *
+   * 这把「杠杆」和「仓位」两件事合成了一个数字 —— 这才是新手真正需要看的东西：
+   * 满仓 20 倍是 4.5%，30% 仓位 20 倍是 16.2%，满仓 100 倍只有 0.9%。
+   * 推导：开仓后现金 C、保证金 M = 手数·价·LOT/N，
+   * 爆仓时 C + 手数·Δp·LOT = M·MAINTAIN  →  Δp = (M·MAINTAIN − C)/(手数·LOT)
+   * 这个做法照 bilibili「FX 简单!」的下单卡搬的（它写「约可承受反向波动 4.00%」）。
+   * 返回 null 表示连 1 手都开不出来。
+   */
+  function tolerablePct(pct) {
+    if (!G.price) return null;
+    const lots = Math.floor(maxLots() * pct / 100);
+    if (lots < 1) return null;
+    const M = lots * G.price * LOT_MULT / G.lev;
+    const dp = (M * MAINTAIN - G.cash) / (lots * LOT_MULT);
+    if (dp >= 0) return 0;                       // 开出来就已经在爆仓线下面了
+    return Math.min(999, Math.abs(dp) / G.price * 100);
+  }
+
   /* ═══════════════ 成交 ═══════════════ */
   function applyFill(q) {
     if (!q) return;
@@ -152,6 +173,12 @@
     G.pos = old + q;
     if (!G.pos) G.avg = 0;
     G.trades++;
+    // 成交记录（最近 5 笔，新的在上）
+    const kind = old === 0 ? (q > 0 ? '开多' : '开空')
+      : (G.pos === 0 ? '平仓'
+        : ((old > 0) === (q > 0) ? (q > 0 ? '加多' : '加空') : (q > 0 ? '减空' : '减多')));
+    G.fills.unshift({ at: G.i, kind: kind, lots: Math.abs(q), px: p, fee: fee });
+    if (G.fills.length > 5) G.fills.length = 5;
   }
 
   function liquidate() {
@@ -532,6 +559,36 @@
     const lots = Math.floor(maxLots() * G.pct / 100);
     const lab = $('#ggLots');
     if (lab) lab.textContent = G.pct + '% ≈ ' + lots + ' 手' + (lots < 1 ? '（不够 1 手）' : '');
+
+    // ── 下单预估：名义仓位 / 开仓手续费 / 可承受反向波动 ──
+    const tPct = tolerablePct(G.pct);
+    const calc = $('#ggCalc');
+    if (calc) {
+      const notional = lots * G.price * LOT_MULT;
+      const openFee = notional * FEE_RATE;
+      const keyCls = tPct == null ? '' : (tPct < 3 ? ' gg-danger' : (tPct > 12 ? ' gg-safe' : ''));
+      calc.innerHTML =
+        '<div class="gg-crow"><span>名义仓位</span><b>' + (lots ? money(notional) : '—') + '</b></div>' +
+        '<div class="gg-crow"><span>开仓手续费</span><b>' +
+        (lots ? '¥' + openFee.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—') +
+        '</b></div>' +
+        '<div class="gg-crow gg-key' + keyCls + '"><span>约可承受反向波动</span><b>' +
+        (tPct == null ? '—' : tPct.toFixed(2) + '%') + '</b></div>';
+    }
+
+    // ── 成交记录 ──
+    const fills = $('#ggFills'), tcount = $('#ggTrades');
+    if (tcount) tcount.textContent = G.trades + ' 笔';
+    if (fills) {
+      if (!G.fills || !G.fills.length) fills.innerHTML = '<div class="gg-empty">还没下过单</div>';
+      else fills.innerHTML = G.fills.map(f => {
+        const col = f.kind.indexOf('多') >= 0 ? THEME.up : THEME.down;
+        return '<div class="gg-f"><span>' + labelAt(f.at) + '</span>' +
+          '<span style="color:' + col + '">' + f.kind + ' ' + f.lots + ' 手</span>' +
+          '<span>' + n1(f.px) + '</span></div>';
+      }).join('');
+    }
+
     const bl = $('#ggLong'), bs = $('#ggShort');
     if (bl && bs) bl.disabled = bs.disabled = (G.ended || !G.running || lots < 1);
     const bc = $('#ggClosePos');
@@ -642,6 +699,7 @@
     G.cash = START_CASH;
     G.pos = 0; G.avg = 0;
     G.peak = START_CASH; G.maxDD = 0; G.trades = 0;
+    G.fills = [];
     G.hist = [START_CASH];
     G.liqPrice = null; G.liqAt = 0; G.lastNews = '';
     G.ended = false;
@@ -869,7 +927,8 @@
     _t: {
       pickSeries, severity, ema, median, robustScale, applyFill, equity, marginUsed,
       liqPriceOf, maxLots, beginRound, endRound, tick, beep, labelAt, newsAt, visBars,
-      LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, START_CASH
+      tolerablePct,
+      LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, START_CASH, FEE_RATE
     }
   };
 
