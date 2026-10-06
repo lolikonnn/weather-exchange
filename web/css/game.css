@@ -350,6 +350,23 @@
   padding: 1px 5px; border-radius: 4px; color: #ffd28a;
 }
 
+/* 开场卡片里的本金选择器 */
+.gg-cash { text-align: left; margin: 14px 0; padding: 11px 12px; border: 1px solid var(--line, #262b36); border-radius: 9px; background: #14181f; }
+.gg-cash-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
+.gg-cash-head span { font-size: 12.5px; color: var(--dim, #8b919e); }
+.gg-cash-head b { font: 700 17px/1 'SF Mono', Menlo, monospace; color: #ffb74d; font-variant-numeric: tabular-nums; }
+.gg-cash-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.gg-cash-row .gg-cbtn {
+  flex: 1 1 0; min-width: 62px; padding: 7px 4px; font-size: 12px; cursor: pointer;
+  background: #1d232f; color: #c8cdd8; border: 1px solid var(--line, #262b36); border-radius: 7px;
+  font-variant-numeric: tabular-nums; transition: background .12s, color .12s, border-color .12s;
+}
+.gg-cash-row .gg-cbtn:hover { background: #232a37; color: #e6e9ef; }
+.gg-cash-row .gg-cbtn.on { background: #3a2c14; color: #ffb74d; border-color: #8a6320; font-weight: 700; }
+.gg-cash-row .gg-inp { flex: 1 1 120px; min-width: 108px; }
+.gg-cash-tip { font-size: 11.5px !important; line-height: 1.7 !important; color: #8b919e !important; margin: 9px 0 0 !important; }
+.gg-cash-tip b { color: #ffb74d; }
+
 /* 爆仓/盈利时的飘字 */
 .gg-float {
   position: absolute; z-index: 7; pointer-events: none;
@@ -381,4 +398,9 @@
   .gg-ohlc { left: 60px; top: 3px; font-size: 10px; }
   .gg-ohlc em, .gg-ohlc .gg-ma20 { display: none; }
   .gg-last-tag { font-size: 10px; padding: 0 4px; }
+  /* 本金选择器：窄屏下预设挤成两行、自定义输入独占一行 */
+  .gg-cash { padding: 10px; margin: 11px 0; }
+  .gg-cash-row .gg-cbtn { flex: 1 1 calc(33.333% - 4px); min-width: 0; padding: 8px 2px; font-size: 11.5px; }
+  .gg-cash-row .gg-inp { flex: 1 1 100%; }
+  .gg-cash-tip { font-size: 11px !important; }
 }

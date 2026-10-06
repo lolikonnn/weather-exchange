@@ -52,7 +52,14 @@
   const { $, el, storeGet, storeSet, toast } = U;
 
   /* ═══════════════ 合约与规则 ═══════════════ */
-  const START_CASH = 100000;   // 初始资金
+  // 本金可以在开场卡片里改。注意它**不改变难度**：仓位是按百分比开的，
+  // 本金翻 10 倍，手数也翻 10 倍，盈亏比例一模一样。
+  // 真正变的是两件事：① 数字看着像那么回事了 ② 手数是整张开的，
+  // 本金越小取整误差越大（1 万本金开 30% 仓只有 6 手，凑不出更细的仓位）。
+  const DEF_CASH   = 100000;   // 默认本金
+  const CASH_MIN   = 1000;
+  const CASH_MAX   = 100000000;
+  const CASH_PRESETS = [10000, 50000, 100000, 1000000, 10000000];
   const LOT_MULT   = 10;       // 1 手 × 指数每动 1 点 = 10 元
   const FEE_RATE   = 0.0005;   // 单边手续费，万分之五
   const MAINTAIN   = 0.10;     // 维持保证金率：权益 ≤ 占用保证金 × 10% 就强平
@@ -91,14 +98,15 @@
     series: [],       // [{ t, o, h, l, c }]，长度 ROUND_BARS
     i: 0,
     price: 0,
-    cash: START_CASH,
+    cash0: DEF_CASH,  // 本局本金（开场卡片里可改，局中不可改）
+    cash: DEF_CASH,
     pos: 0,           // 净持仓手数，正 = 多
     avg: 0,           // 持仓均价（指数点）
     lev: 10,
     pct: 30,
     speedIdx: 1,
     timer: null,
-    peak: START_CASH,
+    peak: DEF_CASH,
     maxDD: 0,
     trades: 0,
     fills: [],        // 最近 5 笔成交，新的在前
@@ -702,7 +710,7 @@
     }
 
     const e = G.hist.length ? G.hist : [G.cash];
-    const base = START_CASH;
+    const base = G.cash0;
     const col = colorOf(e[e.length - 1] - base);
     const eqFrom = Math.max(0, e.length - vis);
     G.eqc.setOption({
@@ -730,7 +738,7 @@
 
   /* ═══════════════ 面板渲染 ═══════════════ */
   function render() {
-    const e = equity(), diff = e - START_CASH, pct = diff / START_CASH * 100;
+    const e = equity(), diff = e - G.cash0, pct = diff / G.cash0 * 100;
     const col = colorOf(diff);
 
     const eqEl = $('#ggEquity');
@@ -972,12 +980,12 @@
   function resetState() {
     G.i = 0;
     G.price = G.series.length ? G.series[0].c : 0;
-    G.cash = START_CASH;
+    G.cash = G.cash0;
     G.pos = 0; G.avg = 0;
-    G.peak = START_CASH; G.maxDD = 0; G.trades = 0;
+    G.peak = G.cash0; G.maxDD = 0; G.trades = 0;
     G.fills = [];
     G.orders = []; G.orderSeq = 0;
-    G.hist = [START_CASH];
+    G.hist = [G.cash0];
     G.liqPrice = null; G.liqAt = 0; G.lastNews = '';
     G.ended = false;
   }
@@ -1024,8 +1032,8 @@
     stopTimer();
 
     const finalEq = (why === 'liquidated') ? G.cash : equity();
-    const ret = finalEq / START_CASH;
-    const profit = finalEq - START_CASH;
+    const ret = finalEq / G.cash0;
+    const profit = finalEq - G.cash0;
     const liq = why === 'liquidated';
 
     let gr = 'E';
@@ -1045,8 +1053,15 @@
       : profit > 0 ? (ret >= 2 ? '这波对流被你吃干净了。' : '见好就收，也是一种本事。')
         : '没亏就是赢，天气这东西本来就不好赌。';
 
-    const best = Math.max(storeGet('wxgame_best', 0) || 0, profit);
-    storeSet('wxgame_best', best);
+    // 最佳记录存**收益率**而不是金额 —— 本金能改了，拿「赚了多少万」比大小没意义
+    // （本金 1000 万赚 5 万和本金 1 万赚 5 万完全不是一回事）。
+    // 用新键，老的绝对金额记录自然失效，不用做迁移。
+    const rPct = (ret - 1) * 100;
+    const bestP = storeGet('wxgame_bestp', null);
+    const isNewBest = bestP == null || rPct > +bestP;
+    if (isNewBest) { storeSet('wxgame_bestp', rPct.toFixed(2)); storeSet('wxgame_bestc', G.cash0); }
+    const bestShow = isNewBest ? rPct : +bestP;
+    const bestCash = isNewBest ? G.cash0 : +(storeGet('wxgame_bestc', 0) || 0);
 
     const btns = '<div class="gg-btns"><button class="gg-long" id="ggAgain">再来一局</button>' +
       '<button class="gg-short" id="ggQuit">退出</button></div>';
@@ -1063,11 +1078,13 @@
         '<p style="color:' + colorOf(profit) + '">' + sgnMoney(profit) + '　（' + (profit >= 0 ? '+' : '') + ((ret - 1) * 100).toFixed(2) + '%）</p>' +
         '<div class="gg-tbl">' +
         '<div class="gg-row"><span>标的</span><span>' + (G.city ? G.city.name : '—') + ' WXI 天气指数</span></div>' +
+        '<div class="gg-row"><span>本金</span><span>' + money(G.cash0) + '</span></div>' +
         '<div class="gg-row"><span>杠杆</span><span>' + G.lev + ' 倍</span></div>' +
         '<div class="gg-row"><span>爆仓时点</span><span>' + (liq ? (labelAt(G.liqAt) + '　@ ' + n1(G.liqPrice)) : '—') + '</span></div>' +
         '<div class="gg-row"><span>最大回撤</span><span>' + (G.maxDD * 100).toFixed(1) + '%</span></div>' +
         '<div class="gg-row"><span>下单次数</span><span>' + G.trades + '</span></div>' +
-        '<div class="gg-row"><span>本机最佳</span><span>' + sgnMoney(best) + '</span></div>' +
+        '<div class="gg-row"><span>本机最佳</span><span>' + (bestShow >= 0 ? '+' : '') + (+bestShow).toFixed(2) + '%' +
+        '<span class="dim" style="font-weight:400">　（本金 ' + money(bestCash) + '）</span></span></div>' +
         '</div>' +
         '<p class="dim" style="font-size:12px">' + verdict + '</p>' +
         btns +
@@ -1084,6 +1101,15 @@
     if (a) a.onclick = () => beginRound();
     if (r) r.onclick = () => beginRound();
     if (q) q.onclick = () => close();
+    // 本金选择器（只出现在开场卡片里）
+    U.$$('.gg-cbtn').forEach(b => { b.onclick = () => setCash(+b.dataset.cash); });
+    const inp = $('#ggCash');
+    if (inp) {
+      // 边打边改会一次次 clamp，光标乱跳，所以只在失焦/回车时落地
+      inp.onchange = () => setCash(inp.value);
+      inp.onkeydown = e => { if (e.key === 'Enter') { setCash(inp.value); inp.blur(); } };
+    }
+    cashTip();
   }
 
   /* ═══════════════ 交互 ═══════════════ */
@@ -1109,6 +1135,48 @@
     U.$$(sel).forEach(b => b.classList.toggle('on', b.dataset[attr] === String(val)));
   }
 
+  /* 本金选择器（只在开场卡片里，局中不给改 —— 亏了再充值就不叫操盘了）。
+     顺手算出「按基准 1000 点，这个本金在当前杠杆下满仓能开多少手」，
+     好让人直观感到本金大小到底影响什么。 */
+  function cashRowHTML() {
+    const chips = CASH_PRESETS.map(v =>
+      '<button type="button" class="gg-cbtn' + (v === G.cash0 ? ' on' : '') + '" data-cash="' + v + '">' +
+      cashShort(v) + '</button>').join('');
+    return '<div class="gg-cash">' +
+      '<div class="gg-cash-head"><span>本金</span><b id="ggCashShow">' + money(G.cash0) + '</b></div>' +
+      '<div class="gg-cash-row">' + chips +
+      '<input class="gg-inp" id="ggCash" type="number" inputmode="numeric" step="1000" ' +
+      'min="' + CASH_MIN + '" max="' + CASH_MAX + '" value="' + G.cash0 + '" title="自定义本金（' +
+      n0(CASH_MIN) + ' ~ ' + n0(CASH_MAX) + '）"></div>' +
+      '<p class="gg-cash-tip" id="ggCashTip"></p>' +
+      '</div>';
+  }
+  function cashShort(v) {
+    if (v >= 10000) { const w = v / 10000; return (w % 1 ? w.toFixed(1) : w) + ' 万'; }
+    return n0(v);
+  }
+  // 本金能改，但**难度不变**：仓位按百分比开，本金翻 10 倍手数也翻 10 倍。
+  // 真正变的是取整精度和数字观感 —— 这条必须写清楚，否则等于骗人。
+  function cashTip() {
+    const T = $('#ggCashTip');
+    if (!T) return;
+    const lots = Math.floor(G.cash0 / (BASE * LOT_MULT / G.lev));
+    T.innerHTML = '按基准 <b>' + BASE + '</b> 点、当前 <b>' + G.lev + '×</b> 杠杆，满仓约 <b>' + n0(lots) +
+      '</b> 手。<br>本金<b>不改变难度</b>：仓位按百分比开，本金翻 10 倍手数也翻 10 倍，盈亏比例一样。' +
+      '变的只是取整精度 —— 本金越小越难开出想要的仓位。';
+  }
+  function setCash(v) {
+    v = Math.round(+v);
+    if (!isFinite(v) || v <= 0) v = DEF_CASH;
+    v = Math.max(CASH_MIN, Math.min(CASH_MAX, v));
+    G.cash0 = v;
+    storeSet('wxgame_cash', v);
+    const s = $('#ggCashShow'); if (s) s.textContent = money(v);
+    const inp = $('#ggCash'); if (inp && +inp.value !== v) inp.value = v;
+    U.$$('.gg-cbtn').forEach(b => b.classList.toggle('on', +b.dataset.cash === v));
+    cashTip();
+  }
+
   /* ═══════════════ 开关面板 ═══════════════ */
   function open() {
     readTheme();
@@ -1116,6 +1184,9 @@
     if (!mask) return;
     mask.hidden = false;
     G.open = true;
+    // 本金存的是"上次用过的"，第一次进来是默认值
+    const saved = Math.round(+(storeGet('wxgame_cash', DEF_CASH) || DEF_CASH));
+    G.cash0 = (isFinite(saved) && saved >= CASH_MIN && saved <= CASH_MAX) ? saved : DEF_CASH;
     const cover = $('#ggCover');
     if (cover) {
       const app = global.__APP;
@@ -1126,8 +1197,9 @@
         '<h2 style="font-size:22px;letter-spacing:2px">🎮 点击做空天气</h2>' +
         '<p>标的：<b>WXI 天气指数</b>，用 <b>' + cityName + '</b> 的对流能量 / 阵风 / 降水 / 气温合成。<br>' +
         '打雷下雨 = 拉升，天气转好 = 回落。你不知道这段是哪年哪月 —— 只能靠盘感。</p>' +
+        cashRowHTML() +
         '<ul class="gg-rules">' +
-        '<li>本金 <b>¥100,000</b>，一局 <b>10 天</b>（960 根 15 分钟 K 线）。</li>' +
+        '<li>一局 <b>10 天</b>（960 根 15 分钟 K 线）。</li>' +
         '<li>合约：指数每动 <code>1 点</code>，每手盈亏 <code>¥10</code>。</li>' +
         '<li>杠杆决定保证金：满仓时反向走 <code>(1−10%)÷杠杆</code> 就<u>爆仓</u>。' +
         '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
@@ -1238,8 +1310,9 @@
       pickSeries, severity, ema, median, robustScale, applyFill, applyFillAt, equity, marginUsed,
       liqPriceOf, maxLots, beginRound, endRound, tick, beep, labelAt, newsAt, visBars,
       tolerablePct, placeLimit, setStop, cancelOrder, processOrders, calendarAt, freeEq,
-      reservedMargin, JUMP_AT,
-      LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, START_CASH, FEE_RATE
+      reservedMargin, JUMP_AT, setCash, cashTip,
+      LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, FEE_RATE,
+      BASE, DEF_CASH, CASH_MIN, CASH_MAX, CASH_PRESETS
     }
   };
 
