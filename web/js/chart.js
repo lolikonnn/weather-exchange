@@ -240,7 +240,7 @@
     lo -= span * 0.18; hi += span * 0.18;
     if (base != null) { lo = Math.min(lo, base - span * 0.05); hi = Math.max(hi, base + span * 0.05); }
 
-    // 均价线（累计均价，同花顺的黄色均线）
+    // 均温线（累计均价，同花顺那条黄色均线 —— 只是这里画的是气温，所以叫「均温」）
     const avg = []; let acc = 0;
     for (let i = 0; i < ys.length; i++) { acc += ys[i]; avg.push(+(acc / (i + 1)).toFixed(2)); }
 
@@ -294,7 +294,7 @@
           let html = '<div style="font-weight:700;color:#e9edf4">' + String(t).replace('T', ' ').slice(0, 16) + ' ' + (w ? w : '') + '</div>';
           html += row('气温', fx(p, 1) + ' ℃', U.trendColor(chg));
           if (base != null) html += row('较昨收', sgn(chg, 1) + ' ℃  ' + sgn(pct, 2) + '%', U.trendColor(chg));
-          html += row('均价', fx(avg[i], 1) + ' ℃', C.avg);
+          html += row('均温', fx(avg[i], 1) + ' ℃', C.avg);
           if (S.precips) html += row('降水', fx(S.precips[i], 1) + ' mm', '#4fc3f7');
           if (ovOk) html += row(ov.name, (od[i] == null ? '—' : fx(od[i], ov.unit === '%' ? 0 : 1) + ' ' + ov.unit), ov.color);
           return html;
@@ -353,7 +353,7 @@
           } : undefined
         },
         {
-          name: '均价', type: 'line', data: avg, showSymbol: false,
+          name: '均温', type: 'line', data: avg, showSymbol: false,
           lineStyle: { width: 1, color: C.avg }, z: 4
         },
         // 叠加线：挂在第 3 根 Y 轴上（右轴再往外 offset 44px），不跟百分比轴抢刻度
