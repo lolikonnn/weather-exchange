@@ -7,6 +7,7 @@
 <title>天气战士 · 老实看天气预报，很枯燥吧？</title>
 <meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、降水/风/云量/空气，还有雷达回波、卫星云图、降水预报、台风路径、预警信号。老实看天气预报，很枯燥吧？">
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/game.css">
 <link rel="icon" type="image/png" href="img/logo-32.png">
 </head>
 <body>
@@ -56,6 +57,8 @@
         <option value="humid">湿度</option>
       </select>
     </label>
+    <button id="btnGame" class="btn btn-game"
+            title="天气操盘手：拿这个城市的真实历史气温当行情，做多做空、加杠杆，体验一把操盘天气的感觉">🎮 天气操盘手</button>
     <button id="btnHelp" class="btn" title="术语对照表：每个词用天气话讲一遍">？术语</button>
     <button id="btnManual" class="btn" title="立即刷新一次">⟳ 刷新</button>
     <div class="clock"><span id="clock">--:--:--</span><em id="clockDate">----</em></div>
@@ -206,6 +209,83 @@
 </div>
 
 <div id="toast" class="toast" hidden></div>
+
+<!-- ══════════════════════ 🎮 天气操盘手（小游戏） ══════════════════════
+     行情是这个城市的**真实历史逐小时气温**，随机截一段 5 天，玩家不知道是哪年哪月。
+     价格就是气温本身，做多做空加杠杆，权益跌破维持保证金就爆仓。
+     详细规则与坑见 web/js/game.js 顶部注释。 -->
+<div class="game-mask" id="game" hidden>
+  <div class="game-panel">
+    <div class="gg-head">
+      <strong>🎮 天气操盘手</strong>
+      <span class="gg-sub" id="ggSub">—</span>
+      <span class="gg-live off" id="ggLive">未开局</span>
+      <button class="mini" id="ggSound" title="音效：开">🔊</button>
+      <button class="mini" id="ggExit" title="退出（本局作废）">✕</button>
+    </div>
+
+    <div class="gg-body">
+      <div class="gg-left">
+        <div class="gg-chart" id="ggChart"></div>
+        <div class="gg-eq">
+          <div class="gg-eq-head"><span>账户权益曲线</span><span>虚线＝本金 ¥100,000</span></div>
+          <div class="gg-chart gg-chart-sm" id="ggEqChart"></div>
+        </div>
+      </div>
+
+      <div class="gg-right">
+        <div class="gg-equity">
+          <div class="gg-eq-big" id="ggEquity">100,000</div>
+          <div class="gg-eq-chg" id="ggEqChg">+¥0　(+0.00%)</div>
+          <span class="gg-eq-tag">账户权益 ＝ 现金 + 浮动盈亏</span>
+        </div>
+
+        <div class="gg-stat" id="ggStats"></div>
+
+        <div class="gg-trade">
+          <div class="gg-lab"><span>杠杆</span><b id="ggLevNote">越高越容易爆仓</b></div>
+          <div class="gg-seg" id="ggLev">
+            <button data-lev="1">1× 稳健</button>
+            <button data-lev="5">5× 激进</button>
+            <button data-lev="10" class="lev-danger">10× 疯狂</button>
+            <button data-lev="20" class="lev-danger">20× 天台</button>
+          </div>
+
+          <div class="gg-lab"><span>每次下单仓位</span><b id="ggLots">30% ≈ 0 手</b></div>
+          <div class="gg-seg" id="ggPct">
+            <button data-pct="10">10%</button>
+            <button data-pct="30">30%</button>
+            <button data-pct="50">50%</button>
+            <button data-pct="100">满仓</button>
+          </div>
+
+          <div class="gg-btns">
+            <button class="gg-long"  id="ggLong"  title="按当前仓位买入开多">做多 ↑</button>
+            <button class="gg-short" id="ggShort" title="按当前仓位卖出开空">做空 ↓</button>
+          </div>
+          <div class="gg-grid2">
+            <button id="ggClosePos" title="按现价平掉全部持仓">一键平仓</button>
+          </div>
+
+          <div class="gg-lab" style="margin-top:11px"><span>行情速度</span><b></b></div>
+          <div class="gg-seg" id="ggSpeed">
+            <button data-sp="0">悠闲 1×</button>
+            <button data-sp="1">正常 3×</button>
+            <button data-sp="2">狂暴 8×</button>
+          </div>
+
+          <p class="gg-hint">
+            价格就是<b>气温本身</b>。1 手每动 1℃ 盈亏 <b>¥100</b>。<br>
+            满仓 + <b>N 倍</b>杠杆时，反向走 <b>(1−10%)÷N</b> 就爆仓：
+            5 倍约 18%、10 倍约 9%、<b>20 倍只要 4.5%</b>。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="gg-cover" id="ggCover" hidden></div>
+  </div>
+</div>
 
 <!-- ══════════════════════ 首次访问的免责弹窗 ══════════════════════ -->
 <div class="modal-mask" id="welcome" hidden>
@@ -407,5 +487,6 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(loca
 <script src="js/weather.js"></script>
 <script src="js/wxui.js"></script>
 <script src="js/app.js"></script>
+<script src="js/game.js"></script>
 </body>
 </html>

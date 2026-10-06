@@ -1,0 +1,229 @@
+/* ═══════════════════════════════════════════════════════════════
+   game.css — 「天气操盘手」小游戏
+   ═══════════════════════════════════════════════════════════════
+   和主站共用 app.css 的色板变量（--up / --down / --accent / --line …），
+   所以 A 股配色反转（body.us）在这里也自动跟着翻。 */
+
+/* 顶栏入口按钮：比其它按钮更花哨一点，让人想点 */
+.btn-game {
+  background: linear-gradient(135deg, #ffb74d, #ff7043);
+  border-color: #ffa726;
+  color: #241a08;
+  font-weight: 700;
+  box-shadow: 0 0 0 0 rgba(255, 167, 38, .55);
+  animation: gg-breath 2.6s ease-in-out infinite;
+}
+.btn-game:hover { filter: brightness(1.12); }
+@keyframes gg-breath {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 167, 38, .55); }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 167, 38, 0); }
+}
+
+/* ───────── 全屏面板 ───────── */
+.game-mask {
+  position: fixed; inset: 0; z-index: 340;
+  background: rgba(6, 8, 12, .82);
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px;
+}
+.game-panel {
+  width: min(1180px, 100%); height: min(760px, 100%);
+  display: flex; flex-direction: column;
+  background: var(--panel, #151820);
+  border: 1px solid var(--line, #262b36);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
+  overflow: hidden;
+  position: relative;
+}
+
+/* 危险脉冲：权益快见底时整块面板边缘发红 */
+.game-panel.danger  { animation: gg-pulse 1s ease-in-out infinite; }
+.game-panel.danger2 { animation: gg-pulse .42s ease-in-out infinite, gg-shake .28s linear infinite; }
+@keyframes gg-pulse {
+  0%, 100% { box-shadow: 0 24px 70px rgba(0,0,0,.6), inset 0 0 0 2px rgba(255, 77, 79, .35); }
+  50%      { box-shadow: 0 24px 70px rgba(0,0,0,.6), inset 0 0 60px 8px rgba(255, 77, 79, .40); }
+}
+@keyframes gg-shake {
+  0%, 100% { transform: translate(0, 0); }
+  25%      { transform: translate(-2px, 1px); }
+  75%      { transform: translate(2px, -1px); }
+}
+
+/* 爆仓红闪 */
+.gg-flash {
+  position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(255, 60, 60, .85), rgba(120, 0, 0, .95));
+  animation: gg-flash .9s ease-out forwards;
+}
+@keyframes gg-flash { 0% { opacity: 0; } 18% { opacity: 1; } 100% { opacity: 0; } }
+
+.gg-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line, #262b36);
+  background: linear-gradient(180deg, #1b202b, #161a23);
+}
+.gg-head strong { font-size: 14px; letter-spacing: .5px; }
+.gg-sub { font-size: 11.5px; color: var(--dim, #8b919e); }
+.gg-live {
+  margin-left: auto; font-size: 11px; padding: 2px 8px; border-radius: 9px;
+  background: rgba(43, 214, 160, .14); color: #2bd6a0; border: 1px solid rgba(43, 214, 160, .35);
+}
+.gg-live.off { background: rgba(139,145,158,.14); color: var(--dim, #8b919e); border-color: var(--line, #262b36); }
+.gg-live.hot { background: rgba(255,77,79,.16); color: #ff7b7d; border-color: rgba(255,77,79,.45); }
+
+.gg-body { flex: 1; display: flex; min-height: 0; }
+.gg-left  { flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line, #262b36); }
+.gg-right { width: 322px; flex: none; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+
+.gg-chart { flex: 1; min-height: 0; }
+.gg-eq { flex: none; height: 148px; border-top: 1px solid var(--line, #262b36); display: flex; flex-direction: column; }
+.gg-eq-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 12px 0; font-size: 11.5px; color: var(--dim, #8b919e);
+}
+.gg-chart-sm { flex: 1; min-height: 0; height: auto; }
+
+/* ───────── 右上：权益大数字 ───────── */
+.gg-equity {
+  padding: 14px 14px 10px; border-bottom: 1px solid var(--line, #262b36);
+  text-align: right;
+}
+.gg-eq-big {
+  font: 700 34px/1.05 'SF Mono', Menlo, Consolas, monospace;
+  letter-spacing: -1px; font-variant-numeric: tabular-nums;
+  transition: color .12s;
+}
+.gg-eq-chg { font: 600 13px/1.6 'SF Mono', Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.gg-eq-tag {
+  display: block; text-align: right; font-size: 11px; color: var(--dim, #8b919e); padding-top: 4px;
+}
+/* 数字跳一下 */
+.gg-pop { animation: gg-pop .22s ease-out; }
+@keyframes gg-pop { 0% { transform: scale(1.06); } 100% { transform: scale(1); } }
+
+/* ───────── 账户明细 ───────── */
+.gg-stat { margin: 0; padding: 6px 14px 8px; border-bottom: 1px solid var(--line, #262b36); }
+.gg-stat .gg-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; padding: 2.5px 0;
+}
+.gg-stat .gg-row span:first-child { color: var(--dim, #8b919e); }
+.gg-stat .gg-row span:last-child {
+  font: 600 12px/1.4 'SF Mono', Menlo, Consolas, monospace; font-variant-numeric: tabular-nums;
+}
+.gg-warn-row span:last-child { color: #ff7b7d; }
+.gg-hr { height: 1px; background: var(--line, #262b36); margin: 5px 0; }
+
+/* ───────── 下单区 ───────── */
+.gg-trade { padding: 12px 14px 16px; }
+.gg-lab {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11.5px; color: var(--dim, #8b919e); margin-bottom: 5px;
+}
+.gg-lab b { color: var(--fg, #e6e9ef); font-weight: 700; }
+
+.gg-size-btns { display: flex; gap: 6px; margin-bottom: 8px; }
+.gg-size-btns button {
+  flex: 1; padding: 6px 0; font-size: 11.5px; cursor: pointer;
+  background: #212734; color: var(--fg, #e6e9ef);
+  border: 1px solid var(--line, #262b36); border-radius: 6px;
+  font-family: inherit;
+}
+.gg-size-btns button:hover { border-color: var(--accent, #ffb74d); }
+.gg-size-btns button.on { background: var(--accent, #ffb74d); color: #241a08; border-color: var(--accent, #ffb74d); font-weight: 700; }
+
+.gg-btns { display: flex; gap: 8px; margin-bottom: 9px; }
+.gg-btns button {
+  flex: 1; padding: 11px 0; border-radius: 8px; cursor: pointer;
+  font: 700 15px/1 inherit; border: 1px solid transparent; color: #fff;
+}
+.gg-long  { background: #c62828; } .gg-long:hover  { background: #e53935; }
+.gg-short { background: #1b7f5a; } .gg-short:hover { background: #22a06f; }
+.gg-btns button:disabled { opacity: .38; cursor: not-allowed; }
+.gg-grid2 { display: flex; gap: 8px; }
+.gg-grid2 button {
+  flex: 1; padding: 7px 0; font-size: 12px; cursor: pointer; font-family: inherit;
+  background: #232936; color: var(--fg, #e6e9ef);
+  border: 1px solid var(--line, #262b36); border-radius: 6px;
+}
+.gg-grid2 button:hover { border-color: var(--accent, #ffb74d); }
+.gg-grid2 button:disabled { opacity: .35; cursor: not-allowed; }
+
+.gg-seg { display: flex; gap: 4px; margin-bottom: 9px; }
+.gg-seg button {
+  flex: 1; padding: 5px 0; font: 600 11.5px/1.2 inherit; cursor: pointer;
+  background: #1d232f; color: var(--dim, #8b919e);
+  border: 1px solid var(--line, #262b36); border-radius: 5px;
+}
+.gg-seg button.on { background: #2b3345; color: var(--fg, #e6e9ef); border-color: #3d4761; }
+.gg-seg button.lev-danger.on { background: #4a1f22; color: #ff9a9b; border-color: #7a2b2e; }
+
+.gg-hint { font-size: 11px; color: var(--dim, #8b919e); line-height: 1.55; margin-top: 9px; }
+.gg-hint b { color: #ffb74d; }
+
+/* ───────── 结算 / 开场遮罩 ───────── */
+.gg-cover {
+  position: absolute; inset: 0; z-index: 6;
+  background: rgba(8, 10, 15, .93);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  overflow-y: auto;
+}
+.gg-card {
+  width: min(560px, 100%); text-align: center;
+  border: 1px solid var(--line, #262b36); border-radius: 12px;
+  background: #141821; padding: 26px 26px 22px;
+}
+.gg-card h2 { margin: 0 0 4px; font-size: 30px; letter-spacing: 6px; }
+.gg-card h2.win  { color: #2bd6a0; text-shadow: 0 0 26px rgba(43, 214, 160, .5); }
+.gg-card h2.lose { color: #ff4d4f; text-shadow: 0 0 26px rgba(255, 77, 79, .55); }
+.gg-card .gg-grade { font: 700 46px/1 'SF Mono', Menlo, monospace; color: var(--accent, #ffb74d); margin: 10px 0 6px; }
+.gg-card p { font-size: 13px; line-height: 1.75; color: #c8cdd8; margin: 7px 0; }
+.gg-card .gg-final { font: 700 26px/1.3 'SF Mono', Menlo, monospace; font-variant-numeric: tabular-nums; margin: 10px 0; }
+.gg-card .gg-tbl { text-align: left; margin: 14px 0; }
+.gg-card .gg-tbl .gg-row {
+  display: flex; justify-content: space-between; font-size: 12.5px; padding: 3.5px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, .07);
+}
+.gg-card .gg-tbl .gg-row span:first-child { color: var(--dim, #8b919e); }
+.gg-card .gg-tbl .gg-row span:last-child { font-family: 'SF Mono', Menlo, monospace; }
+.gg-card .gg-btns { margin-top: 16px; }
+.gg-card .gg-btns button { padding: 12px 0; }
+
+/* 开场说明里的规则条目 */
+.gg-rules { text-align: left; font-size: 12.5px; line-height: 1.85; color: #c8cdd8; margin: 14px 0; }
+.gg-rules li { margin: 3px 0; }
+.gg-rules b { color: #ffb74d; }
+.gg-rules code {
+  font: 12px/1 'SF Mono', Menlo, monospace; background: #1e2430;
+  padding: 1px 5px; border-radius: 4px; color: #ffd28a;
+}
+
+/* 爆仓/盈利时的飘字 */
+.gg-float {
+  position: absolute; z-index: 7; pointer-events: none;
+  font: 700 15px/1 'SF Mono', Menlo, monospace; white-space: nowrap;
+  animation: gg-float 1.05s ease-out forwards;
+}
+@keyframes gg-float {
+  0%   { opacity: 0; transform: translateY(6px) scale(.9); }
+  18%  { opacity: 1; transform: translateY(0) scale(1.05); }
+  100% { opacity: 0; transform: translateY(-40px) scale(1); }
+}
+
+/* ───────── 手机竖屏 ───────── */
+@media (max-width: 860px) {
+  .game-mask { padding: 0; }
+  .game-panel { width: 100%; height: 100%; border-radius: 0; border: 0; }
+  .gg-body { flex-direction: column; overflow-y: auto; }
+  .gg-left { border-right: 0; flex: none; }
+  .gg-chart { height: 206px; flex: none; }
+  .gg-eq { height: 112px; }
+  /* #ggEqChart 同时挂着 .gg-chart 和 .gg-chart-sm，上面那条 206px 会盖掉 .gg-eq 的 112px，
+     于是权益图画布比容器高 94px、压到右边的账户明细上。这里把嵌套那张还给自己的容器。 */
+  .gg-chart-sm { height: auto; flex: 1; min-height: 0; }
+  .gg-right { width: 100%; flex: none; overflow: visible; border-top: 1px solid var(--line, #262b36); }
+  .gg-eq-big { font-size: 28px; }
+  .gg-head strong { font-size: 13px; }
+  .gg-sub { display: none; }
+}

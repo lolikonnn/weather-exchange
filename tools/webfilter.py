@@ -14,8 +14,8 @@
 
 import re
 
-# ── 游戏还在开发中，暂不发布；收尾后改成 True ──
-INCLUDE_GAME = False
+# ── 游戏已经收尾（下单/保证金/爆仓/结算四条链路都探针验过），放行发布 ──
+INCLUDE_GAME = True
 
 # 相对 web/ 的路径（POSIX 斜杠）
 GAME_REL = ("js/game.js", "css/game.css")
