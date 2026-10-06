@@ -673,3 +673,148 @@ G.acc -= step;
   宽再裁左边 390px，重拍出来右侧是缺的。仓库里那张 `game-mobile.png` 是装进 390px iframe 拍的，
   别覆盖它。
 
+## 改成「预热 10 天 + 交易 30 天」和七档周期时踩的坑
+
+### 一局的天数要跟「速度」解耦
+
+原来的模型是「一局 N 天，速度 = 每秒推进几根 K 线」。加了周期档位之后这个定义就崩了 ——
+1 分钟档一天 1440 根、1 日档一天 1 根，同样「每秒 3 根」在两个档位上差 1440 倍。
+
+所以速度的单位重新定成「**每真实秒推进多少分钟天气**」。这样：
+
+- 一局固定 **40 天 = 57600 分钟天气**（10 天预热 + 30 天交易），跟周期无关；
+- 同一档位的墙钟时长只跟速度有关；
+- 换周期只是**换个放大镜看同一段天气**，不会让一局变长变短。
+
+代价是低价档位（1 分 / 5 分）一局要 57600 根、1 日档只有 40 根，两个极端都得照顾。
+
+### 光标停在预热段最后一根，不是第 0 根
+
+`resetState()` 里 `G.i = 0` 要改成 `G.i = warmBars() - 1`。写成 `warmBars()` 也行，
+但那样第一帧就有一根「未来」K 线被算进收益曲线。**用 `- 1`，`G.i` 始终指向"最后一根已经走完的 K 线"**
+这个不变量后面到处都依赖（`processOrders`、`render`、`setBar` 全是按这个假设写的）。
+
+### 顶栏进度要按交易段算
+
+`G.i + 1` 现在是「含预热的总根数」。直接显示会变成 `已交易 1220 / 2880 根`，
+前 960 根是白送的。正确的是：
+
+```js
+const done = Math.max(0, Math.min(tradeBars(), G.i + 1 - warmBars()));
+```
+
+### `visBars()` 也得从 `roundBars()` 换成 `totalBars()`
+
+`visBars()` 决定图表能显示多少根。它原来等于「一局根数」，现在一局有 40 天，
+如果还按 `roundBars()`（只有 30 天）算，切到 1 日档时**预热段的 10 根日 K 会被裁掉**，
+跟「一进来就有 10 天历史」直接矛盾。
+
+### 双 grid 的 series 必须显式声明轴
+
+ECharts 加了第二个 grid（成交量副图）之后，`xAxisIndex` / `yAxisIndex` 默认会按 series
+顺序去猜。蜡烛、MA、大盘三条都得**显式写 `xAxisIndex: 0, yAxisIndex: 0`**，
+量柱写 `xAxisIndex: 1, yAxisIndex: 1`。不写的话有 series 会挂到副图的轴上，
+表现是「主图上多出一条看不懂的线」或者「蜡烛跑到副图里」。
+
+### `trigger: 'axis'` 的 tooltip 不能用 `p[0]`
+
+两个 grid 共用一个 tooltip 之后，鼠标在主图上时会同时命中
+`{gridIndex:0, ...}` 和 `{gridIndex:1, ...}` 两个数组元素，顺序不保证。
+`p[0]` 有一半概率拿到量柱那一项（它的 `data` 是个数字，不是 OHLC 对象），
+于是 tooltip 全是 `undefined`。正确写法是按名字找：
+
+```js
+const it = (p && (p.find(x => x.seriesName === 'WXI') || p[0]));
+```
+
+### 「像股市」是个可以用数字量的目标
+
+原来的快分量 `(sev - trend)` 每一项之间几乎独立，画出来到处跳空。
+量了一下 **lag-1 自相关 = 0.031** —— 那就是「独立随机点」的特征值。
+
+给快分量叠一层 EMA（`NOISE_A = 0.45`）之后自相关到 **0.208**，落在真实股票分钟级
+（0.1 ~ 0.4）的区间里。两个坑：
+
+- **EMA 会吃掉方差**，所以必须配一个 `NOISE_BOOST = 1.42` 把幅度补回来，
+  否则整局振幅会从 35% 掉到 20% 出头，"难度"被顺手改掉了。实测补完之后
+  单根涨跌中位 0.261% -> 0.301%，几乎没动。
+- **A/B 必须钉住 `Math.random`**。`pickSeries` 里的窗口偏置用 `Math.random` 挑起点，
+  不换成固定序列的话比的是**两段完全不同的行情**，结论毫无意义。
+  `tmp/b2-old.txt` 里存了改之前那一版的结果。
+
+### 1 日档的影线会非常大，但那是真的
+
+一天 96 根聚合成 1 根时，`high` / `low` 取的是**整天 96 根的极值**。
+天气里一次对流爆发能让指数在一小时内窜 200 点，于是日 K 上就是一柱冲天的上影线。
+第一眼看像 bug，其实是**正确聚合**的结果 —— 真实日 K 遇到盘中插针也是这样。
+想去掉只能砍掉 `JUMP` 冲击，那是拿真实感换好看，不值。
+
+### 顺手记两个小坑
+
+- `#ggBar button` 的 `flex-basis` 要从 `calc(33.333% - 3px)` 改成 `calc(25% - 3px)`
+  —— 七档按 33% 排会变成 3 + 3 + 1，最后一档孤零零占一行。
+- 档位名带空格的（`1 分` / `1 时`）在 `data-bar` 上要留英文数字下标（`data-bar="0"`），
+  别拿文案当键；`syncBar()` 用 `U.$$('#ggBar button')` 而不是类名选择器
+  （那几个按钮**没写类**，用 `.gg-bbtn` 会一个都选不中）。
+
+## 两处「滚不动」：雷达的省份行和预警列表
+
+群里反馈的两个问题，根因完全不同，但表现都是"这一块卡住了"。
+
+### 雷达 / 云图那几排按钮：藏了滚动条 = 桌面端真的滚不动
+
+`.wx-seg` 本来就是 `overflow-x:auto`，8 个雷达大区按钮在窄屏上放不下也确实能滚 ——
+**但滚动条被 `scrollbar-width:none` + `::-webkit-scrollbar{display:none}` 藏掉了**。
+在触屏上手指一划就滚，所以移动端测试完全正常；桌面端就废了：鼠标滚轮默认只滚垂直方向，
+横向又没有可见的滚动条可以拖，用户看到的就是"这一排按钮滚不动"。
+
+修法两条一起上：
+
+1. **把滚动条留出来**，收成 6px 的细条（`.wx-seg::-webkit-scrollbar{height:6px}`），
+   给一个"这里能滚"的视觉提示；
+2. **给滚轮挂一个转横向的处理器**：
+
+   ```js
+   document.addEventListener('wheel', e => {
+     const seg = e.target.closest && e.target.closest('.wx-seg');
+     if (!seg || seg.scrollWidth <= seg.clientWidth + 1) return;  // 没得滚就别抢事件
+     const d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+     const before = seg.scrollLeft;
+     seg.scrollLeft = before + d;
+     if (seg.scrollLeft !== before) e.preventDefault();  // 滚到头就把事件还给页面
+   }, { passive: false });
+   ```
+
+   两个细节：**必须 `passive: false`**（否则 `preventDefault()` 无效，页面会跟着一起滚）；
+   **滚到头要主动放行**（不 `preventDefault`），不然鼠标停在这排按钮上时整页滚不下去。
+   事件委托绑在 `document` 上 —— 这些行是 `innerHTML` 重画出来的，绑不到具体元素。
+
+### 预警列表：flex 子项忘了 `min-height:0`
+
+`.wx-body` 是 `overflow:hidden` 的 flex 列，里面塞一个长列表就必须让列表自己滚。
+第一版只写了 `overflow-y:auto`，结果完全不滚 —— 因为 **flex 子项的 `min-height` 默认是 `auto`**，
+内容是 20 条预警时它就把自己撑到 2040px，父级一裁，`overflow-y:auto` 根本没有可滚的区间
+（`scrollHeight == clientHeight`）。
+
+正确的三件套：
+
+```css
+.wx-warn{flex:1 1 auto; min-height:0; overflow-y:auto;}
+```
+
+顺带把条目加了 `flex:none`，不然它们会被 flex 压扁。
+
+**怎么验的**（`web/__sc.html` 探针，跑完删掉了）：量 `.wx-warn` 的
+`scrollHeight`（2040）与 `clientHeight`（740），再把 `scrollTop` 设成 99999 看它有没有真的落到 1300。
+只量 CSS 属性没用 —— `overflow-y:auto` 在滚不动的时候看起来也一样。
+
+> 无头环境里雷达取不到图（气象局那个时段没发布），三层按钮根本不会渲染，
+> 所以那一条是**手工塞了一段和 `playerHTML` 一样的 `.wx-segs` 结构**来验的：
+> 25 个省那行 `scrollWidth=1656 > clientWidth=1078`，`scrollLeft` 能推到 578；
+> 派发 `wheel(deltaY=120)` 后 `scrollLeft` 从 0 变 120、`defaultPrevented=true`。
+
+### 预警按距离排序
+
+`weather.js` 的 `warnings()` 本来就取回了 `lat` / `lon`（气象局的 warning 接口带经纬度），
+所以排序不用额外请求 —— 拿当前城市的坐标算大圆距离，升序排，再把距离标在时间那行右边。
+排不了（没选城市 / 某条没坐标）就退回原来的顺序，不显示距离，**绝不编一个距离出来**。

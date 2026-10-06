@@ -513,7 +513,11 @@
       renderTyphoon(body, sub, list, show, id);
     },
 
-    /* ── 预警 ── */
+    /* ── 预警 ──
+       全国同时有几百条生效中的预警，倒序拉下来一万年也翻不到跟自己有关的那条。
+       所以按**离当前所在地的距离**排序，最近的排最前，并在每条的时间后面标出距离。
+       气象局的 warning 接口本身就带经纬度（weather.js 的 warnings() 已经取成 lat/lon），
+       所以这只是换个排序，不需要额外请求。 */
     async openWarn() {
       const body = $('#wxWarnBody'), sub = $('#wxWarnSub');
       if (!body) return;
@@ -521,14 +525,36 @@
       let ws;
       try { ws = await W.warnings(); }
       catch (e) { body.innerHTML = '<div class="wx-load">预警数据获取失败：' + esc(e.message) + '</div>'; return; }
-      if (sub) sub.textContent = ws.length ? ('全国生效中 ' + ws.length + ' 条') : '';
+
+      const app = window.__APP;
+      const c = (app && app.S && app.S.cur) || null;
+      const hasLL = !!(c && isFinite(c.lat) && isFinite(c.lon));
+      if (hasLL) {
+        ws.forEach(w => {
+          w.d = (isFinite(w.lat) && isFinite(w.lon)) ? qkDist(c.lat, c.lon, w.lat, w.lon) : Infinity;
+        });
+        ws.sort((x, y) => x.d - y.d);
+      }
+
+      if (sub) {
+        const n = ws.length;
+        if (!n) sub.textContent = '';
+        else if (!hasLL) sub.textContent = '全国生效中 ' + n + ' 条';
+        else {
+          const near = ws.find(w => isFinite(w.d));
+          sub.textContent = '全国生效中 ' + n + ' 条 · 按离 ' + (c.name || '当前城市') + ' 的距离排序'
+            + (near ? '（最近 ' + Math.round(near.d) + ' 公里）' : '');
+        }
+      }
       if (!ws.length) { body.innerHTML = '<div class="wx-load">当前全国没有生效中的预警信号</div>'; return; }
       body.innerHTML = '<div class="wx-warn">' + ws.map(w => {
         const col = warnColor(w.title);
+        const d = (w.d != null && isFinite(w.d)) ? Math.round(w.d) : null;
         return '<div class="wx-warn-item" style="border-left-color:' + col + '">' +
           '<div class="wx-warn-t"><span class="wx-warn-tag" style="background:' + col + '">' +
           esc(shortWarn(w.title)) + '</span>' + esc(w.title) + '</div>' +
-          '<div class="wx-warn-time">' + esc(w.time) + '</div>' +
+          '<div class="wx-warn-time">' + esc(w.time) +
+          (d == null ? '' : '<span class="wx-warn-d">' + d + ' 公里</span>') + '</div>' +
           '<div class="wx-warn-x">' + esc(w.text) + '</div></div>';
       }).join('') + '</div>';
     },
@@ -655,6 +681,23 @@
       document.addEventListener('keydown', e => {
         if (e.key === 'Escape') document.querySelectorAll('.wx-drawer').forEach(d => { d.hidden = true; });
       });
+      // 横向可滚的行（雷达/云图的 大区 → 省 → 市）挂"滚轮转横向"。
+      //
+      // 为什么需要：这些行是 overflow-x:auto，但**鼠标滚轮默认只滚垂直方向**，
+      // 滚动条又被 CSS 收窄成一条细线，结果在桌面端看起来就是"这一行滚不动"。
+      // 用事件委托绑在 document 上（这些行是 innerHTML 重画出来的，绑不到具体元素）。
+      document.addEventListener('wheel', e => {
+        const t = e.target;
+        if (!t || !t.closest) return;
+        const seg = t.closest('.wx-seg');
+        if (!seg) return;
+        if (seg.scrollWidth <= seg.clientWidth + 1) return;   // 没得滚就别抢事件
+        const d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+        if (!d) return;
+        const before = seg.scrollLeft;
+        seg.scrollLeft = before + d;
+        if (seg.scrollLeft !== before) e.preventDefault();     // 滚到头就把事件还给页面
+      }, { passive: false });
       const lb = document.getElementById('btnLocate');
       if (lb) lb.addEventListener('click', () => WXUI.locate());
     }

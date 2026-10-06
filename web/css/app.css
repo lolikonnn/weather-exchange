@@ -527,10 +527,19 @@ body{
 }
 /* .wx-seg 可横向滚动：窄屏上八个雷达大区按钮放不下，
    按钮必须 flex:none + nowrap，否则会被压得把"华南"断成两行。
-   雷达页有三行（大区 → 省 → 市），用 .wx-segs 竖着摞起来。 */
+   雷达页有三行（大区 → 省 → 市），用 .wx-segs 竖着摞起来。
+
+   ⚠ 这里**故意不隐藏滚动条**。早先写的是 `scrollbar-width:none` +
+   `::-webkit-scrollbar{display:none}`，看着干净，但桌面端就真的滚不动了 ——
+   鼠标滚轮默认只滚垂直方向，滚动条又被藏起来，那一行看起来就是"卡住了"。
+   现在留一条细的可见滚动条当提示，另外 wxui.js 里给 .wx-seg 挂了 wheel
+   转横向的处理器。 */
 .wx-segs{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto}
-.wx-seg{display:flex;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:none}
-.wx-seg::-webkit-scrollbar{display:none}
+.wx-seg{display:flex;gap:4px;min-width:0;overflow-x:auto;overflow-y:hidden;padding-bottom:2px}
+.wx-seg::-webkit-scrollbar{height:6px}
+.wx-seg::-webkit-scrollbar-track{background:transparent}
+.wx-seg::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px}
+.wx-seg::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 .wx-segbtn{
   flex:none;white-space:nowrap;height:22px;padding:0 11px;border-radius:var(--r);
   background:var(--panel3);border:1px solid var(--line2);color:var(--txt);
@@ -592,22 +601,36 @@ body{
 .wx-tyrow{display:flex;justify-content:space-between;gap:14px;font-size:11.5px;color:var(--dim)}
 .wx-tyrow b{color:var(--txt-hi);font-weight:600;font-family:var(--mono)}
 
-/* ───────────────── 预警 ───────────────── */
-.wx-warn{padding:9px 11px;display:flex;flex-direction:column;gap:8px}
+/* ───────────────── 预警 ─────────────────
+   .wx-warn / .wx-quake 都是「长列表」，必须自己滚。
+   父级 .wx-body 是 overflow:hidden 的 flex 列，所以这里要给
+   flex:1 1 auto + min-height:0 才能拿到可滚动的高度；
+   只写 overflow-y:auto 而不写 min-height:0 的话，flex 子项的
+   默认 min-height:auto 会让它撑到内容那么高，父级一裁就永远滚不动。 */
+.wx-warn,.wx-quake{
+  padding:9px 11px;display:flex;flex-direction:column;gap:8px;
+  flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+}
+.wx-quake{gap:6px}
+.wx-warn::-webkit-scrollbar,.wx-quake::-webkit-scrollbar{width:8px}
+.wx-warn::-webkit-scrollbar-track,.wx-quake::-webkit-scrollbar-track{background:transparent}
+.wx-warn::-webkit-scrollbar-thumb,.wx-quake::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
+.wx-warn::-webkit-scrollbar-thumb:hover,.wx-quake::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 .wx-warn-item{
   background:var(--panel2);border:1px solid var(--line);
-  border-left:3px solid var(--flat);border-radius:3px;padding:8px 10px;
+  border-left:3px solid var(--flat);border-radius:3px;padding:8px 10px;flex:none;
 }
 .wx-warn-t{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt-hi);font-weight:600}
 .wx-warn-tag{flex:none;padding:1px 6px;border-radius:2px;color:#1a1400;font-size:11px;font-weight:700}
 .wx-warn-time{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono)}
 .wx-warn-x{margin-top:6px;color:var(--txt);font-size:12px;line-height:1.6;white-space:pre-wrap}
+/* 「离你多远」那一小段，跟时间同行右对齐 */
+.wx-warn-d{float:right;color:var(--accent);font-family:var(--mono)}
 
 /* ───────────────── 地震 ───────────────── */
-.wx-quake{padding:9px 11px;display:flex;flex-direction:column;gap:6px}
 .wx-qk-item{
   background:var(--panel2);border:1px solid var(--line);
-  border-left:3px solid var(--flat);border-radius:3px;padding:7px 10px;
+  border-left:3px solid var(--flat);border-radius:3px;padding:7px 10px;flex:none;
 }
 .wx-qk-top{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt-hi);font-weight:600}
 /* 徽章宽度固定，免得 M4.0 和 M6.2 把地点那一列推得左右横跳 */

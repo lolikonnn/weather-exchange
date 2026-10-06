@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,7 @@ APKSIGNER = os.path.join(BT, "apksigner.bat")
 
 # 版本号。versionName 是给人和应用商店看的，versionCode 必须是单调递增的整数
 # （Android 只认这个判断"哪个更新"），所以按 major*10000 + minor*100 + patch 折算。
+# ⚠ **这个版本号定死在 9.4.7，不要跟着功能改动往上加**（用户明确要求）。
 VERSION_NAME = "9.4.7"
 _V = VERSION_NAME.split(".")
 VERSION_CODE = str(int(_V[0]) * 10000 + int(_V[1]) * 100 + int(_V[2]))
@@ -147,11 +149,23 @@ def main():
 
     # 2) 资源链接 -> 未签名 base apk（含二进制 manifest / resources.arsc / assets）
     base_apk = os.path.join(BUILD, "base.apk")
+    # aapt2 的 --version-code / --version-name **只在 manifest 里没写这两个属性时才生效**。
+    # 我们的 AndroidManifest.xml 是写死的（历史上就写死），于是改上面的 VERSION_NAME 根本不影响
+    # 产物 —— 实测打完包 aapt2 dump badging 还是旧的 versionCode。所以这里先把版本号注入一份
+    # 临时 manifest 再链接，保证版本号只有 VERSION_NAME 这一个来源。
+    src_manifest = os.path.join(ROOT, "android", "AndroidManifest.xml")
+    stamped = os.path.join(BUILD, "AndroidManifest.xml")
+    with open(src_manifest, "r", encoding="utf-8") as f:
+        mf = f.read()
+    mf = re.sub(r'android:versionCode="[^"]*"', 'android:versionCode="%s"' % VERSION_CODE, mf)
+    mf = re.sub(r'android:versionName="[^"]*"', 'android:versionName="%s"' % VERSION_NAME, mf)
+    with open(stamped, "w", encoding="utf-8", newline="\n") as f:
+        f.write(mf)
     # 注意: 编译产物要作为「位置参数」传入（主资源集）；
     # 用 -R 会当成 overlay，报 "resource string/app_name does not override an existing resource"。
     run([AAPT2, "link", "-o", base_apk,
          "-I", ANDROID_JAR,
-         "--manifest", os.path.join(ROOT, "android", "AndroidManifest.xml"),
+         "--manifest", stamped,
          "-A", os.path.join(ROOT, "android", "assets"),
          "--min-sdk-version", "21",
          "--target-sdk-version", "35",

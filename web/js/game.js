@@ -84,6 +84,19 @@
   const BASE       = 1000;     // 指数基准
   const TREND_K    = 50;       // 趋势分量放大倍数
   const NOISE_K    = 16;       // 快分量放大倍数
+  /* ── 让走势像真的股票，而不是一串独立的随机点 ──
+     真实的分钟级行情有个很显眼的特征：**相邻两根是相关的**（lag-1 自相关 0.2~0.5），
+     所以看起来是"一段一段地推"，而不是每根各走各的。原来的快分量是
+     (sev − tr) × NOISE_K，sev 本身已经比较连续，但两根之间还是偏独立，
+     盘面上就显得"生硬"。这里加两层：
+       ① NOISE_A：把快分量本身过一道轻 EMA（越小越平滑、越有趋势感），
+          再用 NOISE_BOOST 补回被 EMA 削掉的方差，保证整体波动幅度不变；
+       ② 微观游走 micro：一个衰减的 AR(1)，给出真实盘口那种细细的毛刺。
+     这些系数是拿真实 minutely_15 跑探针量出来的（见 docs/NOTES.md）。 */
+  const NOISE_A    = 0.45;
+  const NOISE_BOOST = 1.42;
+  const MICRO_K    = 1.5;
+  const MICRO_DECAY = 0.68;
   const EMA_A      = 0.05;     // 趋势 EMA 系数（半衰期约 14 根 = 3.5 小时）
   const WICK_K     = 0.30;     // 影线 = |本根涨跌| × 这个系数
   // 突发行情：单根 15 分钟里 severity 变化超过 JUMP_AT 个稳健标准差才算"剧烈变化"，
@@ -91,30 +104,39 @@
   const JUMP_AT    = 0.9;
   const JUMP_K     = 34;
   const JUMP_DECAY = 0.78;
-  const ROUND_DAYS = 7;        // 一局模拟 7 天（原来是 10 天）
-  /* K 线周期档位（分钟）。**15 分钟是数据源的真实粒度**：Open-Meteo 的 minutely_15
-     已经是最细的免费粒度了（minutely_1 / minutely 参数照收、HTTP 200，但 time 数组
-     长度是 0，只看状态码发现不了）。所以：
-       · ≥15 分钟（15/30/45/60）→ 把真数据**聚合**起来（30 = 2 根、45 = 3 根、60 = 4 根）
+  /* 一局的结构 = **预热 + 交易**。
+     群里那位说得对：真实的行情软件打开就是一条已经走了很久的连续 K 线，不会从空白开始长。
+     所以进来先白送 10 天历史（画在图上、已经走完，你只能看不能交易），
+     光标停在历史末尾，「开始玩」是从这一天往后接着走，再走 30 天结算。 */
+  const WARM_DAYS  = 10;       // 开局先铺满的历史天数（只看不交易）
+  const TRADE_DAYS = 30;       // 实际要交易的天数
+  const ROUND_DAYS = TRADE_DAYS;  // 兼容旧名字：一局 = 交易天数
+  /* K 线周期档位（分钟），照参考软件的排布：分钟K / 时K / 日K 三层。
+     **15 分钟是数据源的真实粒度**：Open-Meteo 的 minutely_15 已经是最细的免费粒度了
+     （minutely_1 / minutely 参数照收、HTTP 200，但 time 数组长度是 0，只看状态码发现不了）。所以：
+       · ≥15 分钟（15/30/60/240/1440）→ 把真数据**聚合**起来（2 / 4 / 16 / 96 根并 1 根）
        · <15 分钟（1/5）→ 把每根 15 分钟**插值展开**（1 分钟 = 展开成 15 根）
      也就是说 1 分钟和 5 分钟档上那些细碎波动是**建模的、不是采到的**，README 写明了。 */
-  const BAR_MIN    = [1, 5, 15, 30, 45, 60];
-  const BAR_N      = ['1 分钟', '5 分钟', '15 分钟', '30 分钟', '45 分钟', '60 分钟'];
+  const BAR_MIN    = [1, 5, 15, 30, 60, 240, 1440];
+  const BAR_N      = ['1 分', '5 分', '15 分', '30 分', '1 时', '4 时', '1 日'];
   const SRC_MIN    = 15;       // 数据源粒度（Open-Meteo minutely_15）
-  /* 速度档位的单位是**每真实秒推进多少分钟的天气时间**（一局 = 7 天 = 10080 分钟）。
-     所以一局的墙钟时长 = 10080 ÷ 这个数，**与 K 线周期无关**：1 分钟档和 60 分钟档
+  /* 速度档位的单位是**每真实秒推进多少分钟的天气时间**（一局 = 30 天 = 43200 分钟）。
+     所以一局的墙钟时长 = 43200 ÷ 这个数，**与 K 线周期无关**：1 分钟档和 1 日档
      看的是同一段天气、同样时长，只是一个看得细、一个看得粗。
-     四档对应一局约 11.2 / 7.6 / 3.7 / 1.9 分钟。
+     四档对应一局约 48 / 32.7 / 16 / 8 分钟（可以随时暂停，也可以直接平仓结算）。
      每根 K 线多长时间由 BAR_MIN 决定，所以「每秒几根 K 线」= 这个数 ÷ 周期分钟数，
      1 分钟档 + 狂暴档能到 90 根/秒 —— 那是画不过来的，所以主循环按 TICK_HZ 批处理。 */
   const SPEEDS     = [15, 22, 45, 90];
   const SPEED_N    = ['慢', '悠闲', '正常', '狂暴'];
   const TICK_HZ    = 10;       // 重绘频率上限（Hz）；一次 tick 可以推进多根 K 线
-  function perDay()    { return 1440 / BAR_MIN[G.barIdx]; }   // 一天几根
-  function roundBars() { return ROUND_DAYS * perDay(); }      // 一局几根
-  function srcBars()   { return ROUND_DAYS * 1440 / SRC_MIN; } // 一局要几根 15 分钟源数据
-  function barMin()    { return BAR_MIN[G.barIdx]; }          // 当前周期（分钟）
-  function roundSecs() { return ROUND_DAYS * 1440 / SPEEDS[G.speedIdx]; } // 一局墙钟秒数
+  function perDay()    { return 1440 / BAR_MIN[G.barIdx]; }           // 一天几根
+  function warmBars()  { return WARM_DAYS * perDay(); }               // 预热段几根
+  function tradeBars() { return TRADE_DAYS * perDay(); }              // 交易段几根
+  function totalBars() { return warmBars() + tradeBars(); }           // 整条序列几根
+  function roundBars() { return tradeBars(); }                        // 一局（交易段）几根
+  function srcBars()   { return (WARM_DAYS + TRADE_DAYS) * 1440 / SRC_MIN; } // 要几根 15 分钟源数据
+  function barMin()    { return BAR_MIN[G.barIdx]; }                  // 当前周期（分钟）
+  function roundSecs() { return TRADE_DAYS * 1440 / SPEEDS[G.speedIdx]; } // 一局墙钟秒数
 
   /* ── 复合标的：标的不是一个城市的天气，而是「大盘 + 本地 + 湿度 + 盘子扰动」 ──
      群里那位说得对：只炒一个城市的对流，盯久了就那点花样。真实市场里你炒的东西
@@ -809,7 +831,7 @@
       const series = [];
       const seeds = [];
       const regLine = [];          // 画在副图上的"大盘"（跟主图同一根数）
-      let carry = 0, dish = 0;
+      let carry = 0, dish = 0, noiseEma = 0, micro = 0;
       for (let j = 0; j < need; j++) {
         const k2 = s2 + j;
         // 「突发行情」：某根 15 分钟里天气本身剧烈变化（CAPE 炸了、阵风猛增、开始下暴雨）时，
@@ -838,14 +860,22 @@
         // 所以它是一条"能看出有人在推"的平滑曲线，而不是每根乱跳的雪花点。
         dish = dish * DISH_DECAY + (Math.random() - 0.5) * 2 * dScale;
 
+        // 微观游走：比盘子扰动快、比单根噪声慢的一层毛刺，让盘口看着"有人在成交"。
+        micro = micro * MICRO_DECAY + (Math.random() - 0.5) * 2 * MICRO_K;
+
+        // 快分量过一道轻 EMA —— 相邻两根因此变得相关，走势才会"成段"。
+        // NOISE_BOOST 补回 EMA 削掉的方差，整体波动幅度保持不变。
+        noiseEma = noiseEma * NOISE_A + (sev[k2] - tr[k2]) * (1 - NOISE_A);
+        const noiseTerm = noiseEma * NOISE_K * NOISE_BOOST;
+
         // 四个压力源（缺数据的项 airN/fN 为 null、qArr/tArr 天然为 0）
         const airTerm  = airN ? airN[k2] * AIR_K : 0;
         const quakeTerm = qArr[k2];
         const typhTerm = tArr[k2];
         const fcstTerm = fN ? fN[k2] * FCST_K : 0;
 
-        const px = BASE + (tr[k2] - m) * TREND_K + (sev[k2] - tr[k2]) * NOISE_K + carry
-          + regFast + dnorm * DEW_K + dish
+        const px = BASE + (tr[k2] - m) * TREND_K + noiseTerm + carry
+          + regFast + dnorm * DEW_K + dish + micro
           + airTerm + quakeTerm + typhTerm + fcstTerm;
         series.push({ t: mn.time[k2], c: px });
         regLine.push(BASE + regFast * 3 + dish * 0.2);
@@ -1034,7 +1064,7 @@
   /** 一屏能看清多少根：容器宽度 ÷ 每根 9px，两端都夹一下 */
   function visBars() {
     const cw = (G.main && G.main.getWidth && G.main.getWidth()) || 900;
-    return Math.max(36, Math.min(roundBars(), Math.floor(cw / 9)));
+    return Math.max(36, Math.min(totalBars(), Math.floor(cw / 9)));
   }
 
   /** 简单移动平均。返回与 series 等长的数组，前 w−1 根是 null（线自然断开） */
@@ -1050,6 +1080,14 @@
   }
   const MA_DEF = [{ w: 5, color: '#f0b90b' }, { w: 20, color: '#7aa2f7' }];
   const REG_C = '#c792ea';   // 区域大盘线的颜色（紫），和 MA5 的黄 / MA20 的蓝分得开
+  /* 成交量：真实看盘软件的图底都有一排量柱。天气指数没有成交笔数，所以量柱 = **天气活跃度**，
+     拿四个真数据算：降水（求和，最像"放量"）、阵风超过 6 m/s 的部分、CAPE、盘子扰动的绝对值。
+     它是个建模出来的量（系数是我们定的），但驱动它的四个量全是真的 —— 图例上写清了叫"活跃度"。 */
+  function volOf(s) {
+    if (!s) return 0;
+    const p = +s.precip || 0, g = +s.gust || 0, c = +s.cape || 0, d = Math.abs(+s.dish || 0);
+    return Math.max(0.4, 1 + p * 10 + Math.max(0, g - 6) * 2 + c / 60 + d * 0.5);
+  }
 
   /**
    * 图表左上角那行读数 —— TradingView / MT4 的图例。
@@ -1086,7 +1124,7 @@
     const vis = visBars();
     const from = Math.max(0, n - vis);
 
-    const xs = [], bars = [];
+    const xs = [], bars = [], vols = [];
     let lo = Infinity, hi = -Infinity;
     for (let i = from; i < n; i++) {
       const b = G.series[i];
@@ -1094,6 +1132,10 @@
       bars.push([+b.o.toFixed(2), +b.c.toFixed(2), +b.l.toFixed(2), +b.h.toFixed(2)]);
       if (b.l < lo) lo = b.l;
       if (b.h > hi) hi = b.h;
+      vols.push({
+        value: +volOf(G.seeds[i]).toFixed(2),
+        itemStyle: { color: b.c >= b.o ? 'rgba(255,77,79,.55)' : 'rgba(0,181,120,.55)' }
+      });
     }
     // 均线：真实看盘软件都有，而且它让「现在处在什么位置」一眼可见。
     // 注意要拿**整段** series 算再切片 —— 只拿可视段算的话，每次窗口滑动
@@ -1163,13 +1205,19 @@
     G.main.setOption({
       animation: false,
       backgroundColor: 'transparent',
-      grid: { left: 56, right: 58, top: 24, bottom: 24 },
+      // 两个 grid：上面蜡烛、下面量柱。真实看盘软件的标配。
+      grid: [
+        { left: 56, right: 58, top: 24, bottom: '32%' },
+        { left: 56, right: 58, bottom: 30, height: '20%' }
+      ],
       tooltip: {
         trigger: 'axis', confine: true, backgroundColor: 'rgba(20,24,32,.94)',
         borderColor: THEME.line, textStyle: { color: '#dfe4ee', fontSize: 11 },
         axisPointer: { type: 'cross', label: { backgroundColor: '#2a3140' } },
         formatter: p => {
-          const it = p[0]; if (!it) return '';
+          // 两个 grid 都在 trigger:'axis' 的范围内，所以不能直接拿 p[0] —— 认名字
+          const it = (p && (p.find(x => x.seriesName === 'WXI') || p[0]));
+          if (!it) return '';
           const gi = from + it.dataIndex;
           // 顺手把左上角读数也切到这一根。ECharts 的 updateAxisPointer 事件
           // 只在鼠标真实移动时触发，程序化 showTip 不会 —— 两边都挂才稳。
@@ -1181,40 +1229,67 @@
             '<br/>低 <b>' + n1(b.l) + '</b>　收 <b>' + n1(b.c) + '</b>' +
             '<br/>涨跌 <b style="color:' + colorOf(d) + '">' + (d >= 0 ? '+' : '') + n1(d) +
             '　' + (dp >= 0 ? '+' : '') + dp.toFixed(2) + '%</b>' +
+            '<br/><span style="opacity:.7">活跃度 ' + volOf(s).toFixed(1) + '</span>' +
             '<br/><span style="opacity:.7">CAPE ' + (s.cape == null ? '—' : s.cape) +
             '　阵风 ' + (s.gust == null ? '—' : n1(s.gust)) + ' m/s　降水 ' +
             (s.precip == null ? '—' : s.precip) + ' mm</span>';
         }
       },
-      xAxis: {
-        type: 'category', data: xs, boundaryGap: true,
-        axisLine: { lineStyle: { color: THEME.line } },
-        axisLabel: { color: THEME.dim, fontSize: 10, hideOverlap: true, interval: Math.max(0, Math.ceil(xs.length / want) - 1) },
-        axisTick: { show: false }
-      },
-      yAxis: {
-        type: 'value', scale: true, min: yMin, max: yMax,
-        axisLabel: { color: THEME.dim, fontSize: 10, formatter: v => v.toFixed(0) },
-        // 十字光标的纵向读数：默认会给成 1,103.96 这种带千分位两位小数，太啰嗦
-        axisPointer: { label: { formatter: p => (+p.value).toFixed(1), backgroundColor: '#2a3140' } },
-        splitLine: { lineStyle: { color: 'rgba(255,255,255,.05)' } }
-      },
+      xAxis: [
+        {
+          gridIndex: 0,
+          type: 'category', data: xs, boundaryGap: true,
+          axisLine: { lineStyle: { color: THEME.line } },
+          axisLabel: { color: THEME.dim, fontSize: 10, hideOverlap: true, interval: Math.max(0, Math.ceil(xs.length / want) - 1) },
+          axisTick: { show: false }
+        },
+        {
+          gridIndex: 1,
+          type: 'category', data: xs, boundaryGap: true,
+          axisLine: { lineStyle: { color: THEME.line } },
+          axisLabel: { show: false }, axisTick: { show: false }
+        }
+      ],
+      yAxis: [
+        {
+          gridIndex: 0,
+          type: 'value', scale: true, min: yMin, max: yMax,
+          axisLabel: { color: THEME.dim, fontSize: 10, formatter: v => v.toFixed(0) },
+          // 十字光标的纵向读数：默认会给成 1,103.96 这种带千分位两位小数，太啰嗦
+          axisPointer: { label: { formatter: p => (+p.value).toFixed(1), backgroundColor: '#2a3140' } },
+          splitLine: { lineStyle: { color: 'rgba(255,255,255,.05)' } }
+        },
+        {
+          gridIndex: 1,
+          type: 'value', scale: true, splitNumber: 2,
+          name: '活跃度', nameTextStyle: { color: THEME.dim, fontSize: 9, align: 'right' },
+          axisLabel: { color: THEME.dim, fontSize: 9, formatter: v => (v >= 100 ? Math.round(v) : v.toFixed(0)) },
+          axisLine: { show: false }, axisTick: { show: false },
+          splitLine: { lineStyle: { color: 'rgba(255,255,255,.035)' } }
+        }
+      ],
       series: [{
         name: 'WXI', type: 'candlestick', data: bars, z: 3,
+        xAxisIndex: 0, yAxisIndex: 0,
         barMaxWidth: 14,
         itemStyle: {
           color: THEME.up, color0: THEME.down,
           borderColor: THEME.up, borderColor0: THEME.down
         },
         markLine: marks.length ? { silent: true, symbol: 'none', data: marks } : undefined
+      }, {
+        name: '活跃度', type: 'bar', data: vols, z: 2,
+        xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 14, silent: true
       }].concat(MA_DEF.map((d, k) => ({
         name: 'MA' + d.w, type: 'line', data: maVis[k], z: 4,
+        xAxisIndex: 0, yAxisIndex: 0,
         showSymbol: false, smooth: false, connectNulls: false, silent: true,
         lineStyle: { width: 1.1, color: d.color, opacity: .85 }
       }))).concat(G.regLine ? [{
         // 区域大盘：把同省 8 城的天气压成一条线，和本地标的画在一起看背离。
         // 它**不是可交易的合约**，只当参考指标（所以 silent + 不参与 tooltip 之外的计算）。
         name: '大盘', type: 'line', data: regVis, z: 2,
+        xAxisIndex: 0, yAxisIndex: 0,
         showSymbol: false, smooth: true, connectNulls: false, silent: true,
         lineStyle: { width: 1.2, color: REG_C, opacity: .8, type: 'dashed' }
       }] : [])
@@ -1315,9 +1390,11 @@
     const sub = $('#ggSub');
     if (sub) {
       const mm = (G.i % perDay()) * barMin();
+      // 进度按**交易段**算：预热那 10 天是白送的，不该让分母变成 40 天。
+      const done = Math.max(0, Math.min(tradeBars(), G.i + 1 - warmBars()));
       const when = G.series.length
         ? ('第 ' + (Math.floor(G.i / perDay()) + 1) + ' 天 ' + U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60) +
-          '　·　' + (G.i + 1) + ' / ' + roundBars() + ' 根　·　' + G.lev + ' 倍杠杆')
+          '　·　已交易 ' + done + ' / ' + roundBars() + ' 根　·　' + G.lev + ' 倍杠杆')
         : '—';
       sub.textContent = G.city ? (G.city.name + ' WXI 天气指数　·　' + when) : when;
     }
@@ -1553,8 +1630,10 @@
 
   /* ═══════════════ 一局的生命周期 ═══════════════ */
   function resetState() {
-    G.i = 0;
-    G.price = G.series.length ? G.series[0].c : 0;
+    // 开局光标停在**预热段的最后一根**上：前面 10 天的 K 线已经画好、已经走完了，
+    // 你从下一根开始交易。所以第一根能下单的 K 线是 series[warmBars()]。
+    G.i = Math.max(0, Math.min(G.series.length - 1, warmBars() - 1));
+    G.price = G.series.length ? G.series[G.i].c : 0;
     G.cash = G.cash0;
     G.pos = 0; G.avg = 0;
     G.peak = G.cash0; G.maxDD = 0; G.trades = 0;
@@ -1670,7 +1749,7 @@
         '<h2 class="' + (profit >= 0 ? 'win' : 'lose') + '">' + (liq ? '爆 仓' : profit >= 0 ? '收 盘 盈 利' : '收 盘 亏 损') + '</h2>' +
         '<div class="gg-grade">' + gr + '</div>' +
         '<div class="gg-final" style="color:' + colorOf(profit) + '">' + money(finalEq) + '</div>' +
-        '<p>' + (liq ? '权益跌破维持保证金，被强制平仓。' : '7 天走完，自动结算。') + '</p>' +
+        '<p>' + (liq ? '权益跌破维持保证金，被强制平仓。' : TRADE_DAYS + ' 天交易走完，自动结算。') + '</p>' +
         '<p style="color:' + colorOf(profit) + '">' + sgnMoney(profit) + '　（' + (profit >= 0 ? '+' : '') + ((ret - 1) * 100).toFixed(2) + '%）</p>' +
         '<div class="gg-tbl">' +
         '<div class="gg-row"><span>标的</span><span>' + (G.city ? G.city.name : '—') + ' WXI 天气指数</span></div>' +
@@ -1805,8 +1884,9 @@
     if (!T) return;
     const m = barMin();
     const n = perDay();
-    const base = '一局 <b>' + ROUND_DAYS + '</b> 天 = <b>' + n0(roundBars()) + '</b> 根，' +
-      '每根 <b>' + m + '</b> 分钟（一天 ' + n0(n) + ' 根）。';
+    const base = '进来先白送 <b>' + WARM_DAYS + '</b> 天历史（已走完，只能看），' +
+      '从第 <b>' + (WARM_DAYS + 1) + '</b> 天开始交易 <b>' + TRADE_DAYS + '</b> 天 = <b>' + n0(roundBars()) + '</b> 根，' +
+      '每根 <b>' + (m < 60 ? m + ' 分钟' : (m / 60) + ' 小时') + '</b>（一天 ' + n0(n) + ' 根）。';
     const src = m > SRC_MIN
       ? 'Open-Meteo 的免费数据最细就是 <b>15 分钟</b>，这一档是把它 ' + (m / SRC_MIN) + ' 根并成 1 根，<b>全是真数据</b>。'
       : (m === SRC_MIN
@@ -1868,15 +1948,18 @@
         '打雷下雨 = 拉升，天气转好 = 回落。你不知道这段是哪年哪月 —— 只能靠盘感。</p>' +
         cashRowHTML() +
         '<ul class="gg-rules">' +
-        '<li>一局 <b>7 天</b>，K 线周期有 <b>1 / 5 / 15 / 30 / 45 / 60 分钟</b>六档，右下角随时换。</li>' +
+        '<li>进来先白送 <b>' + WARM_DAYS + ' 天</b>历史 K 线（已经走完，只能看不能交易），' +
+        '你从第 <b>' + (WARM_DAYS + 1) + '</b> 天开始交易，再走 <b>' + TRADE_DAYS + ' 天</b>结算。</li>' +
+        '<li>K 线周期有 <b>1 分 / 5 分 / 15 分 / 30 分 / 1 时 / 4 时 / 1 日</b>七档，右下角随时换' +
+        '（1/5 分是插值展开的，其余是真数据聚合）。</li>' +
         '<li>图上那条<b style="color:#c792ea">紫色虚线就是大盘</b>（同省 8 城等权平均）。' +
         '本地跑赢大盘 = 自己这块地在出事；本地跟着大盘走 = 一场天气过程路过。</li>' +
         '<li>合约：指数每动 <code>1 点</code>，每手盈亏 <code>¥10</code>。</li>' +
         '<li>杠杆决定保证金：满仓时反向走 <code>(1−10%)÷杠杆</code> 就<u>爆仓</u>。' +
         '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
-        '<li>手续费万分之五，开平都收。</li>' +
+        '<li>手续费万分之五、开平都收，另有<b>滑点</b>（单子越大越贵）—— 本金越大、城市越小，成本越肉疼。</li>' +
         '<li>右侧随时看得到<b>强平价</b>和<b>爆仓距离</b> —— 碰到就结束。</li>' +
-        '<li>行情速度 <b>15 / 22 / 45 / 90 分钟天气每秒</b>，一局 <b>1.9 ~ 11.2 分钟</b>，随时能暂停。' +
+        '<li>行情速度 <b>15 / 22 / 45 / 90 分钟天气每秒</b>，30 天交易约 <b>8 ~ 48 分钟</b>，随时能暂停。' +
         '速度是"每秒推进多少天气时间"，所以跟 K 线周期无关 —— 挑 1 分钟只是看得更细，不会玩得更久。</li>' +
         '</ul>' +
         '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
@@ -1991,8 +2074,10 @@
       BASE, DEF_CASH, CASH_MIN, CASH_MAX, CASH_PRESETS,
       REG_K, DEW_K, DISH_K, DISH_DECAY,
       distKm, AIR_K, QUAKE_M0, QUAKE_K, QUAKE_R, QUAKE_DECAY, TYPHOON_R, TYPHOON_K, FCST_K,
-      ROUND_DAYS, BAR_MIN, BAR_N, SRC_MIN, SPEED_N, TICK_HZ,
-      perDay, roundBars, srcBars, barMin, roundSecs, resample, aggSeed, zag, fmtMin, setBar
+      ROUND_DAYS, WARM_DAYS, TRADE_DAYS, BAR_MIN, BAR_N, SRC_MIN, SPEED_N, TICK_HZ,
+      perDay, warmBars, tradeBars, totalBars, roundBars, srcBars, barMin, roundSecs,
+      resample, aggSeed, zag, fmtMin, setBar,
+      NOISE_A, NOISE_BOOST, MICRO_K, MICRO_DECAY
     }
   };
 

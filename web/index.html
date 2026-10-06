@@ -219,7 +219,9 @@
      现在拿**对流**当波动源：CAPE 能从 0 冲到 5000、阵风能从 2 冲到 60 m/s、
      降水绝大多数时刻是 0。打雷下雨 = 拉升，天气转好 = 回落。
      数据是 Open-Meteo 的 minutely_15（15 分钟一个点，92 天历史），
-     一局 672 根 15 分钟 K 线 = 7 天（K 线周期可在 1/5/15/30/45/60 分钟之间切）。详细规则、调参依据与坑见 web/js/game.js 顶部注释。 -->
+     先白送 10 天历史 K 线（只看不交易），从第 11 天开始交易 30 天 = 2880 根 15 分钟 K 线；
+     K 线周期可在 1/5/15/30/60/240/1440 分钟（1 分 / 5 分 / 15 分 / 30 分 / 1 时 / 4 时 / 1 日）之间切。
+     详细规则、调参依据与坑见 web/js/game.js 顶部注释。 -->
 <div class="game-mask" id="game" hidden>
   <div class="game-panel">
     <!-- 终端行情条：品种 / 周期 / 买卖价 / 点差 / 行情时间 / 连接状态 -->
@@ -324,12 +326,13 @@
 
           <div class="gg-lab" style="margin-top:11px"><span>K 线周期</span><b id="ggBarShow">15 分钟</b></div>
           <div class="gg-seg gg-seg6" id="ggBar">
-            <button data-bar="0">1 分钟</button>
-            <button data-bar="1">5 分钟</button>
-            <button data-bar="2">15 分钟</button>
-            <button data-bar="3">30 分钟</button>
-            <button data-bar="4">45 分钟</button>
-            <button data-bar="5">60 分钟</button>
+            <button data-bar="0">1 分</button>
+            <button data-bar="1">5 分</button>
+            <button data-bar="2">15 分</button>
+            <button data-bar="3">30 分</button>
+            <button data-bar="4">1 时</button>
+            <button data-bar="5">4 时</button>
+            <button data-bar="6">1 日</button>
           </div>
           <p class="gg-bartip" id="ggBarTip"></p>
 
@@ -342,7 +345,7 @@
           </div>
 
           <p class="gg-hint">
-            一局 <b>7 天</b>，K 线周期随便挑。<b>指数每动 1 点，每手盈亏 ¥10</b>。<br>
+            进来先白送 <b>10 天</b>历史 K 线（只能看），从第 <b>11 天</b>开始交易 <b>30 天</b>。K 线周期随便挑。<b>指数每动 1 点，每手盈亏 ¥10</b>。<br>
             满仓 + <b>N 倍</b>杠杆时，反向走 <b>(1−10%)÷N</b> 就爆仓：
             10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。<br>
             <b>滑点</b>随单子大小涨、<b>手续费 ¥5 保底</b> —— 本金越大、城市越小，成本越肉疼。<br>

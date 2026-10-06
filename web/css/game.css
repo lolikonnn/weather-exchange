@@ -285,10 +285,10 @@
 #ggLev { flex-wrap: wrap; }
 #ggLev button { flex: 1 1 calc(33.333% - 3px); }
 
-/* K 线周期也是 6 档（1/5/15/30/45/60 分钟），同样排 3 列 2 行。
-   "15 分钟" 比 "100× 久留美" 长，所以字号压到 11px、内边距再紧一点。 */
+/* K 线周期是 7 档（1/5/15/30/60/240/1440 分钟 = 1分/5分/15分/30分/1时/4时/1日），
+   排 4 列 2 行（第二行三个自动撑满）。字都很短，所以字号压小、内边距收紧。 */
 #ggBar { flex-wrap: wrap; }
-#ggBar button { flex: 1 1 calc(33.333% - 3px); font-size: 11px; padding: 5px 0; }
+#ggBar button { flex: 1 1 calc(25% - 3px); font-size: 11px; padding: 5px 0; }
 /* 下面那行小字说明"这档是真数据还是插值" —— 两行以内，别把右栏顶下去 */
 .gg-bartip {
   font-size: 10.5px; color: var(--dim, #8b919e); line-height: 1.5;
