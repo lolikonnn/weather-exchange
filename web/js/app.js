@@ -519,38 +519,60 @@
     const cloudTxt = cloudNow == null ? '--' : Math.round(cloudNow) + '% ' + cloudWord(cloudNow);
     const uvTxt = uvNow == null ? '--' : fx(uvNow, 1) + ' ' + uvWord(uvNow);
 
-    const items = [
-      // 标签刻意用天气话写，不用"今开/昨收"这类炒股词 —— 保留炒股软件的"长相"就够了，
-      // 不该要求用户会炒股才能看懂（用户反馈："那些炒股软件术语我不炒股看不懂"）。
-      ['今日 0 点', curBar ? fx(curBar.o, 1) : '--', curBar && base != null ? U.trendColor(curBar.o - base) : null],
-      ['今日最高', curBar ? fx(curBar.h, 1) : '--', U.upColor()],
-      ['今日最低', curBar ? fx(curBar.l, 1) : '--', U.downColor()],
-      ['昨日 23 点', base == null ? '--' : fx(base, 1), null],
-      ['全天波动', curBar ? fx(curBar.h - curBar.l, 1) + ' ℃' : '--', null],
-      ['降水量', curBar ? fx(curBar.v, 1) + ' mm' : '--', null],
-      ['降水时数', curBar ? (curBar.rainHours || 0) + ' h' : '--', null],
-      ['湿度', n.humidity == null ? (curBar && curBar.humAvg != null ? curBar.humAvg + '%' : '--') : n.humidity + '%', null],
-      ['风速', n.windSpeed == null ? (curBar && curBar.windAvg != null ? fx(curBar.windAvg, 1) + ' m/s' : '--') : fx(n.windSpeed, 1) + ' m/s ' + U.windLevel(n.windSpeed), null],
-      ['气压', n.pressure == null ? '--' : fx(n.pressure, 0) + ' hPa', null],
-      ['体感', n.feels == null ? '--' : fx(n.feels, 1) + ' ℃', null],
-      ['风向', n.windDir || '--', null],
-      ['平均风速', curBar && curBar.windAvg != null ? fx(curBar.windAvg, 1) + ' m/s' : '--', null],
-      ['日出', om.sunrise ? String(om.sunrise).slice(11, 16) : '--', null],
-      ['日落', om.sunset ? String(om.sunset).slice(11, 16) : '--', null],
-      // 标签写短一点：统计格只有 ~107px 宽，"历史今日" + "32.7 / 22.9" 会被省略号截掉
-      ['同期', prevBar ? fx(prevBar.h, 1) + '/' + fx(prevBar.l, 1) : '--', null],
-      ['观测点', curBar ? curBar.n + ' 个' : '--', null],
-      // ── 天文与日照（用户要的"月相、昼长等天文数据"）──
-      // 云量取"当前这个小时"的值，而不是今天的平均 —— 抬头看一眼天，和这个数对得上才有用。
-      ['云量', cloudTxt, null],
-      ['紫外线', uvTxt, null],
-      ['昼长', daylightTxt, null],
-      ['月相', moonTxt, null]
+    // 降水合并成一格：雨量和降水时数是同一件事的两面，拆成两格反而把
+    // "同类放一起"的行分组撑到 21 格（4 列排不满，最后一行会落单）。
+    const rainTxt = curBar ? fx(curBar.v, 1) + ' mm / ' + (curBar.rainHours || 0) + ' h' : '--';
+
+    // 统计格按"同类"分组 —— 用户反馈："行情头里同类型的数据是不是放一起更好啊"。
+    // 每组尽量凑满 4 格：4 列栅格下每组正好占一行，从左往右扫过去就是一类；组间用一条横线隔开。
+    const groups = [
+      // ① 今天有多热
+      [
+        ['今日最高', curBar ? fx(curBar.h, 1) : '--', U.upColor()],
+        ['今日最低', curBar ? fx(curBar.l, 1) : '--', U.downColor()],
+        ['体感', n.feels == null ? '--' : fx(n.feels, 1) + ' ℃', null],
+        ['全天波动', curBar ? fx(curBar.h - curBar.l, 1) + ' ℃' : '--', null]
+      ],
+      // ② 风（气压跟着风走：都是"大气"这一类的动力/压力读数）
+      [
+        ['风速', n.windSpeed == null ? (curBar && curBar.windAvg != null ? fx(curBar.windAvg, 1) + ' m/s' : '--') : fx(n.windSpeed, 1) + ' m/s ' + U.windLevel(n.windSpeed), null],
+        ['风向', n.windDir || '--', null],
+        ['平均风速', curBar && curBar.windAvg != null ? fx(curBar.windAvg, 1) + ' m/s' : '--', null],
+        ['气压', n.pressure == null ? '--' : fx(n.pressure, 0) + ' hPa', null]
+      ],
+      // ③ 天上有什么、空气有多潮 —— 云量/紫外线（天上）和湿度/降水（水汽）挨着
+      [
+        ['云量', cloudTxt, null],
+        ['紫外线', uvTxt, null],
+        ['湿度', n.humidity == null ? (curBar && curBar.humAvg != null ? curBar.humAvg + '%' : '--') : n.humidity + '%', null],
+        ['降水', rainTxt, null, '降水 ' + rainTxt + '（雨量 / 降水时数）']
+      ],
+      // ④ 日月与日照
+      [
+        ['日出', om.sunrise ? String(om.sunrise).slice(11, 16) : '--', null],
+        ['日落', om.sunset ? String(om.sunset).slice(11, 16) : '--', null],
+        ['昼长', daylightTxt, null],
+        ['月相', moonTxt, null]
+      ],
+      // ⑤ 这几个数是从哪来的：今天 0 点 / 昨天收在多少 / 去年同期 / 几个观测点
+      [
+        // 标签刻意用天气话写，不用"今开/昨收"这类炒股词 —— 保留炒股软件的"长相"就够了，
+        // 不该要求用户会炒股才能看懂（用户反馈："那些炒股软件术语我不炒股看不懂"）。
+        ['今日 0 点', curBar ? fx(curBar.o, 1) : '--', curBar && base != null ? U.trendColor(curBar.o - base) : null],
+        ['昨日 23 点', base == null ? '--' : fx(base, 1), null],
+        // 标签写短一点：统计格只有 ~107px 宽，"历史今日" + "32.7 / 22.9" 会被省略号截掉
+        ['同期', prevBar ? fx(prevBar.h, 1) + '/' + fx(prevBar.l, 1) : '--', null],
+        ['观测点', curBar ? curBar.n + ' 个' : '--', null]
+      ]
     ];
     const box = $('#qStats'); box.innerHTML = '';
-    items.forEach(([k, v, c2]) => box.appendChild(el('div', { class: 'qs', title: k + ' ' + v }, [
-      el('b', { text: k }), el('span', { style: c2 ? { color: c2 } : null, text: String(v) })
-    ])));
+    groups.forEach(cells => {
+      const g = el('div', { class: 'qg' });
+      cells.forEach(([k, v, c2, tip]) => g.appendChild(el('div', { class: 'qs', title: tip || (k + ' ' + v) }, [
+        el('b', { text: k }), el('span', { style: c2 ? { color: c2 } : null, text: String(v) })
+      ])));
+      box.appendChild(g);
+    });
   }
 
   /* ═══════════ 五档盘口（未来 5 日预报） ═══════════ */

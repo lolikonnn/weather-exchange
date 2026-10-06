@@ -207,11 +207,18 @@ body{
 .qh-last{font-family:var(--mono);font-size:40px;font-weight:700;line-height:1;letter-spacing:-1px}
 .qh-unit{font-size:14px;color:var(--dim);margin-left:-4px}
 .qh-chg,.qh-pct{font-family:var(--mono);font-size:17px;font-weight:600}
+/* 统计格按"同类"分组（气温一组、风一组、日月一组…）—— 用户反馈"同类型的数据放一起更好"。
+   每组自己是一个小栅格，所以①组内几格永远挨在一起、②换到窄屏每组各自重新分列也不会被拆散。
+   以前是 21 格摊在一个 auto-fit 栅格里，同类数据会被行尾切得到处都是。 */
 .qh-stats{
-  flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));
-  gap:2px 10px;align-content:start;padding-top:2px;min-width:0;
+  flex:1;display:flex;flex-direction:column;align-content:start;padding-top:2px;min-width:0;
 }
-.qs{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:1.5px 0;border-bottom:1px dashed #1f242e;min-width:0}
+.qg{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:2px 10px;min-width:0}
+/* 组分隔线：只花 4px（1px 线 + 0 额外内边距），图表那边的空间基本不受影响 */
+.qg + .qg{margin-top:4px;border-top:1px solid #2a313d}
+/* 每格不再单独画下划线：一行就是一组，组间那条线已经说明了一切，
+   两套线叠在一起（虚线 + 分隔线）只会显乱。 */
+.qs{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:1.5px 0;min-width:0}
 /* 标签**不能**被省略号截掉 —— "风速" 被截成 "风..." 就是这一条造成的（用户报过）。
    列宽的下限（108px）保证正常情况下两者都放得下；万一还是挤，宁可让数值那一侧收窄。 */
 .qs b{font-weight:400;color:var(--dim);white-space:nowrap;flex:0 0 auto;overflow:visible;text-overflow:clip}
@@ -452,7 +459,9 @@ body{
   .tag{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .qh-price{gap:7px}
   .qh-last{font-size:30px}
-  .qh-stats{width:100%;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px 8px}
+  .qh-stats{width:100%}
+  /* 窄屏每组三列：一组四格会排成 3+1，但仍在同一组里，不会被别的组插进来 */
+  .qg{grid-template-columns:repeat(3,minmax(0,1fr));gap:1px 8px}
   .qs{font-size:11px;gap:4px;min-width:0}
   .qs b,.qs span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
