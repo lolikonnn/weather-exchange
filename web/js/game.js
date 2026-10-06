@@ -56,10 +56,10 @@
   // 本金翻 10 倍，手数也翻 10 倍，盈亏比例一模一样。
   // 真正变的是两件事：① 数字看着像那么回事了 ② 手数是整张开的，
   // 本金越小取整误差越大（1 万本金开 30% 仓只有 6 手，凑不出更细的仓位）。
-  const DEF_CASH   = 100000;   // 默认本金
+  const DEF_CASH   = 300000;   // 默认本金（群里说"久留美都有三十万"，那就三十万）
   const CASH_MIN   = 1000;
   const CASH_MAX   = 100000000;
-  const CASH_PRESETS = [10000, 50000, 100000, 1000000, 10000000];
+  const CASH_PRESETS = [100000, 300000, 1000000, 3000000, 10000000];
   const LOT_MULT   = 10;       // 1 手 × 指数每动 1 点 = 10 元
   const FEE_RATE   = 0.0005;   // 单边手续费，万分之五
   const MAINTAIN   = 0.10;     // 维持保证金率：权益 ≤ 占用保证金 × 10% 就强平
@@ -80,6 +80,20 @@
   const ROUND_BARS = 960;
   const SPEEDS     = [1.5, 3, 6]; // 每个真实秒推进几根 K
 
+  /* ── 复合标的：标的不是一个城市的天气，而是「大盘 + 本地 + 湿度 + 盘子扰动」 ──
+     群里那位说得对：只炒一个城市的对流，盯久了就那点花样。真实市场里你炒的东西
+     是被大盘推着走的，所以这里把 15 分钟粒度的**同省区域平均气温**也当成一股力。
+     要注意哪几项是真的、哪几项是建模的（README 里也写了）：
+       区域项  reg  真数据：Open-Meteo 一次请求同省 8 城 15 分钟气温，等权平均
+       湿度项  dew  真数据：minutely_15 的 dew_point_2m（PM2.5 没有 15 分钟产品，不拿它充数）
+       盘子项  dish **建模**：带衰减的随机游走，小地方振幅更大（见 cityWeight）
+     每一项都是"那一项的异常值 × 一个系数"，异常值用中位数对齐，所以叠加后
+     基准仍然是 BASE = 1000。 */
+  const REG_K      = 6;        // 区域大盘带动
+  const DEW_K      = 5;        // 露点（湿热）项
+  const DISH_K     = 3;        // 盘子扰动的基准振幅（再乘 cityWeight 得到的倍率）
+  const DISH_DECAY = 0.96;     // 盘子扰动衰减（半衰期约 17 根 ≈ 4 小时）
+
   const LEVS = [
     { v: 1,   n: '1×',   t: '稳健',   cls: '' },
     { v: 5,   n: '5×',   t: '激进',   cls: '' },
@@ -96,6 +110,11 @@
     ended: false,
     city: null,
     series: [],       // [{ t, o, h, l, c }]，长度 ROUND_BARS
+    seeds: [],        // 每根的真实天气读数（CAPE / 阵风 / 降水 / 天气码 / 露点 / 盘子扰动）
+    sev: null,        // 本局窗口的本地恶劣度序列（天气日历用）
+    regLine: null,    // 区域大盘线（整段 92 天里本局窗口那 960 根）；拿不到大盘时为 null
+    regFrom: 0,       // 上面那条线在原始 92 天序列里的起点下标
+    regCities: null,  // 组成大盘的城市名
     i: 0,
     price: 0,
     cash0: DEF_CASH,  // 本局本金（开场卡片里可改，局中不可改）
@@ -307,6 +326,30 @@
     return u.toISOString().slice(0, 16);
   }
 
+  /**
+   * 这个城市有多"大"。用来定**盘子扰动**的振幅 —— 小地方筹码少，同样的资金进出
+   * 更容易把价格打飞，这就是"庄家操盘"的观感来源。
+   *
+   * `cities.json` 里没有人口字段（只有 id/name/prov/py/lat/lon/cma/path），
+   * 所以按**行政层级**分档，而不是假装知道人口：
+   *   直辖市 3.0 / 省会 2.2 / 有国家站的地级市 1.6 / 有 path 的 1.2 / 区县 0.6
+   * 再取 `1.6 / w` 当振幅倍率，并夹到 [0.35, 2.6] 免得极端值飞出画面。
+   */
+  function cityWeight(c) {
+    if (!c) return 1;
+    const p = String(c.prov || ''), nm = String(c.name || '');
+    if (/^(北京市|上海市|天津市|重庆市)$/.test(p)) return 3.0;
+    const core = p.replace(/(省|市|自治区|壮族|回族|维吾尔|特别行政区|自治州)/g, '');
+    if (core && nm && (nm === core || nm.indexOf(core) === 0)) return 2.2;
+    if (c.cma) return 1.6;
+    if (c.path) return 1.2;
+    return 0.6;
+  }
+  function dishScale(c) {
+    const w = cityWeight(c);
+    return Math.max(0.35, Math.min(2.6, 1.6 / w));
+  }
+
   /** 把 minutely_15 的原始分量压成一条「天气恶劣度」序列 */
   function severity(mn) {
     const T = mn.temp.map(v => (v == null ? 0 : +v));
@@ -340,7 +383,7 @@
   }
 
   /** 从 minutely_15 里随机截一段真实历史，做成带 OHLC 的 K 线 */
-  function pickSeries(mn) {
+  function pickSeries(mn, reg, city) {
     if (!mn || !mn.time || !mn.time.length) return null;
     const n = mn.time.length;
     let i0 = mn.time.findIndex(t => t >= nowLocalStr());
@@ -353,6 +396,36 @@
     const sev = severity(mn);
     const tr = ema(sev, EMA_A);
     const now = nowLocalStr();
+
+    // ── 区域大盘：同一个时间轴（两边都是 past_days=92 & 同一时区），按时间串对齐 ──
+    let regSev = null, regTr = null, regMap = null;
+    if (reg && reg.time && reg.time.length) {
+      regMap = {};
+      for (let k = 0; k < reg.time.length; k++) regMap[reg.time[k]] = k;
+      // 拿本地这一局的时间轴去取大盘值，拼成等长的"虚拟城市"再套同一套 severity()
+      const rv = { time: [], temp: [], gust: [], precip: [], wcode: [], cape: [], dew: [] };
+      for (let k = 0; k < n; k++) {
+        const j = regMap[mn.time[k]];
+        rv.time.push(mn.time[k]);
+        rv.temp.push(j == null ? null : reg.temp[j]);
+        rv.gust.push(j == null ? null : reg.gust[j]);
+        rv.precip.push(j == null ? (0) : (reg.precip[j] == null ? 0 : reg.precip[j]));
+        rv.wcode.push(j == null ? 0 : (reg.wcode[j] || 0));
+        rv.cape.push(j == null ? null : reg.cape[j]);
+      }
+      // severity() 里对 null 是当 0 处理的，所以只有大盘真的对齐上了才算数
+      let hit = 0;
+      for (let k = 0; k < Math.min(200, n); k++) if (rv.cape[k] != null && rv.gust[k] != null) hit++;
+      if (hit > 100) { regSev = severity(rv); regTr = ema(regSev, EMA_A); }
+    }
+
+    // ── 露点（湿热）项：真数据，15 分钟粒度 ──
+    const D = (mn.dew && mn.dew.length ? mn.dew : []).map(v => (v == null ? null : +v));
+    const dOk = D.filter(v => v != null);
+    const mDew = dOk.length ? median(dOk) : 0, sDew = dOk.length ? robustScale(dOk, mDew) : 1;
+
+    // ── 盘子扰动：带衰减的随机游走。小地方振幅更大（庄家操盘）──
+    const dScale = dishScale(city) * DISH_K;
 
     for (let k = 0; k < 24; k++) {
       const s = Math.floor(Math.random() * (end - need));
@@ -367,7 +440,8 @@
       const m = median(win);
       const series = [];
       const seeds = [];
-      let carry = 0;
+      const regLine = [];          // 画在副图上的"大盘"（跟主图同一根数）
+      let carry = 0, dish = 0;
       for (let j = 0; j < need; j++) {
         const k2 = s + j;
         // 「突发行情」：某根 15 分钟里天气本身剧烈变化（CAPE 炸了、阵风猛增、开始下暴雨）时，
@@ -383,13 +457,30 @@
           ? (Math.abs(dsev) - JUMP_AT) * JUMP_K * (dsev > 0 ? 1 : -1)
           : 0;
         carry = carry * JUMP_DECAY + shock;
-        const px = BASE + (tr[k2] - m) * TREND_K + (sev[k2] - tr[k2]) * NOISE_K + carry;
+
+        // 大盘的快分量：本地天气是一城一地，大盘是整省的天气过程。
+        // 只取"快分量"（减去自己的 EMA）是有意的 —— 趋势项已经由本地负责，
+        // 大盘再贡献一遍慢趋势就成了同一个信号算两次。
+        let regFast = 0;
+        if (regSev) regFast = (regSev[k2] - regTr[k2]) * REG_K;
+
+        const dnorm = D[k2] == null ? 0 : (D[k2] - mDew) / sDew;
+
+        // 盘子扰动：AR(1)。用噪声当驱动、按 DISH_DECAY 衰减，
+        // 所以它是一条"能看出有人在推"的平滑曲线，而不是每根乱跳的雪花点。
+        dish = dish * DISH_DECAY + (Math.random() - 0.5) * 2 * dScale;
+
+        const px = BASE + (tr[k2] - m) * TREND_K + (sev[k2] - tr[k2]) * NOISE_K + carry
+          + regFast + dnorm * DEW_K + dish;
         series.push({ t: mn.time[k2], c: px });
+        regLine.push(BASE + regFast * 3 + dish * 0.2);
         seeds.push({
           cape: mn.cape[k2] | 0,
           gust: +(+mn.gust[k2]).toFixed(1),
           precip: +(+(mn.precip[k2] || 0)).toFixed(1),
-          wcode: mn.wcode[k2] | 0
+          wcode: mn.wcode[k2] | 0,
+          dew: D[k2] == null ? null : +(+D[k2]).toFixed(1),
+          dish: +dish.toFixed(1)
         });
       }
       // 补 OHLC：开 = 上一根收，收 = 本根指数（都是真采样）；
@@ -403,7 +494,12 @@
         series[j].l = Math.min(o, c) - w;
       }
       if (!series.every(b => isFinite(b.o) && isFinite(b.c))) continue;
-      return { series, seeds, sevWin: sev.slice(s, s + need) };
+      return {
+        series, seeds, sevWin: sev.slice(s, s + need),
+        regLine: regSev ? regLine : null,
+        regFrom: s,
+        regCities: (reg && reg.cities) || null
+      };
     }
     return null;
   }
@@ -445,7 +541,13 @@
     const s = G.seeds && G.seeds[i];
     if (!s) return null;
     const wc = s.wcode;
+    // 盘子扰动优先播 —— 它是"资金面"消息，比天气更能解释一根莫名的长阳/长阴
+    if (s.dish != null) {
+      if (s.dish >= DISH_K * 1.5) return { k: 'pump', t: '🏦 大单扫货', v: '盘子异动 +' + n1(s.dish) };
+      if (s.dish <= -DISH_K * 1.5) return { k: 'dump', t: '📉 有人出货', v: '盘子异动 ' + n1(s.dish) };
+    }
     if (wc === 95 || wc === 96 || wc === 99) return { k: 'storm', t: '⚡ 雷暴', v: 'CAPE ' + s.cape };
+    if (s.gust >= 32) return { k: 'typhoon', t: '🌀 台风外围影响', v: '阵风 ' + n1(s.gust) + ' m/s' };
     if (s.cape >= 3000) return { k: 'cape', t: '🌩 对流爆发', v: 'CAPE ' + s.cape };
     if (s.gust >= 25) return { k: 'gust', t: '🌪 大风', v: '阵风 ' + n1(s.gust) + ' m/s' };
     if (s.precip >= 3) return { k: 'rain', t: '🌧 短时强降水', v: s.precip + ' mm' };
@@ -527,6 +629,7 @@
     return out;
   }
   const MA_DEF = [{ w: 5, color: '#f0b90b' }, { w: 20, color: '#7aa2f7' }];
+  const REG_C = '#c792ea';   // 区域大盘线的颜色（紫），和 MA5 的黄 / MA20 的蓝分得开
 
   /**
    * 图表左上角那行读数 —— TradingView / MT4 的图例。
@@ -579,6 +682,9 @@
     G._ma = maAll;
     const maVis = maAll.map(a => a.slice(from, n));
     maVis.forEach(a => a.forEach(v => { if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } }));
+    // 大盘线：不进 Y 轴范围计算 —— 它是参考指标，把它算进去会把蜡烛压扁。
+    // 注意 regLine 已经是**本局窗口**那一截了（长度 = ROUND_BARS），不用再加 regFrom。
+    const regVis = G.regLine ? G.regLine.slice(from, n) : null;
     // 把 Y 轴拉开到能容纳「持仓均价」—— 否则入场线落在可视范围外时，
     // ECharts 会把它贴到坐标轴边缘，看起来像"价格就在最底下"，是骗人的。
     // 强平价只在**离得够近**时才纳入：1 倍杠杆下它在 90% 以外、10 倍下也在 10% 以外，
@@ -685,10 +791,20 @@
         name: 'MA' + d.w, type: 'line', data: maVis[k], z: 4,
         showSymbol: false, smooth: false, connectNulls: false, silent: true,
         lineStyle: { width: 1.1, color: d.color, opacity: .85 }
-      })))
+      }))).concat(G.regLine ? [{
+        // 区域大盘：把同省 8 城的天气压成一条线，和本地标的画在一起看背离。
+        // 它**不是可交易的合约**，只当参考指标（所以 silent + 不参与 tooltip 之外的计算）。
+        name: '大盘', type: 'line', data: regVis, z: 2,
+        showSymbol: false, smooth: true, connectNulls: false, silent: true,
+        lineStyle: { width: 1.2, color: REG_C, opacity: .8, type: 'dashed' }
+      }] : [])
     }, true);
     G._from = from;
     updateOhlc(G.i < 0 ? 0 : G.i);   // 没有悬停时，读数跟着最新一根走
+
+    // 权益图的基准标签：本金可改，这个数字必须跟着走（原来写死在 HTML 里，改成 30 万后就不对了）
+    const eqb = $('#ggEqBase');
+    if (eqb) eqb.textContent = '¥' + G.cash0.toLocaleString('en-US');
 
     // ── 现价标签：贴在右侧价格轴上，就是 MT4 那条「当前价」──
     const tag = $('#ggLastTag');
@@ -883,6 +999,11 @@
       setT('#ggTbBuy', n1(px));
       setT('#ggTbSpread', costPts.toFixed(1) + ' 点');
       setT('#ggSym', (G.city ? G.city.name : 'WXI') + ' WXI');
+      // 把大盘是由哪几个城市平均出来的写进 title，鼠标停一下就能看到
+      const symEl = $('#ggSym');
+      if (symEl) symEl.title = G.regCities && G.regCities.length
+        ? ('区域大盘 = ' + G.regCities.join(' / ') + ' 的等权平均（15 分钟，同省最多 8 城）')
+        : '这台设备的区域大盘取不到，本局是纯本地行情';
       const mm = (G.i % PER_DAY) * 15;
       setT('#ggTbTime', '第 ' + (Math.floor(G.i / PER_DAY) + 1) + ' 天 ' +
         U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60));
@@ -996,12 +1117,19 @@
     const city = (app && app.S && app.S.cur) || null;
     if (!city) { toast('先选一个城市'); return; }
 
-    if (cover) cover.innerHTML = '<div class="gg-card"><h2>取行情中…</h2><p>正在取 <b>' + city.name + '</b> 的 15 分钟天气行情</p><p class="dim">92 天的对流能量 / 阵风 / 降水，第一次要几秒。</p></div>';
+    if (cover) cover.innerHTML = '<div class="gg-card"><h2>取行情中…</h2><p>正在取 <b>' + city.name + '</b> 的 15 分钟天气行情</p><p class="dim">本地 92 天的对流能量 / 阵风 / 降水，外加同省城市的大盘，第一次要几秒。</p></div>';
 
-    let mn = null;
-    try { mn = await API.OpenMeteo.minutely(city.lat, city.lon); } catch (e) { mn = null; }
+    // 本地行情与区域大盘并发取；大盘拿不到不算失败（退化成纯本地行情）
+    let mn = null, reg = null;
+    try {
+      const both = await Promise.all([
+        API.OpenMeteo.minutely(city.lat, city.lon).catch(() => null),
+        API.OpenMeteo.regionIndex(city).catch(() => null)
+      ]);
+      mn = both[0]; reg = both[1];
+    } catch (e) { mn = null; reg = null; }
 
-    const picked = mn && pickSeries(mn);
+    const picked = mn && pickSeries(mn, reg, city);
     if (!picked) {
       if (cover) cover.innerHTML = '<div class="gg-card"><h2 class="lose">取不到行情</h2>' +
         '<p>15 分钟级天气数据没取回来（多半是 Open-Meteo 那边不通或额度用完了）。</p>' +
@@ -1016,6 +1144,9 @@
     G.series = picked.series;
     G.seeds = picked.seeds;
     G.sev = picked.sevWin;
+    G.regLine = picked.regLine;      // 大盘线（没有就是 null，图上也就不画）
+    G.regFrom = picked.regFrom || 0;
+    G.regCities = picked.regCities;  // 组成大盘的城市名，显示在副图标题上
     resetState();
     readTheme();
     ensureCharts();
@@ -1195,11 +1326,14 @@
       cover.innerHTML =
         '<div class="gg-card">' +
         '<h2 style="font-size:22px;letter-spacing:2px">🎮 点击做空天气</h2>' +
-        '<p>标的：<b>WXI 天气指数</b>，用 <b>' + cityName + '</b> 的对流能量 / 阵风 / 降水 / 气温合成。<br>' +
+        '<p>标的：<b>WXI 复合天气指数</b> —— <b>' + cityName + '</b> 本地的对流能量 / 阵风 / 降水 / 露点，' +
+        '<b>外加同省城市平均出来的「大盘」</b>，再叠一层盘子扰动。<br>' +
         '打雷下雨 = 拉升，天气转好 = 回落。你不知道这段是哪年哪月 —— 只能靠盘感。</p>' +
         cashRowHTML() +
         '<ul class="gg-rules">' +
         '<li>一局 <b>10 天</b>（960 根 15 分钟 K 线）。</li>' +
+        '<li>图上那条<b style="color:#c792ea">紫色虚线就是大盘</b>（同省 8 城等权平均）。' +
+        '本地跑赢大盘 = 自己这块地在出事；本地跟着大盘走 = 一场天气过程路过。</li>' +
         '<li>合约：指数每动 <code>1 点</code>，每手盈亏 <code>¥10</code>。</li>' +
         '<li>杠杆决定保证金：满仓时反向走 <code>(1−10%)÷杠杆</code> 就<u>爆仓</u>。' +
         '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
@@ -1310,9 +1444,10 @@
       pickSeries, severity, ema, median, robustScale, applyFill, applyFillAt, equity, marginUsed,
       liqPriceOf, maxLots, beginRound, endRound, tick, beep, labelAt, newsAt, visBars,
       tolerablePct, placeLimit, setStop, cancelOrder, processOrders, calendarAt, freeEq,
-      reservedMargin, JUMP_AT, setCash, cashTip,
+      reservedMargin, JUMP_AT, setCash, cashTip, cityWeight, dishScale,
       LEVS, ROUND_BARS, PER_DAY, LOT_MULT, MAINTAIN, FEE_RATE,
-      BASE, DEF_CASH, CASH_MIN, CASH_MAX, CASH_PRESETS
+      BASE, DEF_CASH, CASH_MIN, CASH_MAX, CASH_PRESETS,
+      REG_K, DEW_K, DISH_K, DISH_DECAY
     }
   };
 

@@ -393,7 +393,7 @@
      *  单看 HTTP 状态码是发现不了这件事的 —— 它会老老实实返回 200 加一串 null。 */
     async minutely(lat, lon) {
       const q = '?latitude=' + lat + '&longitude=' + lon +
-        '&minutely_15=temperature_2m,wind_gusts_10m,precipitation,weather_code,cape' +
+        '&minutely_15=temperature_2m,wind_gusts_10m,precipitation,weather_code,cape,dew_point_2m' +
         '&past_days=92&forecast_days=1&timezone=' + encodeURIComponent(TZ);
       let lastErr = null;
       for (let i = 0; i < OM_F_HOSTS.length; i++) {
@@ -415,15 +415,80 @@
             gust: m.wind_gusts_10m || [],
             precip: (m.precipitation || []).map(v => v || 0),
             wcode: m.weather_code || [],
-            cape: m.cape || []
+            cape: m.cape || [],
+            dew: m.dew_point_2m || []
           };
         } catch (e) { lastErr = e; }
       }
       throw lastErr || new Error('取不到 15 分钟行情');
     },
 
-    /** 仅取最近 24 小时温度，用于指数条 sparkline */
-    async mini(lat, lon) {
+    /**
+     * 区域大盘：把同省若干城市的 15 分钟天气**逐变量**平均成一条"区域行情"。
+     *
+     * 这是给「点击做空天气」用的 —— 单一城市的对流能量波动太随心，玩家很容易
+     * 只盯自己那一小块地；真实市场里你炒的那个东西是被**大盘**推着走的。
+     *
+     * 取的变量和单城 `minutely()` 完全一致（而不是只取气温）：气温太慢太平，
+     * 单独拿它当大盘等于把趋势又算了一遍；对流能量/阵风/降水才是波动来源，
+     * 于是返回的这组平均值可以直接喂给同一套 `severity()`，得到"区域恶劣度"。
+     *
+     * Open-Meteo 支持**一次请求多个坐标**（`latitude=a,b,c&longitude=x,y,z` 直接返回数组），
+     * 所以同省 8 个城市只要一个请求，不会把额度吃光。
+     *
+     * ⚠️ 是**等权**平均，不是按人口加权 —— `cities.json` 里只有 id/name/prov/py/lat/lon/cma/path，
+     *    没有人口字段。等权就等权，不假装。
+     * 失败返回 null（游戏那边会把大盘项退化成 0，纯本地行情照跑）。
+     */
+    async regionIndex(city, maxCities) {
+      const N = maxCities || 8;
+      const list = (Cities.all || []).filter(c =>
+        c && c.prov && c.prov === city.prov && c.lat != null && c.lon != null);
+      // 本市排第一，其余按 id 稳定排序取样 —— 顺序稳定的好处是缓存键和曲线都不会每次开一局就换
+      list.sort((a, b) => (a.id === city.id ? -1 : b.id === city.id ? 1 : String(a.id) < String(b.id) ? -1 : 1));
+      const pick = list.slice(0, N);
+      if (!pick.length) return null;
+      const q = '?latitude=' + pick.map(c => c.lat).join(',') +
+        '&longitude=' + pick.map(c => c.lon).join(',') +
+        '&minutely_15=temperature_2m,wind_gusts_10m,precipitation,weather_code,cape,dew_point_2m' +
+        '&past_days=92&forecast_days=1&timezone=' + encodeURIComponent(TZ);
+      const key = 'rg|' + pick.map(c => c.id).join('.');
+      let lastErr = null;
+      for (let i = 0; i < OM_F_HOSTS.length; i++) {
+        const idx = (1 + i) % OM_F_HOSTS.length;   // ALT 优先，理由同 minutely()
+        try {
+          const d = await getJSON(OM_F_HOSTS[idx] + q, { ttl: 1800000, key: key + '#h' + idx });
+          const arr = Array.isArray(d) ? d : [d];
+          const t = ((arr[0] && arr[0].minutely_15 && arr[0].minutely_15.time) || []);
+          if (!t.length) throw new Error('区域大盘返回空');
+          // 逐个时刻、逐个变量求平均，缺测的坐标跳过（不拿 0 去拉低平均）
+          const VARS = { temp: 'temperature_2m', gust: 'wind_gusts_10m', precip: 'precipitation',
+                         wcode: 'weather_code', cape: 'cape', dew: 'dew_point_2m' };
+          const out = { time: t, cities: pick.map(c => c.name) };
+          for (const alias in VARS) {
+            const src = VARS[alias];
+            const col = new Array(t.length);
+            for (let k = 0; k < t.length; k++) {
+              let s = 0, n = 0;
+              for (const one of arr) {
+                const v = one && one.minutely_15 && one.minutely_15[src] ? one.minutely_15[src][k] : null;
+                if (v != null) { s += v; n++; }
+              }
+              col[k] = n ? s / n : null;
+            }
+            out[alias] = col;
+          }
+          let nn = 0;
+          for (let k = 0; k < Math.min(96, t.length); k++) if (out.gust[k] != null) nn++;
+          if (nn < 48 && i + 1 < OM_F_HOSTS.length) throw new Error('这台主机的 15 分钟历史不够长');
+          return out;
+        } catch (e) { lastErr = e; }
+      }
+      if (global.console) console.warn('[regionIndex] 取不到区域大盘，退化为纯本地行情:', lastErr && lastErr.message);
+      return null;
+    },
+
+    /** 仅取最近 24 小时温度，用于指数条 sparkline */    async mini(lat, lon) {
       const q = '?latitude=' + lat + '&longitude=' + lon +
         '&hourly=temperature_2m&past_days=1&forecast_days=1&timezone=' + encodeURIComponent(TZ);
       const d = await omGetJSON(q, { ttl: 1800000, key: 'm|' + lat + ',' + lon });
