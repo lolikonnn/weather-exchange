@@ -43,7 +43,7 @@
       10 倍约 9%、20 倍约 4.5%、50 倍约 1.8%、100 倍约 0.9%。
       按指数 1000 点算，100 倍只要反向 9 个点。
 
-   ⑥ **只画最近一屏**。一局 480 根（5 天），全塞进 1100px 的话一根才 2.3px，
+   ⑥ **只画最近一屏**。一局 960 根（10 天），全塞进 1300px 的话一根才 1.3px，
       蜡烛会糊成一条线。所以按容器宽度算可视根数并跟着行情自动滑动 ——
       真实的操盘软件也是这么做的。
 */
@@ -67,8 +67,11 @@
   const JUMP_K     = 34;
   const JUMP_DECAY = 0.78;
   const PER_DAY    = 96;       // 一天 96 根 15 分钟 K
-  const ROUND_BARS = 480;      // 一局 480 根 = 5 天
-  const SPEEDS     = [4, 10, 24]; // 每个真实秒推进几根 K
+  // 一局 960 根 = 10 天。原来是 480 根（5 天），但一局最长也就两分钟、
+  // 行情一秒钟跑 24 根，看着像在放快进而不是在盯盘 —— 现在放慢到 1.5~6 根/秒，
+  // 一局 2.7~10.7 分钟，一「天」大约 16~64 秒，节奏更像真的在看 15 分钟图。
+  const ROUND_BARS = 960;
+  const SPEEDS     = [1.5, 3, 6]; // 每个真实秒推进几根 K
 
   const LEVS = [
     { v: 1,   n: '1×',   t: '稳健',   cls: '' },
@@ -85,7 +88,7 @@
     running: false,
     ended: false,
     city: null,
-    series: [],       // [{ t, o, h, l, c }]，长度 ROUND_BARS + 1
+    series: [],       // [{ t, o, h, l, c }]，长度 ROUND_BARS
     i: 0,
     price: 0,
     cash: START_CASH,
@@ -263,7 +266,7 @@
     if (i0 < 0) i0 = n;
     // 只用"现在"之前的：预报段不能拿来当已发生的行情
     const end = Math.max(2, Math.min(n, i0));
-    const need = ROUND_BARS + 2;
+    const need = ROUND_BARS;
     if (end < need + 1) return null;
 
     const sev = severity(mn);
@@ -376,7 +379,22 @@
 
   /* ═══════════════ 图表 ═══════════════ */
   function ensureCharts() {
-    if (!G.main) G.main = echarts.init($('#ggChart'), null, { renderer: 'canvas' });
+    if (!G.main) {
+      G.main = echarts.init($('#ggChart'), null, { renderer: 'canvas' });
+      // 绑定一次就够 —— setOption(..., true) 不会把 on() 挂的监听清掉。
+      // params.axesInfo[0].value 是 x 轴的**类别名**，用 indexOf 反查下标。
+      G.main.on('updateAxisPointer', ev => {
+        try {
+          const ai = ev && ev.axesInfo && ev.axesInfo[0];
+          if (!ai) return;
+          const cats = (G.main.getOption().xAxis[0] || {}).data || [];
+          const k = cats.indexOf(ai.value);
+          if (k >= 0) updateOhlc((G._from || 0) + k);
+        } catch (e) { }
+      });
+      // 鼠标离开图表就回到最新一根
+      G.main.getZr().on('globalout', () => updateOhlc(G.i));
+    }
     if (!G.eqc) G.eqc = echarts.init($('#ggEqChart'), null, { renderer: 'canvas' });
   }
   function disposeCharts() {
@@ -389,6 +407,46 @@
   function visBars() {
     const cw = (G.main && G.main.getWidth && G.main.getWidth()) || 900;
     return Math.max(36, Math.min(ROUND_BARS, Math.floor(cw / 9)));
+  }
+
+  /** 简单移动平均。返回与 series 等长的数组，前 w−1 根是 null（线自然断开） */
+  function movingAvg(src, w) {
+    const out = [];
+    let sum = 0;
+    for (let i = 0; i < src.length; i++) {
+      sum += src[i].c;
+      if (i >= w) sum -= src[i - w].c;
+      out.push(i >= w - 1 ? +(sum / w).toFixed(2) : null);
+    }
+    return out;
+  }
+  const MA_DEF = [{ w: 5, color: '#f0b90b' }, { w: 20, color: '#7aa2f7' }];
+
+  /**
+   * 图表左上角那行读数 —— TradingView / MT4 的图例。
+   * 不悬停时跟着最新一根走，鼠标在图上来回划就显示划到的那根。
+   */
+  function updateOhlc(gi) {
+    const box = $('#ggOhlc'); if (!box || !G.series.length) return;
+    const k = Math.max(0, Math.min(gi, G.series.length - 1));
+    const b = G.series[k]; if (!b) return;
+    const d = b.c - b.o, col = colorOf(d);
+    let ma = '';
+    if (G._ma) {
+      ma = G._ma.map((a, j) => {
+        const v = a[k];
+        const m = MA_DEF[j];
+        return '<span class="gg-ma' + m.w + '"><i style="background:' + m.color + '"></i>MA' + m.w +
+          ' <b>' + (v == null ? '—' : n1(v)) + '</b></span>';
+      }).join('&nbsp;&nbsp;');
+    }
+    box.innerHTML =
+      '<em>' + labelAt(k) + '</em>' +
+      '开<b style="color:' + col + '">' + n1(b.o) + '</b>' +
+      '高<b style="color:' + col + '">' + n1(b.h) + '</b>' +
+      '低<b style="color:' + col + '">' + n1(b.l) + '</b>' +
+      '收<b style="color:' + col + '">' + n1(b.c) + '</b>' +
+      (ma ? '&nbsp;&nbsp;' + ma : '');
   }
 
   function drawCharts() {
@@ -408,6 +466,13 @@
       if (b.l < lo) lo = b.l;
       if (b.h > hi) hi = b.h;
     }
+    // 均线：真实看盘软件都有，而且它让「现在处在什么位置」一眼可见。
+    // 注意要拿**整段** series 算再切片 —— 只拿可视段算的话，每次窗口滑动
+    // 均线都会整体跳一下，看着像在抽搐。
+    const maAll = MA_DEF.map(d => movingAvg(G.series, d.w));
+    G._ma = maAll;
+    const maVis = maAll.map(a => a.slice(from, n));
+    maVis.forEach(a => a.forEach(v => { if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } }));
     // 把 Y 轴拉开到能容纳「持仓均价」—— 否则入场线落在可视范围外时，
     // ECharts 会把它贴到坐标轴边缘，看起来像"价格就在最底下"，是骗人的。
     // 强平价只在**离得够近**时才纳入：1 倍杠杆下它在 90% 以外、10 倍下也在 10% 以外，
@@ -452,6 +517,9 @@
         formatter: p => {
           const it = p[0]; if (!it) return '';
           const gi = from + it.dataIndex;
+          // 顺手把左上角读数也切到这一根。ECharts 的 updateAxisPointer 事件
+          // 只在鼠标真实移动时触发，程序化 showTip 不会 —— 两边都挂才稳。
+          updateOhlc(gi);
           const b = G.series[gi], s = G.seeds[gi] || {};
           const d = b.c - b.o, dp = b.o ? d / b.o * 100 : 0;
           return labelAt(gi) +
@@ -473,6 +541,8 @@
       yAxis: {
         type: 'value', scale: true, min: yMin, max: yMax,
         axisLabel: { color: THEME.dim, fontSize: 10, formatter: v => v.toFixed(0) },
+        // 十字光标的纵向读数：默认会给成 1,103.96 这种带千分位两位小数，太啰嗦
+        axisPointer: { label: { formatter: p => (+p.value).toFixed(1), backgroundColor: '#2a3140' } },
         splitLine: { lineStyle: { color: 'rgba(255,255,255,.05)' } }
       },
       series: [{
@@ -483,8 +553,14 @@
           borderColor: THEME.up, borderColor0: THEME.down
         },
         markLine: marks.length ? { silent: true, symbol: 'none', data: marks } : undefined
-      }]
+      }].concat(MA_DEF.map((d, k) => ({
+        name: 'MA' + d.w, type: 'line', data: maVis[k], z: 4,
+        showSymbol: false, smooth: false, connectNulls: false, silent: true,
+        lineStyle: { width: 1.1, color: d.color, opacity: .85 }
+      })))
     }, true);
+    G._from = from;
+    updateOhlc(G.i < 0 ? 0 : G.i);   // 没有悬停时，读数跟着最新一根走
 
     // ── 现价标签：贴在右侧价格轴上，就是 MT4 那条「当前价」──
     const tag = $('#ggLastTag');
@@ -577,7 +653,7 @@
       const mm = (G.i % PER_DAY) * 15;
       const when = G.series.length
         ? ('第 ' + (Math.floor(G.i / PER_DAY) + 1) + ' 天 ' + U.pad2(Math.floor(mm / 60)) + ':' + U.pad2(mm % 60) +
-          '　·　' + G.i + ' / ' + ROUND_BARS + ' 根　·　' + G.lev + ' 倍杠杆')
+          '　·　' + (G.i + 1) + ' / ' + ROUND_BARS + ' 根　·　' + G.lev + ' 倍杠杆')
         : '—';
       sub.textContent = G.city ? (G.city.name + ' WXI 天气指数　·　' + when) : when;
     }
@@ -639,6 +715,9 @@
       const cost = $('#ggTbSpread');
       if (cost) cost.title = '一手开+平的手续费，合计 ¥' + costYuan.toFixed(2);
       setT('#ggTbConn', G.ended ? '已收盘' : (G.running ? '行情推送中' : '已暂停'));
+      // 「行情速度」那一行右边实时报一局大概要跑多久 —— 1.5×/3×/6× 光看数字没有体感
+      const secs = ROUND_BARS / SPEEDS[G.speedIdx];
+      setT('#ggSpeedTip', '一局约 ' + (secs >= 90 ? (secs / 60).toFixed(1) + ' 分钟' : Math.round(secs) + ' 秒'));
       const lp2 = $('#ggLongPx'), sp2 = $('#ggShortPx');
       if (lp2) lp2.textContent = n1(px);
       if (sp2) sp2.textContent = n1(px);
@@ -807,7 +886,7 @@
         '<h2 class="' + (profit >= 0 ? 'win' : 'lose') + '">' + (liq ? '爆 仓' : profit >= 0 ? '收 盘 盈 利' : '收 盘 亏 损') + '</h2>' +
         '<div class="gg-grade">' + gr + '</div>' +
         '<div class="gg-final" style="color:' + colorOf(profit) + '">' + money(finalEq) + '</div>' +
-        '<p>' + (liq ? '权益跌破维持保证金，被强制平仓。' : '5 天走完，自动结算。') + '</p>' +
+        '<p>' + (liq ? '权益跌破维持保证金，被强制平仓。' : '10 天走完，自动结算。') + '</p>' +
         '<p style="color:' + colorOf(profit) + '">' + sgnMoney(profit) + '　（' + (profit >= 0 ? '+' : '') + ((ret - 1) * 100).toFixed(2) + '%）</p>' +
         '<div class="gg-tbl">' +
         '<div class="gg-row"><span>标的</span><span>' + (G.city ? G.city.name : '—') + ' WXI 天气指数</span></div>' +
@@ -875,12 +954,13 @@
         '<p>标的：<b>WXI 天气指数</b>，用 <b>' + cityName + '</b> 的对流能量 / 阵风 / 降水 / 气温合成。<br>' +
         '打雷下雨 = 拉升，天气转好 = 回落。你不知道这段是哪年哪月 —— 只能靠盘感。</p>' +
         '<ul class="gg-rules">' +
-        '<li>本金 <b>¥100,000</b>，一局 <b>5 天</b>（480 根 15 分钟 K 线）。</li>' +
+        '<li>本金 <b>¥100,000</b>，一局 <b>10 天</b>（960 根 15 分钟 K 线）。</li>' +
         '<li>合约：指数每动 <code>1 点</code>，每手盈亏 <code>¥10</code>。</li>' +
         '<li>杠杆决定保证金：满仓时反向走 <code>(1−10%)÷杠杆</code> 就<u>爆仓</u>。' +
         '10 倍约 9%、20 倍约 4.5%、<b>100 倍只要 0.9%</b>。</li>' +
         '<li>手续费万分之五，开平都收。</li>' +
         '<li>右侧随时看得到<b>强平价</b>和<b>爆仓距离</b> —— 碰到就结束。</li>' +
+        '<li>行情速度 <b>1.5× / 3× / 6×</b> 根每秒，一局约 <b>2.7 ~ 10.7 分钟</b>，随时能暂停。</li>' +
         '</ul>' +
         '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
         '<div class="gg-btns"><button class="gg-long" id="ggAgain">开始操盘</button>' +

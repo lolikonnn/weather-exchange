@@ -104,6 +104,20 @@
   font-variant-numeric: tabular-nums; color: #0b0e14; pointer-events: none;
 }
 
+/* 左上角读数（TradingView / MT4 的图例）：悬停时跟着鼠标走 */
+.gg-ohlc {
+  position: absolute; left: 62px; top: 5px; z-index: 4; pointer-events: none;
+  font: 11px/1.5 'SF Mono', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; color: #b9c2d0; white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+}
+.gg-ohlc em { font-style: normal; color: #6f7b8d; margin-right: 7px; }
+.gg-ohlc b { font-weight: 700; margin: 0 1px 0 2px; }
+.gg-ohlc i {
+  display: inline-block; width: 7px; height: 2px; margin-right: 3px;
+  vertical-align: middle; border-radius: 1px;
+}
+
 /* ───────── 大号下单键（买/卖价直接写在按钮上） ───────── */
 .gg-btns button b { display: block; font-size: 13px; font-variant-numeric: tabular-nums; letter-spacing: 0; }
 
@@ -320,4 +334,8 @@
   .gg-eq-big { font-size: 28px; }
   .gg-head strong { font-size: 13px; }
   .gg-sub { display: none; }
+  /* 窄屏放不下开高低收 + 两条均线，只留最有用的几个数 */
+  .gg-ohlc { left: 60px; top: 3px; font-size: 10px; }
+  .gg-ohlc em, .gg-ohlc .gg-ma20 { display: none; }
+  .gg-last-tag { font-size: 10px; padding: 0 4px; }
 }
