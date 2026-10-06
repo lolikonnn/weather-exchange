@@ -87,9 +87,9 @@
 
 | 用途 | 路径 | 解析函数 |
 |---|---|---|
-| 实况 | `/sk_2d/{code}.html` | `server/app.py:150` |
-| 今日预报 + 预警 | `/dingzhi/{code}.html` | `server/app.py:156` |
-| 月度逐日历史/预报 | `/calendar_new/{year}/{code}_{ym}.html` | `server/app.py:165` |
+| 实况 | `/sk_2d/{code}.html` | `server/app.py:149` |
+| 今日预报 + 预警 | `/dingzhi/{code}.html` | `server/app.py:155` |
+| 月度逐日历史/预报 | `/calendar_new/{year}/{code}_{ym}.html` | `server/app.py:164` |
 
 `{code}` 是 9 位城市码（北京 `101010100`）。这三个页面都是 `var dataSK = {…};` 这类 JS 赋值，服务端用正则抠出 JSON 再补上 `Referer` 转发。
 
@@ -188,8 +188,12 @@ https://earthquake.usgs.gov/fdsnws/event/1/query
 | 前缀 | 作用 | 白名单 |
 |---|---|---|
 | `/api/health` | 健康检查 | — |
-| `/api/cn/{snapshot,forecast,calendar}` | 转发中国天气网 d1（补 `Referer`、解 GBK、剥 JS 壳） | 固定三个 |
-| `/api/cma/{now,view,hourly}` | 转发气象局 | 固定 |
+| `/api/cn/snapshot` | 中国天气网实况（`sk_2d`） | `?code=101010100` |
+| `/api/cn/forecast` | 今日预报 + 预警（`dingzhi`） | `?code=` |
+| `/api/cn/calendar` | 月度逐日历史/预报（`calendar_new`） | `?code=&ym=YYYYMM` |
+| `/api/cn/full` | 上面三个合并，前端一次拿全 | `?code=` |
+| `/api/cn/search` | 中国天气网城市搜索（`toy1`） | `?q=杭州` |
+| `/api/cma/{now,view,hourly}` | 转发气象局 | 固定三个 |
 | `/api/om/…` | 转发 Open-Meteo | `OM_ALLOW = ("/v1/forecast", "/v1/archive", "/v1/air-quality")` |
 | `/api/nmc/…` | 转发中央气象台 | 正则 `NMC_RE = r"^(typhoon/jsons/[A-Za-z0-9_]+|fetch_json/[A-Za-z0-9_/]+|jsons/[A-Za-z0-9_]+|diamond\d+/[A-Za-z0-9_/.-]+)$"` |
 | 其余 | 静态文件，**限制在 `web/` 目录内** | — |
