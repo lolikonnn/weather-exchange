@@ -12,6 +12,22 @@
     humid: { label: '平均湿度', unit: '%', get: b => b.humAvg }
   };
 
+  /** 简单均线：窗口内**非空值**的平均，前 n−1 个是 null。
+      副图的 MA5/MA10 用它**现算** —— 见 optSub 里那段注释：
+      以前直接拿 indicators.js 的 volMa5/volMa10，那是"降水量(b.v)"的均线，
+      跟画出来的口径（温差/降水/风速/湿度）不是一回事。 */
+  function MA(arr, n) {
+    return arr.map((_, i) => {
+      if (i < n - 1) return null;
+      let s = 0, c = 0;
+      for (let k = i - n + 1; k <= i; k++) {
+        const v = arr[k];
+        if (v != null && isFinite(v)) { s += v; c++; }
+      }
+      return c ? +(s / c).toFixed(2) : null;
+    });
+  }
+
   /** K 线 tooltip 的标题。
       日K / 周K 的键是完整日期（周K 是那一周的周一），所以能带上星期几；
       月K 的键只有 'YYYY-MM'，拼不出星期几 —— 别硬拼，改成 "2025 年 11 月"。 */
@@ -517,8 +533,12 @@
 
   /* ═══════════════ 副图 ═══════════════ */
   function optSub(S) {
-    const bars = S.bars || [], ind = S.ind || {};
+    const bars = S.bars || [];
     if (!bars.length) return emptyOpt('');
+    // ind 走一层浅拷贝：vol 那两条均线要**现算**，不能写回调用方的 d.indicators
+    // （写回去的话，切一次口径就把主线上的指标数组污染了）。
+    const ind = Object.assign({}, S.ind);
+    const S2 = Object.assign({}, S, { ind: ind });
     // 横轴类别默认取柱子自己的日期。但**分时 / 7日 的主图是逐小时的、温差是"每天"的量** ——
     // 这时 app.js 会把主图的类别数组传进来（S.cats），两块图才会一格对一格。
     // 不这么干的话副图会按 553 根日K 排横轴，跟主图（24 / 168 个时次）说的不是同一段时间。
@@ -540,7 +560,7 @@
       animation: false, backgroundColor: C.bg,
       grid: grid(PAD_L, PAD_R, 12, 26),
       tooltip: Object.assign({}, tooltipBase, {
-        formatter: (ps) => subTip(ps, S, xs)
+        formatter: (ps) => subTip(ps, S2, xs)
       }),
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       xAxis: [{
@@ -563,6 +583,14 @@
     const metric = METRICS[S.metric] || METRICS.range;
     if (S.indName === 'vol') {
       const d = bars.map(b => metric.get(b));
+      // ⚠ MA5/MA10 必须**跟着画出来的那个口径现算**，不能再用 ind.volMa5 / ind.volMa10。
+      //   那两个是 indicators.js 里的 `MA(bars.map(b => b.v || 0), 5)` —— 也就是
+      //   **降水量**的均线，跟"波动柱口径"下拉框选什么完全无关。
+      //   默认口径是日内温差（北京这几天 11℃ 上下），而降水量基本是 0，
+      //   于是两条线永远贴在 0 上：图上根本看不见（tooltip 里显示 `MA5 0.000`），
+      //   看着就像"曲线跟柱状图对不上"。口径能切（温差/降水/风速/湿度），所以只能现算。
+      ind.volMa5 = MA(d, 5);
+      ind.volMa10 = MA(d, 10);
       baseOpt.yAxis[0].axisLabel.formatter = v => metric.unit === '%' ? v.toFixed(0) : v.toFixed(1);
       baseOpt.series = [
         {
