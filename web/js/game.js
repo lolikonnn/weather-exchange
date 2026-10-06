@@ -404,13 +404,13 @@
     if (G.pos) {
       marks.push({
         yAxis: G.avg, lineStyle: { color: THEME.ac, type: 'dashed', width: 1 },
-        label: { formatter: '持仓均价 ' + n1(G.avg), color: THEME.ac, fontSize: 10, position: 'insideStartTop' }
+        label: { formatter: '持仓均价 ' + n1(G.avg), color: THEME.ac, fontSize: 10, position: 'insideEndTop' }
       });
       const lp = liqPriceOf();
       if (lp != null && isFinite(lp)) {
         marks.push({
           yAxis: lp, lineStyle: { color: THEME.down, type: 'dotted', width: 1.2 },
-          label: { formatter: '强平价 ' + n1(lp), color: THEME.down, fontSize: 10, position: 'insideStartBottom' }
+          label: { formatter: '强平价 ' + n1(lp), color: THEME.down, fontSize: 10, position: 'insideEndBottom' }
         });
       }
     }
