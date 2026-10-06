@@ -15,7 +15,7 @@
   --dim2:#575e6d;
   --up:#ff4d4f;
   --down:#00b578;
-  --flat:#8b919e;
+  --flat:#00b578;
   --accent:#f0b90b;
   --accent2:#ffd666;
   --blue:#3d8bfd;
@@ -166,7 +166,7 @@ body{
   font-family:var(--mono);font-size:11.5px;font-weight:600;text-align:right;
   min-width:58px;padding:1px 4px;border-radius:2px;color:#fff;
 }
-.sw-pct.p-up{background:var(--up)} .sw-pct.p-down{background:var(--down)} .sw-pct.p-flat{background:#4a5162}
+.sw-pct.p-up{background:var(--up)} .sw-pct.p-down{background:var(--down)} .sw-pct.p-flat{background:var(--flat)}
 .stock-row .sw-del{
   position:absolute;right:3px;top:3px;font-size:10px;color:var(--dim2);
   opacity:0;cursor:pointer;padding:0 3px;border-radius:2px;line-height:1.3;

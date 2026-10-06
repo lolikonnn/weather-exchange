@@ -100,10 +100,15 @@
   }
 
   /* ───────── 颜色 ───────── */
-  const UP = '#ff4d4f', DOWN = '#00b578', FLAT = '#8b919e';
+  /* 持平色也进了色板：`--flat` 现在是绿色（绿色＝平），不再是写死的中性灰。
+     ⚠ 以前 trendColor 是直接把常量 FLAT 返回的，**不读 CSS 变量** ——
+     所以外面改 `--flat` 它不跟着动（K 线蜡烛会变、自选列表却还是灰的，
+     同一屏两种"平盘色"）。现在跟 up/down 一个规矩：先读变量，读不到才用常量兜底。 */
+  const UP = '#ff4d4f', DOWN = '#00b578', FLAT = '#00b578';
   function upColor() { return getComputedStyle(document.body).getPropertyValue('--up').trim() || UP; }
   function downColor() { return getComputedStyle(document.body).getPropertyValue('--down').trim() || DOWN; }
-  function trendColor(v) { return Math.abs(v) < 1e-9 ? FLAT : (v > 0 ? upColor() : downColor()); }
+  function flatColor() { return getComputedStyle(document.body).getPropertyValue('--flat').trim() || FLAT; }
+  function trendColor(v) { return Math.abs(v) < 1e-9 ? flatColor() : (v > 0 ? upColor() : downColor()); }
 
   /* ───────── 气温的"涨跌幅" ───────── */
   /** 绝对零度。气温是**间隔尺度**量：摄氏/华氏的零点是人为约定的，不是"没有温度"，
@@ -218,7 +223,7 @@
   global.U = {
     $, $$, el, pad2, fx, sgn, cls, fmtDate, fmtTime, fmtHM, parseDate, parseISO, weekday,
     pluck, clamp, sum, avg, last, clone, storeGet, storeSet,
-    UP, DOWN, FLAT, upColor, downColor, trendColor, K0, pctOf, diffOf,
+    UP, DOWN, FLAT, upColor, downColor, flatColor, trendColor, K0, pctOf, diffOf,
     wxIcon, wxShort, wxSeverity, windLevel, sessionLabel, sparkPath,
     toast, debounce, marketPhase
   };

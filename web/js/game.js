@@ -410,7 +410,10 @@
     } catch (e) { return 1; }
   }
 
-  const THEME = { up: '#ff4d4f', down: '#00b578', flat: '#8b919e', ac: '#ffb74d', line: '#262b36', dim: '#8b919e', fg: '#e6e9ef' };
+  // flat 跟着主站的 `--flat` 走（readTheme 会覆盖这个兜底值）——
+  // 使用者要求"持平的灰色改为绿色"，游戏里的平盘蜡烛也跟着变。
+  // ⚠ dim 仍然是灰的，那是**次要文字颜色**，跟"平盘色"是两件事，别一起改。
+  const THEME = { up: '#ff4d4f', down: '#00b578', flat: '#00b578', ac: '#ffb74d', line: '#262b36', dim: '#8b919e', fg: '#e6e9ef' };
   function readTheme() {
     try {
       const s = getComputedStyle(document.body);
