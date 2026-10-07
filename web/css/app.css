@@ -1107,6 +1107,15 @@ body.fullchart .mtabs{visibility:hidden}
 }
 .wm-body{padding:16px 18px 4px;font-size:13px;line-height:1.75;color:var(--txt)}
 .wm-body p{margin:0 0 12px}
+/* 免责声明里那张「数据来源清单」和「容易误会的事」用列表 —— 以前全挤在段落里，
+   加一个数据源就多一行字，读的人根本分不清哪句对应哪个来源。 */
+.wm-body ul.wm-list{margin:0 0 12px;padding-left:17px;list-style:disc}
+.wm-body ul.wm-list li{margin:3px 0}
+.wm-body ul.wm-list li::marker{color:var(--dim2)}
+.wm-body code{
+  font-family:var(--mono);font-size:11.5px;color:var(--dim);
+  background:#1a1f29;border-radius:3px;padding:0 3px;
+}
 .wm-body b{color:var(--txt-hi)}
 .wm-body u{text-decoration-color:var(--accent);text-underline-offset:3px}
 .wm-body a{color:var(--accent)}
