@@ -82,7 +82,7 @@
     const hourly = (period === 'trend' || period === '7day');
     const CH = (typeof window !== 'undefined' && window.Chart) || null;
     const ax = CH ? CH.axisOf(period, xs.length) : { interval: 'auto', formatter: v => String(v) };
-    const L = CH ? CH.PAD_L : 64, R = CH ? CH.PAD_R : 56;
+    const L = CH ? CH.PAD_L : 72, R = CH ? CH.PAD_R : 64;
     const o = {
       animation: false,
       grid: { left: L, right: R, top: 16, bottom: 26, containLabel: false },
@@ -275,12 +275,7 @@
       {
         name: 'AQI', type: 'line', yAxisIndex: 0, smooth: true, showSymbol: false,
         lineStyle: { width: 1.6, color: TH.accent }, itemStyle: { color: TH.accent },
-        data: (aq || []).map(v => (v == null ? null : v)),
-        // 「良 100」整根去掉（虚线和文字都去掉）：
-        //   文字右端压 AQI 轴刻度、挪到图内又压 PM2.5 柱子，两头不讨好；
-        //   而 100 这个分界在 tooltip 里已经写明（AQI 120（良）），术语表里也有。
-        markLine: { show: false, silent: true, symbol: 'none', data: [{ yAxis: 100 }]
-        }
+        data: (aq || []).map(v => (v == null ? null : v))
       }
     ];
     // ── 紫外线并到 AQI 那根轴上（**不再单开第三根轴**）──
