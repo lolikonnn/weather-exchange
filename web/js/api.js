@@ -15,7 +15,33 @@
      是**两个不同的配额桶**（实测 archive 报 "Hourly API request limit exceeded" 时，
      换一台往往还活着）。 */
   const OM_A_ALT = 'https://historical-forecast-api.open-meteo.com/v1/forecast';
-  const ARCH_TTL = 43200000;      // 历史逐小时的持久缓存有效期：12 小时
+
+  /* ───────── 单槽位持久缓存（三份"贵且不太会变"的响应共用） ─────────
+   * 历史逐小时 / 近期+预报 / 15 分钟行情，各占一个 localStorage 槽位。
+   * **故意不按城市堆** —— 别把省下来的请求配额换成存储配额。换城市时会覆盖，
+   * 但没关系：跨会话的"上次那座城市"由城市快照（tjs.cx*）负责。
+   * 每个槽位两档有效期：
+   *   · ttl   —— 新鲜期，期内直接用，一个请求都不发；
+   *   · stale —— **数据源挂了时也认**的兜底期。
+   * 为什么非要 stale 这一档：2026-10-07 Open-Meteo 额度用尽、全线 429，网页直接白掉。
+   * 使用者的原话是「没有最新的记录就拿历史记录糊弄一下差不多得了」——
+   * 过期的历史照样画得出 K 线，比一张空图强得多。 */
+  const PC = {
+    arch: { ttl: 12 * 3600000, stale: 30 * 86400000 },
+    fcst: { ttl: 6 * 3600000, stale: 14 * 86400000 },
+    min: { ttl: 6 * 3600000, stale: 14 * 86400000 }
+  };
+  /** 取持久缓存。allowStale=true 放宽到 stale 档 —— **只在"真的取不到"之后才这么问**。 */
+  function pcGet(slot, key, allowStale) {
+    const e = storeGet('pc.' + slot, null);
+    if (!e || e.k !== key || !e.v) return null;
+    const lim = allowStale ? PC[slot].stale : PC[slot].ttl;
+    return (Date.now() - (e.t || 0)) < lim ? e.v : null;
+  }
+  function pcSet(slot, key, v) {
+    try { storeSet('pc.' + slot, { k: key, t: Date.now(), v: v }); }
+    catch (e) { /* 配额爆了就算了，下次再试 */ }
+  }
 
   /* 本地代理探测：EXE / APK 外壳会注入 window.__TJS_LOCAL__。
      探针页等未注入时按 hostname 自行判定，避免本地调试误走直连。 */
@@ -363,9 +389,8 @@
       // 两次调用会互相命中缓存，第二次等于没发出去 —— 是个一直没被触发的潜伏 bug。
       const key = 'a|' + lat + ',' + lon + '|' + startDate + '|' + endDate;
 
-      const hard = storeGet('arch', null);
-      if (hard && hard.k === key && hard.v && hard.v.time && hard.v.time.length &&
-        Date.now() - hard.t < ARCH_TTL) return hard.v;
+      const fresh = pcGet('arch', key, false);
+      if (fresh) return fresh;
 
       // 两台主机轮着试（配额是分开的）。这是**唯一一条没有走 omGetJSON 的 Open-Meteo 请求** ——
       // 因为它要的是 archive 那套 start_date/end_date 参数，跟 forecast 那套不一样。
@@ -375,13 +400,16 @@
         try { d = await getJSON(hosts[i] + q, { ttl: 1800000, key: key + '#h' + i }); break; }
         catch (e) { lastErr = e; }
       }
-      if (!d) throw lastErr || new Error('历史逐小时取不到');
-      const out = this._unpack(d, 'temperature_2m', 'precipitation');
-      if (out.time.length) {
-        try { storeSet('arch', { k: key, t: Date.now(), v: out }); }
-        catch (e) { /* 配额爆了就算了，下次再试 */ }
+      if (d) {
+        const out = this._unpack(d, 'temperature_2m', 'precipitation');
+        if (out.time.length) pcSet('arch', key, out);
+        return out;
       }
-      return out;
+      // 两台都挂了（最常见的就是额度用尽 429）→ **过期的历史也认**，最多 30 天。
+      // 这段是历史，晚几天画出来的还是那条 K 线；总比整页空白强。
+      const stale = pcGet('arch', key, true);
+      if (stale) return stale;
+      throw lastErr || new Error('历史逐小时取不到');
     },
 
     /** 近期逐小时（含过去 92 天）+ 16 日预报 */
@@ -402,7 +430,18 @@
         '&past_days=' + (pastDays == null ? 92 : pastDays) +
         '&forecast_days=' + (fcstDays == null ? 16 : fcstDays) +
         '&timezone=' + encodeURIComponent(TZ);
-      const d = await omGetJSON(q, { ttl: 900000, key: 'f|' + lat + ',' + lon + '|' + pastDays + '|' + fcstDays });
+      const key = 'f|' + lat + ',' + lon + '|' + pastDays + '|' + fcstDays;
+      const fresh = pcGet('fcst', key, false);
+      if (fresh) return fresh;
+      let d = null;
+      try { d = await omGetJSON(q, { ttl: 900000, key: key }); }
+      catch (err) {
+        // 两台主机都挂了（最常见：额度用尽 429）→ **拿上次那份预报顶着**，最多 14 天。
+        // 曲线会停在缓存那一天的末尾、5 日高低温也照旧有 —— 这就是"拿历史记录糊弄一下"。
+        const stale = pcGet('fcst', key, true);
+        if (stale) return stale;
+        throw err;
+      }
       const h = this._unpack(d, 'temperature_2m', 'precipitation');
       h.humidity = (d.hourly && d.hourly.relative_humidity_2m) || [];
       h.wind = (d.hourly && d.hourly.wind_speed_10m) || [];
@@ -416,6 +455,7 @@
       h.vis = (d.hourly && d.hourly.visibility) || [];
       h.daily = d.daily || null;
       h.utcOffset = d.utc_offset_seconds;
+      pcSet('fcst', key, h);
       return h;
     },
 
@@ -441,11 +481,14 @@
         '&minutely_15=temperature_2m,wind_gusts_10m,precipitation,weather_code,cape,dew_point_2m' +
         '&past_days=92&forecast_days=1&timezone=' + encodeURIComponent(TZ);
       let lastErr = null;
+      const key = 'mn|' + lat + ',' + lon;
+      const fresh = pcGet('min', key, false);
+      if (fresh) return fresh;
       for (let i = 0; i < OM_F_HOSTS.length; i++) {
         const idx = (1 + i) % OM_F_HOSTS.length;   // 1=ALT 优先，然后才轮到主站
         try {
           const d = await getJSON(OM_F_HOSTS[idx] + q, {
-            ttl: 1800000, key: 'mn|' + lat + ',' + lon + '#h' + idx
+            ttl: 1800000, key: key + '#h' + idx
           });
           const m = (d && d.minutely_15) || {};
           const t = m.time || [];
@@ -454,7 +497,7 @@
           let nn = 0, probe = Math.min(96, t.length);
           for (let k = 0; k < probe; k++) if (m.wind_gusts_10m && m.wind_gusts_10m[k] != null) nn++;
           if (nn < probe * 0.5 && i + 1 < OM_F_HOSTS.length) throw new Error('这台主机的 15 分钟历史不够长');
-          return {
+          const out = {
             time: t,
             temp: m.temperature_2m || [],
             gust: m.wind_gusts_10m || [],
@@ -463,8 +506,15 @@
             cape: m.cape || [],
             dew: m.dew_point_2m || []
           };
+          pcSet('min', key, out);
+          return out;
         } catch (e) { lastErr = e; }
       }
+      // 两台都挂了 → **拿上次那份顶着**（最多 14 天）。
+      // 「点击做空天气」只硬依赖这一份数据，没有它开不了局 ——
+      // 额度用尽时使用者的原话是"游戏也玩不了了"，这条兜底就是为它加的。
+      const stale = pcGet('min', key, true);
+      if (stale) return stale;
       throw lastErr || new Error('取不到 15 分钟行情');
     },
 
@@ -1064,15 +1114,14 @@
       const cloudHighs = padTo(recent.cloudHigh), viss = padTo(recent.vis);
       const daily = toDailyBars(times, temps, precs, { humidity: humids, wind: winds, wcode: wcodes });
 
-      // ⚠ 历史与预报**两份都没拿到**时 `daily` 会是空数组，而下面那句
-      // `daily[Math.max(0, ti - 1)].d` 就会抛 "Cannot read properties of undefined (reading 'd')" ——
-      // 2026-10-07 网页端右上角那句"加载失败"就是这么来的，用户看到的是一句天书。
-      // 最常见的原因是 Open-Meteo 免费额度用尽（HTTP 429）。这里换成一句能看懂的话，
-      // 并且说清"哪些还活着" —— 气象局那两路（实况 / 官方预报）是好的。
-      if (!daily.length) {
-        throw new Error('逐小时与日K 暂时取不到 —— 数据源 Open-Meteo 返回了 429（免费额度用尽，' +
-          '按小时或次日恢复）。中国气象局的实况与官方预报仍然可用。');
-      }
+      // ⚠ 历史与预报**两份都没拿到**时 `daily` 会是空数组（最常见：Open-Meteo 免费额度用尽 429）。
+      // 2026-10-07 那次这里**抛了错**，整页只剩一句"加载失败" —— 而气象局的实况、官方预报、
+      // 官方日历那三路其实都是好的。所以现在**不抛错**，只打个标记降级：
+      //   · 行情栏（报价头 / 五档盘口 / 逐时流水）照常从气象局的数据出；
+      //   · 曲线没有最新的就用历史顶上（archive / forecast 的过期缓存，见 pcGet 的 stale 档），
+      //     真的一点都没有时 chart.js 自己会画"暂无K线数据"；
+      //   · out.degraded 让界面能如实说明"看的是历史数据"。
+      const noBars = !daily.length;
 
       // 用 Open-Meteo daily 补/覆盖更可靠的最高最低温
       const omDaily = {};
@@ -1111,8 +1160,11 @@
       // 恰恰是还没发生的部分 —— 所以改成横跨昨天/今天/未来若干天。
       // 2026-10-07：从 5 天扩到 7 天 —— 右侧盘口列的是"未来 5 日"，主图只到未来第三天，
       // 两块对不上；现在 昨天 + 今天 + 未来五天，正好和右边一一对应。
-      const d7start = daily[Math.max(0, ti - 1)].d;
-      const d7idx = times.findIndex(t => String(t).slice(0, 10) === d7start);
+      // ⚠ `daily` 可能是**空的**（Open-Meteo 全线 429）。原来这里直接下标，会抛
+      // "Cannot read properties of undefined (reading 'd')"。空的时候就老老实实给空数组，
+      // 让 chart.js 去画它自己的"暂无K线数据"。
+      const d7start = daily.length ? daily[Math.max(0, ti - 1)].d : null;
+      const d7idx = d7start ? times.findIndex(t => String(t).slice(0, 10) === d7start) : -1;
       const seven = d7idx >= 0 ? toHourlyPoints(times, temps, precs, d7idx, 7) : [];
 
       // official / cnFcst / calDaily 已经在上面那一批并发请求里一起取回来了
@@ -1123,7 +1175,9 @@
           cloudLow: cloudLows, cloudMid: cloudMids, cloudHigh: cloudHighs, vis: viss },
         daily, week, month, intraday, seven,
         omDaily, lastDay, todayIndex: ti, today,
-        base: ti > 0 ? daily[ti - 1].c : (ti === 0 ? daily[0].o : null)
+        base: ti > 0 ? daily[ti - 1].c : (ti === 0 ? daily[0].o : null),
+        // true = 逐小时/日K 这一路没拿到，界面要如实说明"曲线看的是历史数据"
+        degraded: noBars
       };
       out.indicators = IND.computeAll(daily);
       out.stamp = new Date();

@@ -620,7 +620,12 @@
   /* ═══════════ 五档盘口（未来 5 日预报） ═══════════ */
   /** 统一成 [{date, high, low, dayText, nightText, dayWind, precip, src}]，官方预报优先，缺失时回退 Open-Meteo 16 日预报 */
   function obList() {
-    const d = S.data; if (!d || !d.daily || !d.daily.length) return null;
+    // ⚠ 这里**只要求 S.data 存在，不能要求 d.daily 非空**。
+    // 气象局那 5 日预报（d.fcst.daily）跟 Open-Meteo 的日K 是**两条独立的路**：
+    // 2026-10-07 Open-Meteo 额度用尽、d.daily 是空数组，于是一进函数就 bail 了 ——
+    // 盘口明明有官方预报，界面上却写着"暂无预报数据"。使用者的原话：
+    // "至少行情栏那些数据得有吧" —— 盘口就是行情栏的一部分。
+    const d = S.data; if (!d) return null;
     const out = [];
     const fd = d.fcst && d.fcst.daily;
     if (fd && fd.length > 1) {
@@ -845,6 +850,14 @@
 
   function renderChart() {
     const d = S.data; if (!d) return;
+    // 降级、而且一条 K 线都没有时，把**原因**直接写在图上。
+    // chart.js 默认那句"暂无K线数据"只说了现象，用户会以为是 bug ——
+    // 实际情况是：行情栏（报价头/盘口/流水）是气象局的实时数据，只有逐小时与 K 线这一路没拿到。
+    if (d.degraded && !(d.daily && d.daily.length)) {
+      Chart.renderEmpty('Open-Meteo 额度用尽，K 线与逐小时暂时取不到。' +
+        '左边行情栏与右侧盘口是气象局的实时数据，额度恢复后曲线会自动补上。');
+      return;
+    }
     const p = S.period;
     // 叠加线：只有当前副图是天气口径、并且用户按下了「叠到主图」时才给主图塞数据。
     // 副图切回温差（vol）就自动取消 —— 温差本来就是主图自己的东西，再叠一条没意义。
@@ -979,7 +992,7 @@
     }
 
     try {
-      const d = await API.Store.loadCity(c, (m) => {
+      let d = await API.Store.loadCity(c, (m) => {
         // 已经显示旧数据时，状态栏要**一直**说清楚"你看的是什么时候的数据"。
         // 直接写 m 的话，那句提示只活一个 tick —— loadCity 第一步就把它覆盖成"正在拉取…"了，
         // 用户根本来不及看见自己看的是旧数据。
@@ -989,6 +1002,21 @@
         // 已经在显示旧数据了，就别再拿加载遮罩把它盖住 —— 那正是要避免的"进去先看一片空"
         if (!snap) Chart.showLoading(m);
       });
+
+      /* 降级合并：新拿回来的这份**只有气象局那几路是好的**，逐小时/K 线是空的（Open-Meteo 429）。
+       * 屏上如果还留着上次那份好曲线，就把**实时的行情栏字段**贴上去、曲线继续用旧的 ——
+       * 这正是使用者要的："至少行情栏那些数据得有吧，其他那些曲线没有最新的记录
+       * 就拿历史记录糊弄一下差不多得了"。绝不能用空曲线把好曲线顶掉。 */
+      const oldOut = (snap && snap.out && snap.out.daily && snap.out.daily.length) ? snap.out : null;
+      if (d.degraded && oldOut) {
+        d = Object.assign({}, oldOut, {
+          city: c,
+          now: d.now, fcst: d.fcst, official: d.official, cnFcst: d.cnFcst, calDaily: d.calDaily,
+          today: d.today,                  // renderTape 按它筛"最近观测"
+          degraded: true,
+          staleCharts: true                // 曲线是历史，界面照这个说
+        });
+      }
       S.data = d;
       S.lastFullAt = Date.now();
       if (!S.briefs[id] || !S.briefs[id].prevClose) {
@@ -1000,8 +1028,19 @@
       renderStatus();
       renderWatchlist(); renderIndexes();
       loadWx(c.id);   // 逐小时/空气是副图才要，异步补上，不挡主流程
-      $('#statusLeft').textContent = '已加载 ' + c.name + '（' + d.daily.length + ' 根日K / ' + d.hourly.time.length + ' 个时次）';
-      toast('已切换到 ' + c.name + ' ' + c.id);
+      if (d.degraded) {
+        // **降级但可用**：报价头 / 五档盘口 / 逐时流水来自中国气象局，是实时的。
+        // 必须说清哪部分是新的、哪部分是旧的 —— 不能让用户以为整页都是实时的。
+        $('#statusLeft').textContent = '已加载 ' + c.name + ' —— 行情来自中国气象局（实时）；' +
+          (d.staleCharts
+            ? 'Open-Meteo 额度用尽，曲线显示的是' + agoTxt(snap && snap.at) + '的历史记录'
+            : 'Open-Meteo 额度用尽，逐小时与 K 线暂时没有数据') +
+          '，恢复后会自动补上';
+        toast(d.staleCharts ? '曲线用的是历史记录（Open-Meteo 额度用尽）' : 'Open-Meteo 额度用尽，曲线暂时为空');
+      } else {
+        $('#statusLeft').textContent = '已加载 ' + c.name + '（' + d.daily.length + ' 根日K / ' + d.hourly.time.length + ' 个时次）';
+        toast('已切换到 ' + c.name + ' ' + c.id);
+      }
     } catch (e) {
       Chart.hideLoading();
       // 有上次的快照就**留着它** —— 与其把已经画好的行情换成一句报错，不如让用户继续看
