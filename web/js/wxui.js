@@ -91,6 +91,9 @@
       //   空气那档有**两个**名字（左 `AQI`、右 `μg/m³`），降水也是（`mm` / `%`）。
       //   带单位才准确（使用者明确要求保留），所以名字留着、把地方让出来。
       //   top 只影响纵向，x 轴位置由 left/right 决定 → **不影响主副图对齐**。
+      // 刻度字体必须跟主图一样：chart.js 的 axisCommon.axisLabel 是
+      // `fontSize: 10.5, fontFamily: 'Consolas,monospace'`。副图以前用 10 + 默认无衬线，
+      // 两块图的数字粗细和字宽都不一样（使用者提过）。
       grid: { left: L, right: R, top: 26, bottom: 26, containLabel: false },
       tooltip: {
         trigger: 'axis', confine: true, axisPointer: { type: 'cross', label: { backgroundColor: '#39404e' } },
@@ -104,12 +107,12 @@
         // 左右各探半根压住左边的刻度。现在两边都是 true，柱子在格里、和主图一格对一格。
         boundaryGap: true,
         axisLine: { lineStyle: { color: TH.line } },
-        axisLabel: { color: TH.dim, fontSize: 10, interval: ax.interval, formatter: ax.formatter, hideOverlap: true },
+        axisLabel: { color: TH.dim, fontSize: 10.5, fontFamily: 'Consolas,monospace', interval: ax.interval, formatter: ax.formatter, hideOverlap: true },
         splitLine: { show: false }
       },
       yAxis: {
-        type: 'value', name: yName || '', nameTextStyle: { color: TH.dim, fontSize: 10 },
-        axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10 },
+        type: 'value', name: yName || '', nameTextStyle: { color: TH.dim, fontSize: 10.5 },
+        axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10.5, fontFamily: 'Consolas,monospace' },
         splitLine: { lineStyle: { color: TH.line, type: 'dashed' } }
       }
     };
@@ -140,8 +143,8 @@
     //   两列数字会画在同一个 52px 的左边距里，互相压、还溢出到柱子上。
     o.yAxis = [o.yAxis, {
       type: 'value', max: 100, min: 0, name: '%', position: 'right',
-      nameTextStyle: { color: TH.dim, fontSize: 10 },
-      axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10, formatter: '{value}' },
+      nameTextStyle: { color: TH.dim, fontSize: 10.5 },
+      axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10.5, fontFamily: 'Consolas,monospace', formatter: '{value}' },
       splitLine: { show: false }
     }];
     const mx = Math.max(0.6, ...w.precip.map(v => v || 0));
@@ -274,8 +277,8 @@
     // 而且左边距只有 72px，塞不下两列数字。
     o.yAxis = [o.yAxis, {
       type: 'value', name: 'AQI', position: 'right',
-      nameTextStyle: { color: TH.dim, fontSize: 10 },
-      axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10 }, splitLine: { show: false }
+      nameTextStyle: { color: TH.dim, fontSize: 10.5 },
+      axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10.5, fontFamily: 'Consolas,monospace' }, splitLine: { show: false }
     }];
     o.series = [
       {

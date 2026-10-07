@@ -624,7 +624,9 @@
     ];
     const baseOpt = {
       animation: false, backgroundColor: C.bg,
-      grid: grid(PAD_L, PAD_R, 12, 26),
+      // ⚠ grid.top 要给轴的 name 留地方（跟 wxui.js 那几档副图同一个理由）：
+      //   ECharts 把 yAxis.name 画在绘图区顶部、网格外面，top 太小就会被画布上边界裁掉。
+      grid: grid(PAD_L, PAD_R, 26, 26),
       tooltip: Object.assign({}, tooltipBase, {
         formatter: (ps) => subTip(ps, S2, xs)
       }),
@@ -647,6 +649,9 @@
     };
 
     let metric = METRICS[S.metric] || METRICS.range;
+    // 左轴带上单位（℃ / mm / m/s / %），跟 wxui.js 那几档副图一致 —— 带单位才准确。
+    baseOpt.yAxis[0].name = metric.unit;
+    baseOpt.yAxis[0].nameTextStyle = { color: C.label, fontSize: 10.5 };
     // 周K / 月K 的温差是"这一周 / 这一月"的最高最低之差，写「日内温差」是骗人的
     if (S.metric === 'range' && (S.period === 'week' || S.period === 'month')) {
       metric = Object.assign({}, metric, { label: S.period === 'week' ? '本周温差' : '本月温差' });
