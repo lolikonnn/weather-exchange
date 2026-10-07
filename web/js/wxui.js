@@ -85,7 +85,12 @@
     const L = CH ? CH.PAD_L : 72, R = CH ? CH.PAD_R : 64;
     const o = {
       animation: false,
-      grid: { left: L, right: R, top: 16, bottom: 26, containLabel: false },
+      // ⚠ grid.top 必须给轴的 **name** 留地方：ECharts 把 yAxis.name 画在绘图区顶部、
+      //   网格**外面**（默认 nameLocation:'end'）。以前 top:16，名字整个落在画布上边界之外，
+      //   被裁得只剩一丁点 —— 就是使用者看到的"页签栏下面和视图之间藏了什么东西"。
+      //   空气那档有**两个**名字（左 `AQI`、右 `μg/m³`），降水也是（`mm` / `%`）。
+      //   top 只影响纵向，x 轴位置由 left/right 决定 → **不影响主副图对齐**。
+      grid: { left: L, right: R, top: 26, bottom: 26, containLabel: false },
       tooltip: {
         trigger: 'axis', confine: true, axisPointer: { type: 'cross', label: { backgroundColor: '#39404e' } },
         backgroundColor: '#161a22', borderColor: '#2b323d',
