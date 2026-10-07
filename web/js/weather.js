@@ -318,13 +318,28 @@
         'SEVP_NSMC_WXCL_ASC_E99_ACHN_LNO_PY_' + ts + '.JPG';
     },
 
-    /** 中央气象台全国降水量预报图（未来 24 小时）。
-        产品代号 STFC_SFER_ER24，每 12 小时一张，时次戳 00 / 12（UTC）＝北京 08 / 20 时。 */
-    precipUrl(dt) {
+    /** 中央气象台全国降水量预报图。**产品代号恒为 `ER24`，预报时效藏在时次戳末尾的 5 位里**：
+        后缀 = `String(时效小时).padStart(3,'0') + '00'` ——
+        24→`02400`、48→`04800`、72→`07200`、96→`09600`、120→`12000`、144→`14400`、168→`16800`。
+        （实况那张 ER1 的后缀 `00000` 正是 win=0 的同一规则。）
+        ⚠ **扩展名按档不同**：24/48/72 是大写 `.JPG`，而 **96/120/144/168 只有小写 `.jpg` 命中**
+        （2026-10-07 逐个 HEAD 实测）。所以 probePrecip 里两个扩展名都要试。
+        发布时次走 6 小时网格（00/06/12/18 UTC），但各档不是每次都有 —— 帧探测靠 404 跳过。 */
+    PRECIP_WINS: [24, 48, 72, 96, 120, 144, 168],
+    precipUrl(dt, win) {
+      win = win == null ? 24 : win;
       const y = dt.getUTCFullYear(), m = pad2(dt.getUTCMonth() + 1), d = pad2(dt.getUTCDate());
-      const ts = '' + y + m + d + pad2(dt.getUTCHours()) + pad2(dt.getUTCMinutes()) + '02400';
+      const ts = '' + y + m + d + pad2(dt.getUTCHours()) + pad2(dt.getUTCMinutes()) +
+        String(win).padStart(3, '0') + '00';
+      const ext = win <= 72 ? 'JPG' : 'jpg';
       return IMG + '/product/' + y + '/' + m + '/' + d + '/STFC/medium/' +
-        'SEVP_NMC_STFC_SFER_ER24_ACHN_L88_P9_' + ts + '.JPG';
+        'SEVP_NMC_STFC_SFER_ER24_ACHN_L88_P9_' + ts + '.' + ext;
+    },
+
+    /** 同一张预报图的另一种扩展名写法（大写 JPG ↔ 小写 jpg），帧探测时用它兜底 */
+    precipUrlAlt(url) {
+      return /\.JPG$/.test(url) ? url.replace(/\.JPG$/, '.jpg')
+                                : url.replace(/\.jpg$/, '.JPG');
     },
 
     /** 逐帧试探：能把 404 变成"跳过这一帧"，因为图床对不存在的时次返回 404 */
@@ -381,25 +396,27 @@
     },
 
     /** 降水图两种：
-        kind='fcst' 未来 24 小时**预报**（中央气象台画的，每 12 小时一张，00/12 UTC）
+        kind='fcst' 全国降水量**预报**图，win = 预报时效小时（24/48/72/96/120/144/168，见 PRECIP_WINS），
+                    发布时次走 6 小时网格（00/06/12/18 UTC）
         kind='now'  最近 1 小时**实况**（每小时一张，整点） */
-    async probePrecip(n, onStep, kind) {
+    async probePrecip(n, onStep, kind, win) {
       n = n || 6;
       const nowKind = kind === 'now';
       const now = new Date();
       const base = new Date(now.getTime());
       base.setUTCMinutes(0, 0, 0);
-      let step = 43200000;
-      if (nowKind) step = 3600000;
-      else if (base.getUTCHours() < 12) base.setUTCHours(0);
-      else base.setUTCHours(12);
+      let step = 21600000;                       // 预报：6 小时网格
+      if (nowKind) { step = 3600000; base.setUTCMinutes(0, 0, 0); }
+      else { base.setUTCHours(Math.floor(base.getUTCHours() / 6) * 6); }
       const out = [];
-      for (let k = 0; k < n * 3 && out.length < n; k++) {
+      for (let k = 0; k < n * 4 && out.length < n; k++) {
         const dt = new Date(base.getTime() - k * step);
         if (dt.getTime() > now.getTime()) continue;
-        const url = nowKind ? this.precipNowUrl(dt) : this.precipUrl(dt);
+        let url = nowKind ? this.precipNowUrl(dt) : this.precipUrl(dt, win);
         /* eslint-disable no-await-in-loop */
-        const ok = await this._tryImg(url);
+        let ok = await this._tryImg(url);
+        // 同一档的扩展名不统一（大 JPG / 小 jpg 混用），主写法 404 就换另一种再试
+        if (!ok && !nowKind) { url = this.precipUrlAlt(url); ok = await this._tryImg(url); }
         if (ok) out.push({ url: url, t: dt, f: true });
         if (onStep) onStep(out.length, n);
       }

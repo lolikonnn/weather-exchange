@@ -427,16 +427,21 @@
       if (prov === undefined) prov = this._radarProv;
       if (cityId === undefined) cityId = this._radarCity;
 
-      // 大区 -> 该区里有雷达站的省；全国就把有站的省全列出来
+      // 大区 -> 该区里的省。**不再只收"有雷达站的省"**：有些省一个单站都没有，
+      // 按老写法（`if (stations[c.id] && …)`）那个省在列表里根本不出现，
+      // 用户看到的就是"城市列表不完全"。现在所有省都列出来。
       const inReg = c => region === 'ACHN' || W.regionFor(c) === region;
       const provs = [];
       all.forEach(c => {
-        if (stations[c.id] && inReg(c) && provs.indexOf(c.prov) < 0) provs.push(c.prov);
+        if (inReg(c) && provs.indexOf(c.prov) < 0) provs.push(c.prov);
       });
       if (!prov && provs.length) prov = provs[0];        // 别让城市行空着
       if (prov && provs.indexOf(prov) < 0) prov = provs[0] || null;
+      // 城市同样**列全**：没有单站雷达的城市照常可选，点了就回落到所在大区的拼图，
+      // 名字后面标一个「大区」让用户事先知道会拿到什么（标题里还会再说明一次）。
       const cityBtns = prov
-        ? all.filter(c => c.prov === prov && stations[c.id]).map(c => [c.id, c.name]) : [];
+        ? all.filter(c => c.prov === prov).map(c => [c.id, stations[c.id] ? c.name : c.name + ' · 大区'])
+        : [];
       if (cityId && cityBtns.every(x => x[0] !== cityId)) cityId = null;
 
       // 「📡 当前位置 / 📍 正在浏览」两个快捷入口，永远排在大区行上面一行
@@ -453,9 +458,14 @@
       const st = cityId && stations[cityId];
       const key = st ? 'S:' + cityId : region;
       const rname = (W.RADAR_REGIONS.filter(x => x.k === region)[0] || {}).n || region;
+      // 选中的城市**没有单站雷达**时，图还是所在大区的拼图 —— 但标题必须说清楚
+      // 是哪座城市、以及为什么给的是大区图。否则点了没反应，用户会以为列表坏了。
+      const cityNm = cityId ? ((API.Cities.get(cityId) || {}).name || '') : '';
       const label = st
         ? ((cityId === locSt ? '📡 当前位置 · ' : cityId === curSt ? '📍 ' + (API.Cities.get(curSt) || {}).name + ' · ' : '') + st.name + ' 单站雷达')
-        : ('雷达回波 · ' + rname);
+        : (cityNm
+            ? '雷达回波 · ' + rname + '（' + cityNm + ' 没有单站雷达，用大区拼图）'
+            : '雷达回波 · ' + rname);
 
       let frames = this._radarFrames;
       if (this._radarKey !== key || !frames || !frames.length) {
@@ -517,24 +527,41 @@
       });
     },
 
-    /* ── 降水：最近 1 小时实况 / 中央气象台未来 24 小时预报图。默认实况 —— 更新更勤 */
+    /* ── 降水：最近 1 小时实况 / 全国降水量预报图（7 档时效）。默认实况 —— 更新更勤 ──
+       预报时效那 7 档不是"我们造的"：中央气象台的产品代号**恒为 ER24**，
+       时效藏在时次戳末尾 5 位（`zfill(3) + '00'`），所以同一套 URL 模板换个后缀就有 24~168 小时。 */
     _precipKind: 'now',
-    async openPrecip(kind) {
+    _precipWin: 24,
+    async openPrecip(kind, win) {
       kind = kind || this._precipKind || 'now';
+      win = win || this._precipWin || 24;
       this._precipKind = kind;
+      this._precipWin = win;
       const body = $('#wxPrecipBody'), sub = $('#wxPrecipSub');
       if (!body) return;
       const nowKind = kind === 'now';
-      body.innerHTML = '<div class="wx-load">' + (nowKind ? '正在探测最近 1 小时降水实况…' : '正在探测最新的降水预报图…') + '</div>';
+      body.innerHTML = '<div class="wx-load">' + (nowKind
+        ? '正在探测最近 1 小时降水实况…'
+        : '正在探测未来 ' + win + ' 小时的降水预报图…') + '</div>';
       let frames;
       const n = nowKind ? 8 : 6;
       try {
-        frames = await W.probePrecip(n, (got, total) => { if (sub) sub.textContent = '已找到 ' + got + ' 张'; }, kind);
+        frames = await W.probePrecip(n, got => { if (sub) sub.textContent = '已找到 ' + got + ' 张'; }, kind, win);
       } catch (e) { body.innerHTML = '<div class="wx-load">降水数据获取失败：' + esc(e.message) + '</div>'; return; }
       if (!frames.length) { body.innerHTML = '<div class="wx-load">暂时取不到降水图</div>'; return; }
-      renderPlayer(body, sub, frames, nowKind ? '全国 1 小时降水实况' : '全国降水量预报图（未来 24 小时）', {
-        regions: [['now', '最近 1 小时实况'], ['fcst', '未来 24 小时预报']], region: kind,
-        onRegion: k => WXUI.openPrecip(k)
+      renderPlayer(body, sub, frames,
+        nowKind ? '全国 1 小时降水实况' : '全国降水量预报图（未来 ' + win + ' 小时）', {
+        segs: [
+          { regions: [['now', '最近 1 小时实况'], ['fcst', '预报图']], region: kind, act: 'kind' },
+          // 实况档下不显示时效行 —— 实况没有"预报时效"这回事
+          nowKind ? null : {
+            regions: W.PRECIP_WINS.map(h => [String(h), h + ' 小时']), region: String(win), act: 'win'
+          }
+        ].filter(Boolean),
+        onSeg: (act, reg) => {
+          if (act === 'kind') WXUI.openPrecip(reg, reg === 'fcst' ? WXUI._precipWin : undefined);
+          else WXUI.openPrecip('fcst', +reg);
+        }
       });
     },
 
