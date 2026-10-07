@@ -639,6 +639,13 @@
     const q = quoteOf(c.id);
     const ti = d.todayIndex;
     const curBar = ti >= 0 ? d.daily[ti] : null;
+    /* 日K 拿不到时（Open-Meteo 额度用尽 → daily 是空数组）退回**官方预报里的今天**。
+       这两个数字气象局本来就在给（`d.officialToday`，来自站点预报 → 中国天气网 d1），
+       以前只挂在 Open-Meteo 聚合出来的日K 上，于是整块统计变成一片 `--` ——
+       使用者报的"额度不够又变成啥都没有"就是这一处。 */
+    const offToday = (!curBar && d.officialToday) ? d.officialToday : null;
+    const hiToday = curBar ? curBar.h : (offToday ? offToday.high : null);
+    const loToday = curBar ? curBar.l : (offToday ? offToday.low : null);
     const prevBar = ti > 0 ? d.daily[ti - 1] : null;
     const base = d.base;
     const chg = q.chg, pct = q.pct;
@@ -719,10 +726,10 @@
     const groups = [
       // ① 今天有多热
       [
-        ['今日最高', curBar ? fx(curBar.h, 1) : '--', U.upColor()],
-        ['今日最低', curBar ? fx(curBar.l, 1) : '--', U.downColor()],
+        ['今日最高', hiToday == null ? '--' : fx(hiToday, 1), U.upColor()],
+        ['今日最低', loToday == null ? '--' : fx(loToday, 1), U.downColor()],
         ['体感', n.feels == null ? '--' : fx(n.feels, 1) + ' ℃', null],
-        ['全天波动', curBar ? fx(curBar.h - curBar.l, 1) + ' ℃' : '--', null]
+        ['全天波动', (hiToday == null || loToday == null) ? '--' : fx(hiToday - loToday, 1) + ' ℃', null]
       ],
       // ② 风（气压跟着风走：都是"大气"这一类的动力/压力读数）
       [
@@ -886,6 +893,42 @@
         el('span', { class: 't-amt', text: amt > 0 ? fx(amt, 1) : '—' })
       ]));
     });
+    /* Open-Meteo 那一路没有时（额度用尽），退回**气象局的逐 3 小时**。
+       这条路本来就是气象局给的、一直在手上（`d.cmaHourly`），以前却让整块显示"暂无观测"——
+       明明有官方数据却空着，使用者说"又变成啥都没有了"。
+
+       ⚠ 两个坑，都踩过：
+       ① `cmaHourly` 是**预报**（从发布时刻往后 7 天），不是观测 —— 所以口径小字必须改写成
+          "逐 3 小时预报"，**不能**留在"最近观测"下面冒充实况；顺序也换成**正序**（先看最近的）。
+       ② 它的下标 0 就是"今天 23:00"，而上面逐小时那段循环是 `i >= 1`（那里下标 0 用来算温差）
+          —— 照抄过来会把唯一一条今天的数据排除掉，结果一格都渲染不出来（探针里量到"筛过后 = 0"）。 */
+    if (!out.length && d.cmaHourly && d.cmaHourly.time && d.cmaHourly.time.length) {
+      const ct = d.cmaHourly.time, ctemp = d.cmaHourly.temp, cprec = d.cmaHourly.precip, cwc = d.cmaHourly.wcode;
+      const rows = [];
+      for (let i = 0; i < ct.length && rows.length < 60; i++) {
+        if (String(ct[i]).slice(0, 10) < d.today) continue;   // 往前翻到的旧时次不要
+        if (ctemp[i] == null) continue;
+        rows.push(i);
+      }
+      rows.forEach(i => {
+        const prev = i > 0 ? ctemp[i - 1] : null;
+        const chg = prev == null ? 0 : ctemp[i] - prev;
+        const t = String(ct[i]).replace('T', ' ');
+        const amt = cprec[i] || 0;
+        box.appendChild(el('div', { class: 'tape-row', title: (cwc[i] != null ? API.wmoText(cwc[i]) : '') }, [
+          el('span', { class: 't-time', text: t.slice(5, 10) + ' ' + t.slice(11, 16) }),
+          el('span', { class: 't-temp', style: { color: U.trendColor(chg) }, text: fx(ctemp[i], 1) }),
+          el('span', { class: 't-amt', text: amt > 0 ? fx(amt, 1) : '—' })
+        ]));
+      });
+      if (rows.length) {
+        const em = $('#tapeHint');
+        if (em) em.textContent = '气象局逐 3 小时预报，正序（逐时观测暂时取不到）';
+        return;
+      }
+    }
+    const hint = $('#tapeHint');
+    if (hint) hint.textContent = '最近观测，倒序';
     if (!out.length) box.appendChild(el('div', { class: 'sr-empty', text: '暂无观测' }));
   }
 
@@ -1103,7 +1146,15 @@
   async function selectCity(id) {
     const c = API.Cities.get(id);
     if (!c) { toast('未找到城市 ' + id); return; }
-    if (S.loading) return;
+    if (S.loading) {
+      // ⚠ 不能直接 `return` 把点击丢掉：额度用尽时一次加载要等六路请求，
+      // 这期间点谁都没反应 —— 使用者以为"点了双江不滚动"，实际是**根本没切过去**。
+      // 记下来，等这次加载收尾时自动补切（见 selectCity 末尾的 finally）。
+      S.pendingCity = id;
+      $('#statusLeft').textContent = '正在加载上一座城市…加载完自动切到 ' + c.name;
+      toast('正在加载上一座城市，稍后自动切到 ' + c.name);
+      return;
+    }
     S.loading = true;
     S.cur = c;
     S.data = null;
@@ -1209,6 +1260,14 @@
       }
     } finally {
       S.loading = false;
+      // 加载期间用户点过的城市**排在这儿补切**。
+      // 以前是 `if (S.loading) return;` 直接丢掉 —— 额度用尽时一次加载要等六路请求，
+      // 这期间点谁都没反应（使用者："点双江它根本就没有滚动"，其实压根没切过去）。
+      if (S.pendingCity) {
+        const p = S.pendingCity;
+        S.pendingCity = null;
+        selectCity(p);
+      }
     }
   }
 

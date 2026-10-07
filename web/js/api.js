@@ -1372,7 +1372,17 @@
         degraded: noBars,
         // 数据来源账本：「气象局为主、Open-Meteo 补缺」到底落实成什么比例。
         // 只用于探针/状态栏自述，不参与渲染。hSrc = 逐小时时次，dSrc = 日K 根数。
-        hourlySrc: hSrc, dailySrc: dSrc
+        hourlySrc: hSrc, dailySrc: dSrc,
+        /* 官方预报里的**今天**（气象局站点预报 → 中国天气网 d1）。
+           为什么单独拎出来：`daily` 是 Open-Meteo 逐小时聚合出来的，额度用尽时它是空数组，
+           于是行情头的「今日最高/最低/全天波动」全变成 `--` —— 可**这两个数字官方明明给了**，
+           只是以前只挂在那些日K 上。使用者报的"额度不够又变成啥都没有"就是这一处。 */
+        officialToday: offDaily[today] || null,
+        /* 气象局的逐 3 小时序列（未来 7 天，51 个时次）。
+           逐时流水（`#tape`）原来只读 Open-Meteo 的 d.hourly，额度一尽就「暂无观测」；
+           而这条路是**气象局自己给的**，正好能顶上 —— 只是颗粒度是 3 小时，
+           界面上会说清楚（见 renderTape）。体积很小（约 10 KB），直接随 out 走。 */
+        cmaHourly: cmaH || null
       };
       out.indicators = IND.computeAll(daily);
       out.stamp = new Date();

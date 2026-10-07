@@ -193,7 +193,9 @@
     </section>
 
     <section class="rblock" id="tapeBlock">
-      <div class="pane-head"><span>每小时气温流水 <em class="dim">最近观测，倒序</em></span></div>
+      <!-- 那行小字有 id：Open-Meteo 取不到时流水会退回气象局的逐 3 小时，
+           口径得跟着改（不能让它看起来还是"逐小时"）。见 renderTape()。 -->
+      <div class="pane-head"><span>每小时气温流水 <em class="dim" id="tapeHint">最近观测，倒序</em></span></div>
       <div class="tape-head"><span>时间</span><span>气温</span><span>雨量</span></div>
       <div class="scroll grow" id="tape"></div>
     </section>

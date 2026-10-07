@@ -193,10 +193,14 @@ body{
   0%, 15%   { transform: translateX(0); }
   85%, 100% { transform: translateX(calc(-1 * var(--sw-over, 0px))); }
 }
-/* 系统里开了"减少动态效果"就别动 */
-@media (prefers-reduced-motion: reduce){
-  .stock-row.on .sw-name.ovf > .sw-name-in{animation:none}
-}
+/* ⚠ 这里**故意没有** `@media (prefers-reduced-motion: reduce){animation:none}`。
+   上一版加了，结果使用者那边"点了双江根本不滚" —— 因为 **Windows 关了"显示动画"
+   时 Chrome 就会把 prefers-reduced-motion 报成 reduce**（无头 Chrome 也是这个值，
+   所以探针当时必须先把这条规则删掉才验得到滚动，这个信号我没读懂）。
+   而在这 90px 的格子里，**滚动是唯一能看全 15 字名的方式**（tooltip 只在鼠标悬停时有），
+   关掉它就等于这个功能不存在。所以按使用者的要求去掉这道闸：
+   它只有**选中那一行**在动、7 秒一个来回、两端还各停 15%，不是闪烁。
+   手机上那一档仍然是 animation:none（那里名字格够宽，根本不超出）。 */
 .stock-row:hover{background:#212734}
 .stock-row.on{background:#2a3140}
 .stock-row.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
