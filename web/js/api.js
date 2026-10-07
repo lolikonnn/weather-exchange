@@ -11,6 +11,11 @@
   const TZ = 'Asia/Shanghai';
   const CMA = 'https://weather.cma.cn';
   const OM_A = 'https://archive-api.open-meteo.com/v1/archive';
+  /* archive 的备胎：historical-forecast 同样吃 start_date/end_date，而且跟 archive 主机
+     是**两个不同的配额桶**（实测 archive 报 "Hourly API request limit exceeded" 时，
+     换一台往往还活着）。 */
+  const OM_A_ALT = 'https://historical-forecast-api.open-meteo.com/v1/forecast';
+  const ARCH_TTL = 43200000;      // 历史逐小时的持久缓存有效期：12 小时
 
   /* 本地代理探测：EXE / APK 外壳会注入 window.__TJS_LOCAL__。
      探针页等未注入时按 hostname 自行判定，避免本地调试误走直连。 */
@@ -340,16 +345,43 @@
 
   /* ═══════════════ 3. Open-Meteo 历史逐小时（K 线引擎） ═══════════════ */
   const OpenMeteo = {
-    /** 历史逐小时；返回 {time:[], temp:[], precip:[]} */
+    /** 历史逐小时；返回 {time:[], temp:[], precip:[]}
+     *
+     *  ⚠ 这一段是**永远不变的历史**：窗口右端停在"今天-93 天"、左端是"今天-560 天"，
+     *  只有跨天的时候最末尾才挪一格。可它偏偏是全站最贵的一次请求
+     *  （467 天 × 24 小时 × 2 个变量，实测约 300 KB），而以前**每次刷新页面都重下一遍** ——
+     *  既慢，又在烧 Open-Meteo 的免费额度。2026-10-07 那次 429
+     *  （"Daily API request limit exceeded. Please try again tomorrow."）就是这么被烧穿的。
+     *  所以除了内存缓存，再往 localStorage 里放一份：**单个槽位**（不按城市堆，避免把配额
+     *  换成存储配额），12 小时失效。跨天那一格会晚 12 小时才补上，看历史 K 线毫无影响。 */
     async archive(lat, lon, startDate, endDate) {
-      const url = OM_A + '?latitude=' + lat + '&longitude=' + lon +
+      const q = '?latitude=' + lat + '&longitude=' + lon +
         '&start_date=' + startDate + '&end_date=' + endDate +
         '&hourly=temperature_2m,precipitation' +
         '&timezone=' + encodeURIComponent(TZ);
       // key 必须带上 endDate。只按 startDate 做 key 的话，"同一个 start、不同的 end"
       // 两次调用会互相命中缓存，第二次等于没发出去 —— 是个一直没被触发的潜伏 bug。
-      const d = await getJSON(url, { ttl: 1800000, key: 'a|' + lat + ',' + lon + '|' + startDate + '|' + endDate });
-      return this._unpack(d, 'temperature_2m', 'precipitation');
+      const key = 'a|' + lat + ',' + lon + '|' + startDate + '|' + endDate;
+
+      const hard = storeGet('arch', null);
+      if (hard && hard.k === key && hard.v && hard.v.time && hard.v.time.length &&
+        Date.now() - hard.t < ARCH_TTL) return hard.v;
+
+      // 两台主机轮着试（配额是分开的）。这是**唯一一条没有走 omGetJSON 的 Open-Meteo 请求** ——
+      // 因为它要的是 archive 那套 start_date/end_date 参数，跟 forecast 那套不一样。
+      let d = null, lastErr = null;
+      const hosts = [OM_A, OM_A_ALT];
+      for (let i = 0; i < hosts.length; i++) {
+        try { d = await getJSON(hosts[i] + q, { ttl: 1800000, key: key + '#h' + i }); break; }
+        catch (e) { lastErr = e; }
+      }
+      if (!d) throw lastErr || new Error('历史逐小时取不到');
+      const out = this._unpack(d, 'temperature_2m', 'precipitation');
+      if (out.time.length) {
+        try { storeSet('arch', { k: key, t: Date.now(), v: out }); }
+        catch (e) { /* 配额爆了就算了，下次再试 */ }
+      }
+      return out;
     },
 
     /** 近期逐小时（含过去 92 天）+ 16 日预报 */
@@ -970,6 +1002,8 @@
   const Store = {
     /** 上次打开这座城市时看到的整份行情（可能为 null）。给 app.js 做"先显示旧的"。 */
     peekCity(city) { return cxPeek(city); },
+    /** 手写一份快照。正常路径由 loadCity 自己存，这个口子是给探针/排错用的。 */
+    saveCity(out) { cxSave(out); },
     /** 手动丢缓存（调试/排错用） */
     dropCity(city) { if (city && city.id) storeSet(cxKey(city.id), null); },
 
@@ -1029,6 +1063,16 @@
       const cloudLows = padTo(recent.cloudLow), cloudMids = padTo(recent.cloudMid);
       const cloudHighs = padTo(recent.cloudHigh), viss = padTo(recent.vis);
       const daily = toDailyBars(times, temps, precs, { humidity: humids, wind: winds, wcode: wcodes });
+
+      // ⚠ 历史与预报**两份都没拿到**时 `daily` 会是空数组，而下面那句
+      // `daily[Math.max(0, ti - 1)].d` 就会抛 "Cannot read properties of undefined (reading 'd')" ——
+      // 2026-10-07 网页端右上角那句"加载失败"就是这么来的，用户看到的是一句天书。
+      // 最常见的原因是 Open-Meteo 免费额度用尽（HTTP 429）。这里换成一句能看懂的话，
+      // 并且说清"哪些还活着" —— 气象局那两路（实况 / 官方预报）是好的。
+      if (!daily.length) {
+        throw new Error('逐小时与日K 暂时取不到 —— 数据源 Open-Meteo 返回了 429（免费额度用尽，' +
+          '按小时或次日恢复）。中国气象局的实况与官方预报仍然可用。');
+      }
 
       // 用 Open-Meteo daily 补/覆盖更可靠的最高最低温
       const omDaily = {};

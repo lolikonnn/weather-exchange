@@ -176,6 +176,78 @@
 
 > 以下按时间**倒序**。日期后面括号里是本机时间（UTC+8）。
 
+## 2026-10-07（23:58）— 数据源挂掉时不许甩天书；历史逐小时不再重复下载
+
+> 使用者发来一张网页端截图：`加载失败: Cannot read properties of undefined (reading 'd')`，
+> 主图一片空白，只有左边自选列表还有价格。
+
+### 🔍 根因（实测，不是猜的）
+
+`weather-exchange/tmp/omdiag.js` 直接把原始请求打出来看：
+
+```
+主站 forecast   HTTP 429  {"reason":"Daily API request limit exceeded. Please try again tomorrow."}
+备用 forecast   HTTP 429  {"reason":"Hourly API request limit exceeded. Please try again in the next hour."}
+历史 archive    HTTP 429  {"reason":"Hourly API request limit exceeded."}
+空气质量        HTTP 200  ✓（另一个配额桶）
+Cma.now / Cma.forecast  ✓ 正常
+loadCity ✗ Cannot read properties of undefined (reading 'd')
+```
+
+**Open-Meteo 的免费额度被打满了**（主站是按天算的额度，当天用尽；备用/历史是按小时的）。
+气象局那两路是好的，所以自选列表的价格正常 —— 只有依赖 Open-Meteo 的逐小时 / 日 K 全线阵亡。
+
+而 560 天历史那段是**永远不变的数据**，以前却**每次刷新页面都重下一遍**：
+它既是"打开慢"的一份，也是把免费额度烧穿的主力。
+
+### 🐛 修 · 数据源故障时不许甩天书
+
+- **`daily` 为空时抛人话**。以前会一头撞进 `daily[Math.max(0, ti - 1)].d`，
+  抛出 `Cannot read properties of undefined (reading 'd')` —— 那就是截图里那句。
+  现在换成：
+  > 逐小时与日K 暂时取不到 —— 数据源 Open-Meteo 返回了 429（免费额度用尽，按小时或次日恢复）。
+  > 中国气象局的实况与官方预报仍然可用。
+- **有上次的快照就留着它**。以前无论加载成没成，`selectCity` 的 catch 都会 `Chart.renderEmpty`
+  —— 于是"屏上明明画着上次的数据，却被一句报错顶掉"。现在有快照就继续显示，
+  状态栏写：`更新失败：…（仍显示 12 分钟前的数据）`，并 toast 一句「更新失败，仍显示上次的数据」。
+  没有快照时才显示错误卡片。
+- **快照渲染包进 try**。那段代码跑在 `S.loading = true` 之后、下面的 try 之前 ——
+  一份坏快照让渲染抛错，异常会直接冒出去，`S.loading` 永远回不到 `false`，
+  之后所有切城市都被 `if (S.loading) return` 挡掉，**整个应用卡死**。现在坏快照会被丢掉、
+  清干净、继续走正常加载。
+
+### ⚡ 改 · 历史逐小时不再重复下载
+
+- **持久缓存**（`localStorage` 的 `tjs.arch`，**单个槽位**，12 小时失效）。
+  这段窗口右端停在"今天-93 天"，只有跨天时最末尾才挪一格，所以缓存它是安全的 ——
+  跨天那一格晚 12 小时补上，对看历史 K 线毫无影响。实测一份 3000 个时次 70 KB，
+  真实那份（约 467 天 × 24 时次 × 2 变量）约 260 KB。
+- **archive 加了备胎主机**：`archive-api.open-meteo.com` 挂了就换
+  `historical-forecast-api.open-meteo.com`（它同样吃 `start_date/end_date`，而且配额是分开的）。
+  这是唯一一条没走 `omGetJSON` 的 Open-Meteo 请求 —— 因为参数体系不一样。
+
+### 🧪 验证
+
+- **`weather-exchange/tmp/omfail.js`**（报错 0 条）。正好赶上真实故障现场，三个场景一次跑完：
+
+  | 场景 | 结果 |
+  | --- | --- |
+  | 没有快照 + 429 | 状态栏是那句人话；`S.loading = false`（没被异常卡住） |
+  | **有快照 + 429** | 点下去**同步**上屏 30 根日K；实时那轮失败后 **还是 30 根** —— 行情没被报错顶掉，状态栏写 `更新失败：…（仍显示 刚刚的数据）`，图上没有错误卡片 |
+  | 快照坏掉（缺 `hourly`） | 坏快照**被丢掉**；`S.loading` 始终 `false`；应用还活着、能继续切城市 |
+
+- **`weather-exchange/tmp/archcache.js`**（报错 0 条）。因为 Open-Meteo 整体 429，这个探针
+  **根本不需要网络**：手动往 localStorage 塞一份假历史，看命中不命中 ——
+  这比"能拉到数据"更硬，它证明的是"以后不会再重复拉这段永不改变的历史"。
+
+  | 场景 | 结果 |
+  | --- | --- |
+  | 新鲜缓存（0 秒前） | 拿回来 100 个时次（假数据就是 100），**期间 Open-Meteo 请求 = 0** [OK] |
+  | 13 小时前的缓存 | 失效，去要网（**429** 正好证明它真的发了请求） |
+  | 只改了 `endDate` | key 对不上，重新要 —— 不会张冠李戴 |
+
+---
+
 ## 2026-10-07（23:45）— 冷启动先显示上次的数据；竖屏功能页头部文字回来
 
 > 使用者问了三件事：「竖屏界面的雷达为什么不像网页端那样显示头部文字？故意的还是没加载？」

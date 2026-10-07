@@ -960,13 +960,22 @@
      * 这一步**不 await**：先把画面填上，网络照常在后面跑。 */
     const snap = API.Store.peekCity ? API.Store.peekCity(c) : null;
     if (snap && snap.out) {
-      snap.out.city = c;                     // 用刚查出来的城市对象，别拿快照里那份旧的
-      S.data = snap.out;
-      S.lastFullAt = snap.at || 0;           // 如实记成"手上这份是那个时刻的"
-      Chart.hideLoading();
-      renderQuoteHead(); renderOrderbook(); renderTape(); renderChart();
-      renderStatus();
-      $('#statusLeft').textContent = '正在更新 ' + c.name + ' …（当前显示 ' + agoTxt(snap.at) + '的数据）';
+      // ⚠ 这一段必须在 try 里：它在 `S.loading = true` 之后、下面那个 try 之前运行，
+      // 一旦某份坏快照让渲染抛错，异常会直接冒出去，`S.loading` 永远回不到 false ——
+      // 整个应用就此卡死（切城市全被 `if (S.loading) return` 挡掉）。坏缓存绝不能有这个权力。
+      try {
+        snap.out.city = c;                   // 用刚查出来的城市对象，别拿快照里那份旧的
+        S.data = snap.out;
+        S.lastFullAt = snap.at || 0;         // 如实记成"手上这份是那个时刻的"
+        Chart.hideLoading();
+        renderQuoteHead(); renderOrderbook(); renderTape(); renderChart();
+        renderStatus();
+        $('#statusLeft').textContent = '正在更新 ' + c.name + ' …（当前显示 ' + agoTxt(snap.at) + '的数据）';
+      } catch (err) {
+        S.data = null;                       // 丢掉坏快照，清干净，继续走正常加载
+        if (API.Store.dropCity) API.Store.dropCity(c);
+        Chart.showLoading('正在拉取 ' + c.name + ' 行情…');
+      }
     }
 
     try {
@@ -995,8 +1004,18 @@
       toast('已切换到 ' + c.name + ' ' + c.id);
     } catch (e) {
       Chart.hideLoading();
-      Chart.renderEmpty('加载失败：' + e.message);
-      $('#statusLeft').textContent = '加载失败：' + e.message;
+      // 有上次的快照就**留着它** —— 与其把已经画好的行情换成一句报错，不如让用户继续看
+      // 上次那份（状态栏说清是什么时候的数据）。2026-10-07 网页端就是栽在这里：
+      // Open-Meteo 额度用尽 → 抛错 → 明明屏上有数据，却被一句 "加载失败" 顶掉了。
+      if (S.data && S.data.daily && S.data.daily.length) {
+        renderStatus();
+        $('#statusLeft').textContent = '更新失败：' + e.message +
+          '（仍显示 ' + agoTxt(snap && snap.at) + '的数据）';
+        toast('更新失败，仍显示上次的数据');
+      } else {
+        Chart.renderEmpty('加载失败：' + e.message);
+        $('#statusLeft').textContent = '加载失败：' + e.message;
+      }
     } finally {
       S.loading = false;
     }
