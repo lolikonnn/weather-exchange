@@ -340,6 +340,16 @@
           splitLine: splitNone
         }
       ].concat(ovOk ? [ovAxis] : []),
+      // ⚠ dataZoom 必须**和 K 线档一样建一份**（哪怕它就是全展的 0~100）。
+      //   副图（optSub）一直在建 dataZoom，主图这里以前**没有** —— 对比 K 线那几档：
+      //     K 线：主图有 dataZoom、副图也有 → `echarts.connect('tjs')` 的十字光标 /
+      //           信息窗格联动正常工作（那几档一直是好的，使用者也是这么说的）；
+      //     分时 / 7日：主图**没有** dataZoom → 联动少了一环，竖线对不齐、副图窗格不出。
+      //   这里补上和 optKline 同一套（全展 0~100），两条路径的结构就一致了。
+      dataZoom: [
+        { type: 'inside', xAxisIndex: [0], start: 0, end: 100, zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
+        { type: 'slider', xAxisIndex: [0], start: 0, end: 100, show: false }
+      ],
       series: [
         // 日界背景带单独挂在一个不画线的系列上：z 最低，保证明暗带在气温/均价下面，
         // 顺便在每条分界线上画一根竖虚线，即使被面积渐变盖住也还能看出"一天到这儿结束"。
