@@ -362,15 +362,32 @@ body{
 .drawer-body{flex:1;overflow-y:auto;padding:8px 10px;min-width:0}
 .dw-prov{font-size:11.5px;color:var(--accent);margin:10px 0 5px;letter-spacing:1px;font-weight:600}
 .dw-prov:first-child{margin-top:0}
-.dw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:4px}
+/* 格子最小宽 176px：名字列因此有 ~90px，最长的名字（`恩施土家族苗族`、`红河哈尼族彝族`，
+   实测 84px）也放得下、不会被省略号截。148px 那档会被截掉 2 个。 */
+.dw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:4px}
+/* ⚠ 这里必须是**三列网格**，不能用 `display:flex;justify-content:space-between`。
+   原来是 flex + space-between：名字在左、代号在右、**星夹在中间**，左右两个间隙平分 ——
+   于是**名字越长，星越往右**。一屏几十个格子扫下来就是"歪七扭八"（使用者报的）。
+   改成网格后，星的 left 只等于「格子宽 − 代号宽 − 间距」——
+   代号恒为 3 位数字（`c.id.slice(-3)`）、格子宽度由 `.dw-grid` 的 auto-fill 统一决定，
+   所以**每个格子里星的相对位置完全一样**，跟名字几个字无关。
+   名字那一列用 minmax(0,1fr) 才收得动，长了就用省略号。 */
 .dw-city{
-  display:flex;justify-content:space-between;align-items:center;gap:6px;
+  display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:6px;
   padding:4px 7px;background:#1d222c;border:1px solid var(--line);border-radius:2px;
   cursor:pointer;font-size:12px;transition:.12s;
 }
+.dw-city > span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dw-city:hover{background:#2a3140;border-color:var(--line2)}
 .dw-city.on{border-color:var(--accent);color:var(--accent)}
-.dw-city i{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--dim2)}
+/* ⚠ 这一格**必须固定宽**。它在星的右边，宽度一变星就被挤得左右乱跑：
+   实测 9 位代码在比例字体下每个数字宽度不一样（`101010100` 全是窄的 1 → 40.2px，
+   `101090402` → 44.7px），于是星的 left 跟着差出 10px —— 一整屏看下来就是"歪七扭八"。
+   双保险：钉死宽度 + 强制等宽数字（tabular-nums，字体支持才生效，宽度是硬保证）。 */
+.dw-city i{
+  font-style:normal;font-family:var(--mono);font-size:10px;color:var(--dim2);
+  width:46px;text-align:right;font-variant-numeric:tabular-nums;
+}
 .dw-city .star{color:var(--dim2);font-size:12px;line-height:1;padding:0 1px}
 .dw-city .star.on{color:var(--accent)}
 .dw-city .star:hover{color:var(--accent)}
