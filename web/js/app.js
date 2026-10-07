@@ -646,8 +646,10 @@
       const b = d.daily[i], om = (d.omDaily && d.omDaily[b.d]) || {};
       out.push({
         date: b.d,
-        high: b.omHigh != null ? b.omHigh : b.h,
-        low: b.omLow != null ? b.omLow : b.l,
+        // b.high/b.low 在 api.js 里已经按「官方优先、Open-Meteo 补缺」定稿过，
+        // 这里**不再优先 omHigh** —— 以前那么写等于把 Open-Meteo 摆在气象局前面。
+        high: b.high != null ? b.high : b.h,
+        low: b.low != null ? b.low : b.l,
         dayText: om.code != null ? API.wmoText(om.code) : '', nightText: '',
         dayWind: '',
         precip: om.precip != null ? om.precip : b.v,

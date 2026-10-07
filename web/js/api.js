@@ -350,6 +350,59 @@
       } catch (e) { return null; }
     },
 
+    /** 把上面的逐 3 小时**摊平成一条时间序列**，供"气象局优先、Open-Meteo 补缺"用。
+     *
+     *  原响应是 `[{date, list:[{forecastTime:'2026/10/07 23:00', temperature, humidity,
+     *  windSpeed, windDirection(度), windDirectionText, precipitation, totalCloudCover,
+     *  lowCloudCover, weather, text, visibility, pressure}, …]}, …]`，每天 8 个点（3 小时一档）。
+     *  这里摊平成平行数组，时间键统一成 `YYYY-MM-DDTHH:00`，跟 Open-Meteo 那套**同一把键**，
+     *  两边就能直接按时刻对齐。
+     *
+     *  ⚠ 两个单位坑，合并前必须知道：
+     *    · `windSpeed` 是 **m/s**（跟气象局网页一致），不用换算 —— Open-Meteo 那边我们显式要了
+     *      `wind_speed_unit=ms`，所以两边可比。
+     *    · `visibility` 是 **km**，而 Open-Meteo 给的是**米** —— 这里统一乘 1000 换成米，
+     *      否则能见度会差 1000 倍。
+     *
+     *  ⚠ 它是**纯预报**（`forecastTime` 从 `publishTime` 之后开始），所以天然不会污染历史那一段 ——
+     *  历史仍然只能靠 Open-Meteo。 */
+    async hourlySeries(city) {
+      const days = await this.hourly(city);
+      if (!days || !days.length) return null;
+      const time = [], temp = [], humidity = [], wind = [], wdir = [], wdirDeg = [],
+        precip = [], cloud = [], cloudLow = [], wcode = [], vis = [], pressure = [];
+      const seen = {};
+      days.forEach(day => {
+        (day.list || []).forEach(x => {
+          const m = String(x.forecastTime || '').replace(/\//g, '-')
+            .match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2})/);
+          if (!m) return;
+          const key = m[1] + 'T' + m[2] + ':00';
+          if (seen[key]) return;                      // 同一时刻只取先到的那条
+          seen[key] = 1;
+          time.push(key);
+          temp.push(x.temperature == null ? null : +x.temperature);
+          humidity.push(x.humidity == null ? null : +x.humidity);
+          wind.push(x.windSpeed == null ? null : +x.windSpeed);
+          wdir.push(x.windDirectionText || '');
+          wdirDeg.push(x.windDirection == null ? null : +x.windDirection);
+          precip.push(x.precipitation == null ? 0 : +x.precipitation);
+          cloud.push(x.totalCloudCover == null ? null : +x.totalCloudCover);
+          cloudLow.push(x.lowCloudCover == null ? null : +x.lowCloudCover);
+          wcode.push(x.weather == null ? null : +x.weather);
+          vis.push(x.visibility == null ? null : +x.visibility * 1000);   // km → m
+          pressure.push(x.pressure == null ? null : +x.pressure);
+        });
+      });
+      if (!time.length) return null;
+      return {
+        src: 'cma', time: time,
+        temp: temp, humidity: humidity, wind: wind, wdir: wdir, wdirDeg: wdirDeg,
+        precip: precip, cloud: cloud, cloudLow: cloudLow, wcode: wcode,
+        vis: vis, pressure: pressure
+      };
+    },
+
     /** 未来 5 日：供盘口与 15 日预报使用 */
     async forecast(city) {
       const dd = await this.view(city);
@@ -1048,6 +1101,42 @@
     return rec;
   }
 
+  /* ───────── 气象局优先、Open-Meteo 补缺 ─────────
+   * 全站的数据来源原则：**气象局有的就用气象局的**，Open-Meteo 只补它没有的。
+   * 气象局的逐 3 小时（`Cma.hourlySeries`）能供：气温 / 湿度 / 风速 / 风向 / 降水 /
+   * 总云量 / 低云量 / 天气码 / 能见度 / 气压；
+   * Open-Meteo 独占、气象局这个接口**确实没有**的：紫外线、降水概率、阵风、
+   * 中/高云、露点、气溶胶、以及 560 天历史 —— 这些才由 Open-Meteo 主供。
+   *
+   * 对齐方式：两边都是整点键，按 `YYYY-MM-DDTHH` 对齐，**不做插值** ——
+   * 气象局只给 3 小时一档，中间那两小时继续是 Open-Meteo 的值，
+   * 那正好就是"气象局没给的部分由 Open-Meteo 补齐"。
+   *
+   * @param target  目标对象（例 `out.hourly`；`loadCity` 里传一个临时对象，数组是同一个引用）
+   * @param timeKey target 上时间轴字段名，通常是 `'time'`
+   * @param map     `{ 目标字段: 气象局字段 }`，例 `{ temp:'temp', rh:'humidity' }`
+   * @param cmaH    `Cma.hourlySeries()` 的返回值
+   * @returns 账本 `{ cma, om }`：多少个时次用了气象局、多少继续用 Open-Meteo */
+  function overlayCma(target, timeKey, map, cmaH) {
+    const t = target[timeKey] || [];
+    const at = {};
+    for (let i = 0; i < t.length; i++) at[String(t[i]).replace(' ', 'T').slice(0, 13)] = i;
+    let hit = 0;
+    for (let k = 0; k < cmaH.time.length; k++) {
+      const i = at[String(cmaH.time[k]).slice(0, 13)];
+      if (i == null) continue;
+      hit++;
+      Object.keys(map).forEach(tk => {
+        const src = cmaH[map[tk]];
+        const v = src ? src[k] : null;
+        if (v == null) return;                    // 气象局这个时次这个字段没给 → 留着 Open-Meteo 的
+        if (!target[tk]) target[tk] = new Array(t.length).fill(null);
+        target[tk][i] = v;
+      });
+    }
+    return { cma: hit, om: Math.max(0, t.length - hit) };
+  }
+
   /* ═══════════════ 6. 统一取数入口 ═══════════════ */
   const Store = {
     /** 上次打开这座城市时看到的整份行情（可能为 null）。给 app.js 做"先显示旧的"。 */
@@ -1073,7 +1162,7 @@
       // 历史窗口故意停在「今天-93」：最后 92 天 + 未来 16 天由 recent 接上
       const archStart = shiftDate(todayStr(), -560);
       const archEnd = shiftDate(todayStr(), -93);
-      const [now0, fcst, hist0, recent0, official, cnPair] = await Promise.all([
+      const [now0, fcst, hist0, recent0, official, cnPair, cmaH] = await Promise.all([
         Cma.now(city),
         Cma.forecast(city),
         hasLL ? OpenMeteo.archive(city.lat, city.lon, archStart, archEnd).catch(() => null) : null,
@@ -1081,7 +1170,9 @@
         Cn.snapshot(city.id),
         city.id
           ? Promise.all([Cn.forecast(city.id).catch(() => null), Cn.officialDaily(city.id).catch(() => null)])
-          : Promise.resolve([null, []])
+          : Promise.resolve([null, []]),
+        // 气象局的逐 3 小时（未来 7 天）。**以气象局为主**的那一半就靠它。
+        Cma.hourlySeries(city).catch(() => null)
       ]);
       const hist = hist0 || { time: [], temp: [], precip: [] };
       const recent = recent0 || {
@@ -1112,6 +1203,22 @@
       // forecast() 里取回来了、却在这一步被丢掉，是这次差点漏掉的一环。
       const cloudLows = padTo(recent.cloudLow), cloudMids = padTo(recent.cloudMid);
       const cloudHighs = padTo(recent.cloudHigh), viss = padTo(recent.vis);
+
+      /* ── 气象局优先、Open-Meteo 补缺（规则见 overlayCma 的注释） ──
+       * 传进去的数组是**同一个引用**，所以 helper 改的就是下面的 temps/humids/…
+       *  ⚠ 必须在 `toDailyBars` **之前**做：气象局给的是预报，覆盖之后未来几天的日K
+       *  就是按气象局的逐时温度聚合出来的（今天则是"已观测 + 气象局预报"混一段，
+       *  这正是想要的）。它也天然不会碰历史 —— 那个接口的 forecastTime 全在发布时刻之后。 */
+      const hSrc = (cmaH && cmaH.time && cmaH.time.length)
+        ? overlayCma(
+            { time: times, temp: temps, humidity: humids, wind: winds, precip: precs,
+              cloud: clouds, cloudLow: cloudLows, wcode: wcodes, vis: viss },
+            'time',
+            { temp: 'temp', humidity: 'humidity', wind: 'wind', precip: 'precip',
+              cloud: 'cloud', cloudLow: 'cloudLow', wcode: 'wcode', vis: 'vis' },
+            cmaH)
+        : { cma: 0, om: 0 };
+
       const daily = toDailyBars(times, temps, precs, { humidity: humids, wind: winds, wcode: wcodes });
 
       // ⚠ 历史与预报**两份都没拿到**时 `daily` 会是空数组（最常见：Open-Meteo 免费额度用尽 429）。
@@ -1123,7 +1230,15 @@
       //   · out.degraded 让界面能如实说明"看的是历史数据"。
       const noBars = !daily.length;
 
-      // 用 Open-Meteo daily 补/覆盖更可靠的最高最低温
+      /* ── 日高低温：**官方优先，Open-Meteo 补缺** ──
+       * 原来这里是反的：`b.high/b.low` 是 Open-Meteo 逐小时自己聚合出来的，
+       * 而 Open-Meteo 的 daily 又被存成"更可靠的" omHigh/omLow 并被盘口优先采用 ——
+       * 等于把 Open-Meteo 摆在气象局前面。
+       * 现在：① 先记下 Open-Meteo 的日聚合（当参考值留着）；
+       *       ② 再用**官方**的日高低温覆盖 `b.high/b.low`（气象局 view.daily 7 天 +
+       *          中国天气网 d1 的官方日历，按日期对得上才算）；
+       *       ③ 官方没覆盖到的日子，才保留 Open-Meteo 的日聚合。
+       * 这样右侧「未来 5 天高低温」、报价头的今日最高/最低、K 线的影线都跟气象局一致。 */
       const omDaily = {};
       if (recent.daily && recent.daily.time) {
         recent.daily.time.forEach((d, i) => {
@@ -1139,7 +1254,25 @@
           };
         });
       }
-      daily.forEach(b => { if (omDaily[b.d]) { b.omHigh = omDaily[b.d].high; b.omLow = omDaily[b.d].low; b.wcode = omDaily[b.d].code; } });
+      // 官方日高低温。两路来源，气象局的站点预报优先于中国天气网的官方日历（同一个局，前者更细）。
+      const offDaily = {};
+      const isoOf = s => String(s || '').replace(/\//g, '-').slice(0, 10);
+      ((cnFcst && cnFcst.daily) || []).forEach(x => {
+        const d = isoOf(x.date);
+        if (d && x.high != null && x.low != null) offDaily[d] = { high: x.high, low: x.low, src: 'd1' };
+      });
+      ((fcst && fcst.daily) || []).forEach(x => {
+        const d = isoOf(x.date);
+        if (d && x.high != null && x.low != null) offDaily[d] = { high: x.high, low: x.low, src: 'cma' };
+      });
+      const dSrc = { cma: 0, om: 0 };
+      daily.forEach(b => {
+        if (omDaily[b.d]) { b.omHigh = omDaily[b.d].high; b.omLow = omDaily[b.d].low; b.wcode = omDaily[b.d].code; }
+        const o = offDaily[b.d];
+        if (o) { b.high = o.high; b.low = o.low; b.hlSrc = o.src; dSrc.cma++; }
+        else if (omDaily[b.d] && b.omHigh != null) { b.high = b.omHigh; b.low = b.omLow; b.hlSrc = 'om'; dSrc.om++; }
+        else { b.hlSrc = 'om-hourly'; dSrc.om++; }   // 官方和 Open-Meteo 日聚合都没有，就用逐小时聚出来的
+      });
 
       const week = IND.aggregate(daily, 'week');
       const month = IND.aggregate(daily, 'month');
@@ -1177,7 +1310,10 @@
         omDaily, lastDay, todayIndex: ti, today,
         base: ti > 0 ? daily[ti - 1].c : (ti === 0 ? daily[0].o : null),
         // true = 逐小时/日K 这一路没拿到，界面要如实说明"曲线看的是历史数据"
-        degraded: noBars
+        degraded: noBars,
+        // 数据来源账本：「气象局为主、Open-Meteo 补缺」到底落实成什么比例。
+        // 只用于探针/状态栏自述，不参与渲染。hSrc = 逐小时时次，dSrc = 日K 根数。
+        hourlySrc: hSrc, dailySrc: dSrc
       };
       out.indicators = IND.computeAll(daily);
       out.stamp = new Date();
@@ -1381,5 +1517,5 @@
   };
 
   global.U = U;
-  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num };
+  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num, overlayCma };
 })(window);

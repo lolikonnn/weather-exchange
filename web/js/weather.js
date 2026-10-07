@@ -178,7 +178,7 @@
 
     _wx: {},
     /** 把逐小时 + 空气质量都备好，缓存在内存里 */
-    async ensure(city) {
+    async ensure(city, cmaH) {
       if (!city) return null;
       const cur = this._wx[city.id];
       if (cur && Date.now() - cur.t < 900000) return cur;
@@ -188,6 +188,31 @@
       // 再长会让这次请求的 JSON 大到手机上难接受。
       try { out.hourly = await this.hourly(city.lat, city.lon, 16, 92); }
       catch (e) { out.err = String(e.message || e); }
+      /* ── 气象局优先、Open-Meteo 补缺 ──
+       * 副图这条线一直是纯 Open-Meteo。按全站原则，气象局逐 3 小时里**有**的字段
+       * （气温 / 降水 / 风速 / 风向 / 总云量 / 低云量 / 湿度 / 能见度 / 天气码）
+       * 一律换成气象局的；Open-Meteo 只保留气象局确实没有的那几项：
+       * **紫外线、降水概率、阵风、中/高云、露点**。
+       * 这样副图和主图报的是同一套天气，不会再出现"上面说 26℃、下面曲线说 30℃"。
+       * 气象局那条线挂了就照旧全用 Open-Meteo，不阻塞副图。 */
+      if (out.hourly) {
+        try {
+          const cma = cmaH || await API.Cma.hourlySeries(city);
+          if (cma && cma.time && cma.time.length) {
+            out.hourlySrc = API.overlayCma(out.hourly, 'time', {
+              temp: 'temp', precip: 'precip', wind: 'wind', windDir: 'wdirDeg',
+              cloud: 'cloud', cloudLow: 'cloudLow', rh: 'humidity', vis: 'vis', wcode: 'wcode'
+            }, cma);
+          }
+        } catch (e) {
+          // ⚠ 这个 catch 曾经把 `cmaH is not defined` 这种**引用错误**一起吞掉，
+          // 于是"副图没换成气象局的"看起来像"气象局没给数据" —— 排查时白绕一圈。
+          // 现在留一条 warn：静默降级可以，静默掩盖错误不行。
+          if (global.console) {
+            console.warn('[Weather.ensure] 气象局逐时合并失败，副图继续用 Open-Meteo：', e && e.message);
+          }
+        }
+      }
       try { out.air = await this.air(city.lat, city.lon, 92); } catch (e) { /* 空气是加分项，失败不影响主图 */ }
       this._wx[city.id] = out;
       return out;
