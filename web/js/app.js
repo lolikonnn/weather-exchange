@@ -4,7 +4,14 @@
 (function () {
   'use strict';
   const { $, el, fx, sgn, cls, storeGet, storeSet, toast, debounce, marketPhase } = U;
-  const DEFAULT_WATCH = ['101010100', '101020100', '101280601', '101280101', '101270101', '101210101'];
+  /* 首次使用的默认收藏：北上广深 + 长沙 + 武汉。
+     ⚠ id **别凭记忆写**：武汉是 **101200101**，而 101270101 是**成都**
+     （旧默认值里那个位置本来放的就是成都）。这几个 id 都是对着
+     `web/data/cities.json` 核过的，不要再"觉得应该是"。
+     ⚠ 只在**没有存过 `watch` 这个键**时才塞（见下面的恢复逻辑）——
+     不能写成"列表为空就塞"：把收藏全删光是一种明确的操作，
+     刷新一下又全冒出来会让人以为删不掉。 */
+  const DEFAULT_WATCH = ['101010100', '101020100', '101280101', '101280601', '101250101', '101200101'];
 
   /* 指数条 = 左栏「当前所在地 + 自选城市」的镜像。
      这里以前写死沪/深/京/穗/湘五个城市，外加一个 computed 的「自选均温」——
@@ -56,7 +63,7 @@
     const ids = idxIds();
     box.innerHTML = '';
     if (!ids.length) {
-      box.appendChild(el('span', { class: 'idx-empty', text: '还没有收藏的城市 —— 用上面的搜索框，或点任意一行右边的 ☆' }));
+      box.appendChild(el('span', { class: 'idx-empty', text: '还没有收藏的城市 —— 用上面的搜索框，或点名字旁边那颗 ☆' }));
       return;
     }
     ids.forEach(id => {
@@ -100,7 +107,7 @@
     box.innerHTML = '';
     // 放在最前面：自选清空时下面会提前 return，指数条也得跟着清干净
     renderIndexes();
-    if (!S.watch.length) { box.appendChild(el('div', { class: 'sr-empty', text: '还没有收藏的城市，点右边那颗 ☆ 收藏' })); return; }
+    if (!S.watch.length) { box.appendChild(el('div', { class: 'sr-empty', text: '还没有收藏的城市 —— 用搜索框加，或点名字旁边那颗 ☆' })); return; }
     let ids = S.watch.slice();
     if (S.sortMode === 1) ids.sort((a, b) => {
       // 分母改成绝对温标后，平盘就是货真价实的 0%。这里必须显式判 null：
@@ -137,7 +144,7 @@
           el('div', { class: 'sw-name-row' }, [
             el('div', { class: 'sw-name', text: c.name }),
             el('span', {
-              // 实心星 = 已收藏，点它 = 取消收藏 —— 跟热门列表那颗空心星是同一套语义，
+              // 实心星 = 已收藏，点它 = 取消收藏 —— 跟搜索结果行/全部城市抽屉里的空心星是同一套语义，
               // 也跟搜索结果行 / 行情头 / 全部城市抽屉里的星一致（全站就这一个符号）。
               // 以前这里是 ✕，而且桌面端只在 hover 才显形，等于看不见。
               class: 'sw-star on', text: '★', title: '取消收藏',
@@ -273,53 +280,11 @@
     });
   }
 
-  function renderHotlist() {
-    const box = $('#hotlist');
-    box.innerHTML = '';
-    API.Cities.hot.forEach(c => {
-      const q = quoteOf(c.id);
-      const col = U.trendColor(q.chg);
-      const starred = S.watch.indexOf(c.id) >= 0;
-      const row = el('div', {
-        class: 'stock-row' + (S.cur && S.cur.id === c.id ? ' on' : ''),
-        // 收藏行早就有 data-id（拖拽排序要用）。热门行也补上：
-        // 行本身可识别之后，探针/调试就不用靠"第几行"去猜是哪座城。
-        'data-id': c.id,
-        onclick: (e) => {
-          if (e.target.classList.contains('sw-star')) return;
-          selectCity(c.id);
-        }
-      }, [
-        el('div', {}, [
-          el('div', { class: 'sw-name-row' }, [
-            el('div', { class: 'sw-name', text: c.name }),
-            // 热门列表原来【没有】收藏的入口，导致除了搜索框 Ctrl+Enter 之外
-            // 用户根本没办法把城市加进收藏。这里补一颗星：空心 = 没收藏，实心 = 收藏了。
-            el('span', {
-              class: 'sw-star' + (starred ? ' on' : ''),
-              text: starred ? '★' : '☆',
-              title: starred ? '取消收藏' : '收藏这座城市',
-              onclick: (e) => {
-                e.stopPropagation();
-                if (starred) removeWatch(c.id); else addWatch(c.id);
-                renderHotlist(); buildDrawer();
-              }
-            })
-          ]),
-          el('div', { class: 'sw-sub', text: c.id + ' · ' + (c.prov || '') })
-        ]),
-        el('div', { class: 'sw-price', style: { color: col }, text: q.temp == null ? '--' : fx(q.temp, 1) }),
-        el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
-      ]);
-      box.appendChild(row);
-    });
-  }
-
   /* 自选变了之后要跟着刷的所有视图，收在一处 —— 以前是每个调用点自己挑着刷，
    * 于是总有漏的（行情头那颗星加进来时，左边的自选列表和「全部城市」抽屉
    * 都不会更新）。以后再加显示自选的地方，只改这一个函数。 */
   function refreshWatchViews() {
-    renderWatchlist(); renderHotlist(); renderIndexes(); buildDrawer(); renderQStar();
+    renderWatchlist(); renderIndexes(); buildDrawer(); renderQStar();
   }
   function addWatch(id) {
     if (S.watch.indexOf(id) >= 0) { toast('已经收藏过了'); return; }
@@ -1108,7 +1073,7 @@
     S.data = null;
     S.wx = null;
     storeSet('last', id);
-    renderWatchlist(); renderHotlist(); renderIndexes();
+    renderWatchlist(); renderIndexes();
     $('#qName').textContent = c.name;
     // 城市名旁边那颗星要立刻对上（数据还没到也得对）—— 这正是本来的诉求：
     // 点开一座城之后就能直接加自选，不用回搜索框重搜一遍。
@@ -1222,7 +1187,9 @@
   }
 
   function watchHotIds() {
-    const ids = S.watch.concat(API.Cities.hot.slice(0, 16).map(c => c.id));
+    // 以前这里还要并上「热门前 16 城」。热门城市那块删掉之后，
+    // 就不再为没人看的城市去预热行情了 —— 省下的正是每次刷新的那十几个请求。
+    const ids = S.watch.slice();
     if (S.geo) ids.push(LOC_ID);          // 当前所在地也要有报价
     return Array.from(new Set(ids));
   }
@@ -1235,7 +1202,7 @@
      让最坏情况的调用量一眼可见：48 轮/天 × 40 城 = 1920 次/天，约日额度的两成。
      TTL 必须跟节流周期同值：TTL 比节流短的话缓存先过期，等于白节流。 */
   const BRIEF_MS = 1800000;   // 30 分钟一轮
-  const BRIEF_MAX = 40;       // 一轮最多补多少个城市（自选 + 热门前 16 + 当前所在地）
+  const BRIEF_MAX = 40;       // 一轮最多补多少个城市（收藏 + 当前所在地）
 
   /**
    * 取一个城市的「昨收 + 迷你走势」，带兜底：
@@ -1264,7 +1231,7 @@
     const qs = await API.Store.quotes(cities, 6);
     Object.assign(S.quotes, qs);
 
-    // 昨收 / 迷你走势（Open-Meteo brief）：自选 + 热门。
+    // 昨收 / 迷你走势（Open-Meteo brief）：只有收藏 + 当前所在地。
     //
     // ★ briefAt 是"下次允许拉的时刻"，不是"上次拉的时刻"：成功推 30 分钟，失败只推 2 分钟。
     //   老写法不管成败都写 `S.briefAt = Date.now()`，于是一次失败（典型是 Open-Meteo
@@ -1298,7 +1265,7 @@
     //   于是定位那一格永远停在打开那一刻：价格和涨跌幅都是灰的 `--`，
     //   旁边自选城市却已经有数字了（用户看到的正是这个）。
     renderGeo();
-    renderWatchlist(); renderHotlist(); renderIndexes();
+    renderWatchlist(); renderIndexes();
     if (S.cur) { renderQuoteHead(); renderOrderbook(); renderTape(); }
   }
 
@@ -1371,7 +1338,7 @@
         onclick: (e) => {
           e.stopPropagation();
           if (S.watch.indexOf(c.id) >= 0) removeWatch(c.id); else addWatch(c.id);
-          doSearch(); renderHotlist(); buildDrawer();
+          doSearch(); buildDrawer();
         }
       }));
       box.appendChild(row);
@@ -1424,7 +1391,7 @@
             if (e.target.classList.contains('star')) {
               e.stopPropagation();
               if (S.watch.indexOf(c.id) >= 0) removeWatch(c.id); else addWatch(c.id);
-              buildDrawer(); renderHotlist();
+              buildDrawer();
               return;
             }
             selectCity(c.id); $('#cityDrawer').hidden = true;
@@ -1490,7 +1457,7 @@
     $('#colorMode').addEventListener('change', e => {
       document.body.classList.toggle('us', e.target.value === 'us');
       storeSet('color', e.target.value);
-      Chart.setTheme(); renderWatchlist(); renderHotlist(); renderQuoteHead(); renderIndexes(); renderChart(); renderOrderbook();
+      Chart.setTheme(); renderWatchlist(); renderQuoteHead(); renderIndexes(); renderChart(); renderOrderbook();
     });
     $('#volumeMetric').addEventListener('change', e => {
       S.metric = e.target.value; storeSet('metric', S.metric); renderChart();
@@ -1649,9 +1616,12 @@
     const savedGeo = storeGet('geo', null);
     if (savedGeo && savedGeo.lat != null) { S.geo = savedGeo; registerGeo(savedGeo); }
 
-    S.watch = storeGet('watch', null) || DEFAULT_WATCH.slice();
-    S.watch = S.watch.filter(i => API.Cities.get(i));
-    if (!S.watch.length) S.watch = DEFAULT_WATCH.slice();
+    /* 收藏列表的恢复：**没存过**就塞默认的北上广深+长沙+武汉（真正的"第一次使用"）。
+       ⚠ 旧写法是 `storeGet('watch', null) || DEFAULT_WATCH` 再加一句
+       "空了就塞默认"，于是**把收藏全删光的用户刷新一下又全回来了** ——
+       那看起来像删不掉。现在空数组就是空数组，照实显示"还没有收藏的城市"。 */
+    const savedWatch = storeGet('watch', null);
+    S.watch = (Array.isArray(savedWatch) ? savedWatch : DEFAULT_WATCH).filter(i => API.Cities.get(i));
     S.refreshMs = storeGet('refresh', 900000);
     S.metric = storeGet('metric', 'range');
     S.overlay = !!storeGet('overlay', 0);
@@ -1670,7 +1640,7 @@
     Chart.init($('#mainChart'), $('#subChart'));
     bind();
     if (window.WXUI) WXUI.init();
-    renderWatchlist(); renderHotlist(); renderIndexes();
+    renderWatchlist(); renderIndexes();
     scheduleRefresh();
 
     const lastId = storeGet('last', null);

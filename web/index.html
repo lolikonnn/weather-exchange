@@ -103,15 +103,14 @@
       <span class="pane-head-tools">
         <button class="mini" id="btnSortWatch"
           title="切换排序：默认 / 涨幅 / 名称。想自己排就**长按某一行**（按住半秒）再上下拖，松手即保存">⇅</button>
+        <!-- 「全部城市」抽屉的入口。原来挂在下面那块「热门城市」的标题栏上，
+             热门城市整个删掉之后把它挪到这儿来了。 -->
+        <button class="mini" id="btnAllCities" title="全部城市">＋</button>
       </span>
     </div>
-    <div class="scroll" id="watchlist"></div>
-
-    <div class="pane-head">
-      <span>热门城市</span>
-      <span class="pane-head-tools"><button class="mini" id="btnAllCities" title="全部城市">＋</button></span>
-    </div>
-    <div class="scroll grow" id="hotlist"></div>
+    <!-- 收藏列表占满剩下的高度。以前它下面还有一块「热门城市」（项目初期用来试数据的，
+         现在能直接搜城市了），那块删掉之后 `grow` 从 hotlist 挪到这儿。 -->
+    <div class="scroll grow" id="watchlist"></div>
   </aside>
 
   <!-- ───────── 中：行情 + 图 ───────── -->
