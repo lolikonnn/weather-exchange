@@ -75,7 +75,7 @@
   <button class="wxbtn" data-wx="wxTy"     title="台风和热带气旋的实况路径与预报路径">🌀 <b>台风路径</b></button>
   <button class="wxbtn" data-wx="wxWarn"   title="全国正在生效的气象预警信号">⚠ <b>预警信号</b></button>
   <button class="wxbtn" data-wx="wxQuake"  title="USGS 记录到的真实地震：按当前城市算距离，最近的排最前">🌋 <b>地震</b></button>
-  <button class="wxbtn" id="btnLocate"     title="用浏览器定位，找出离你最近的城市">📍 <b>我附近</b></button>
+  <button class="wxbtn" data-wx="wxAstro"  title="天文爱好者那几样：观星指数、极光地磁、日月出没、流星雨日历">🔭 <b>天文</b></button>
   <span class="wx-bar-hint" id="wxHint"></span>
 </div>
 
@@ -452,7 +452,7 @@
         <dt>🌧 降水预报</dt><dd>中央气象台画的全国降水量预报图，未来 24 小时雨会下在哪、下多大，每 12 小时出一张。看色块：绿＝小雨、蓝＝中到大雨、紫红＝暴雨以上。</dd>
         <dt>🌀 台风路径</dt><dd>今年每个台风／热带气旋走过的路线（实线）和中央气象台预报的后续路线（虚线）。点左边列表切换台风，地图可以拖动缩放。</dd>
         <dt>⚠ 预警信号</dt><dd>全国正在生效的气象预警，按红／橙／黄／蓝排序显示原文。</dd>
-        <dt>📍 我附近</dt><dd>用浏览器定位，在本地城市表里找出离你最近的一个（不上传位置，换算全在本机完成）。</dd>
+        <dt>🔭 天文</dt><dd>观星指数（拿云量／降水／湿度／风／月光打分）、极光与地磁（NOAA 的 Kp 指数）、日月出没与黄金／蓝调时刻、流星雨日历。除了 Kp 和太阳黑子来自 NOAA，其余全部在本地推算，不额外请求接口。</dd>
       </dl>
 
       <h4>右侧和顶部的词</h4>
@@ -553,6 +553,18 @@
   </div>
 </div>
 
+<!-- 天文（观星 / 极光 / 日月 / 流星雨） -->
+<div class="drawer wx-drawer" id="wxAstro" hidden>
+  <div class="drawer-panel wx-panel">
+    <div class="drawer-head">
+      <strong>🔭 天文</strong>
+      <span class="wx-sub" id="wxAstroSub"></span>
+      <button class="mini" data-close>✕</button>
+    </div>
+    <div class="drawer-body wx-body" id="wxAstroBody"></div>
+  </div>
+</div>
+
 <!-- 手机竖屏底部导航：宽屏下由 CSS 隐藏。
      竖屏一次只能好好显示一栏，所以把三栏拆成四个可切换的页。 -->
 <nav class="mtabs" id="mtabs" hidden>
@@ -605,6 +617,7 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(loca
 <script src="js/api.js"></script>
 <script src="js/chart.js"></script>
 <script src="js/weather.js"></script>
+<script src="js/astro.js"></script>
 <script src="js/wxui.js"></script>
 <script src="js/app.js"></script>
 <script src="js/game.js"></script>

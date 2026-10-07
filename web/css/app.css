@@ -745,10 +745,86 @@ body{
 .wx-qk-d{flex:none;color:var(--accent);font-size:11.5px;font-family:var(--mono)}
 .wx-qk-meta{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono)}
 
+/* ───────────────── 天文 ─────────────────
+   跟 .wx-warn/.wx-quake 一样是长内容：父级 .wx-body 是 overflow:hidden 的
+   flex 列，所以 .wx-as 必须自己写 flex:1 1 auto + min-height:0 才滚得动
+   （只写 overflow-y:auto 而不写 min-height:0，flex 子项的默认 min-height:auto
+   会把它撑到内容那么高，父级一裁就永远不能滚）。 */
+.wx-as{
+  flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  padding:9px 11px;display:flex;flex-direction:column;gap:9px;
+}
+.wx-as::-webkit-scrollbar{width:8px}
+.wx-as::-webkit-scrollbar-track{background:transparent}
+.wx-as::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
+.wx-as::-webkit-scrollbar-thumb:hover{background:var(--dim)}
+
+/* 头一张卡：一个很大的数字（或 emoji）+ 一句话结论 */
+.wx-as-lead{
+  display:flex;align-items:center;gap:14px;flex:none;
+  background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:10px 12px;
+}
+.wx-as-big{flex:none;font-family:var(--mono);font-size:34px;line-height:1;color:var(--accent)}
+.wx-as-leadlab{font-size:11.5px;color:var(--dim);line-height:1.7;min-width:0}
+.wx-as-leadlab b{color:var(--txt-hi);font-size:13.5px}
+.wx-as-h2{
+  flex:none;font-size:11.5px;color:var(--dim);letter-spacing:.4px;
+  border-top:1px solid var(--line);padding-top:7px;margin-top:1px;
+}
+.wx-as-h2:first-child{border-top:0;padding-top:0;margin-top:0}
+.wx-as-note{flex:none;font-size:12px;color:var(--txt);line-height:1.75}
+.wx-as-note b{color:var(--accent2)}
+.wx-as-foot{
+  flex:none;font-size:11px;color:var(--dim2);line-height:1.75;
+  border-top:1px solid var(--line);padding-top:8px;
+}
+.wx-as-foot b{color:var(--dim)}
+
+/* 逐小时一行：时间 · 条形 · 分数 · 云量。四列都用固定宽度，
+   免得数字位数一变整列就左右横跳（跟 .wx-qk-mag 一个道理）。 */
+.wx-as-list{flex:none;display:flex;flex-direction:column;gap:4px}
+.wx-as-row{display:flex;align-items:center;gap:9px;font-size:11.5px;font-family:var(--mono)}
+.wx-as-row>b{flex:none;width:42px;color:var(--dim);font-weight:400}
+.wx-as-row>span{flex:none;width:76px;text-align:right}
+.wx-as-row>em{flex:none;width:52px;text-align:right;color:var(--dim2);font-style:normal}
+.wx-as-bar{flex:1 1 auto;display:block;height:9px;background:var(--panel3);border-radius:2px;overflow:hidden}
+.wx-as-bar>b{display:block;height:100%;border-radius:2px}
+
+/* 「时段」那种两列行（日月那一页） */
+.wx-as-row2{
+  display:flex;align-items:baseline;gap:10px;font-size:12px;
+  padding:4px 0;border-bottom:1px dashed var(--line);
+}
+.wx-as-row2:last-child{border-bottom:0}
+.wx-as-row2>b{flex:none;width:126px;color:var(--dim);font-weight:400}
+.wx-as-row2>span{color:var(--txt-hi);font-family:var(--mono)}
+.wx-as-row2 i{color:var(--dim2);font-style:normal}
+
+/* Kp 柱状图：柱子按 Kp/9 的高度撑，颜色直接用 kpScale 的分级色 */
+.wx-as-kp{
+  flex:none;display:flex;align-items:flex-end;gap:2px;height:92px;
+  padding:0 2px;border-bottom:1px solid var(--line2);
+}
+.wx-as-kp>i{flex:1 1 0;min-width:2px;display:block;border-radius:1px 1px 0 0}
+.wx-as-axis{flex:none;display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim2);font-family:var(--mono)}
+
+/* 流星雨卡片 */
+.wx-as-card{
+  flex:none;display:flex;flex-direction:column;gap:3px;
+  background:var(--panel2);border:1px solid var(--line);
+  border-left:3px solid var(--line2);border-radius:3px;padding:8px 10px;
+}
+.wx-as-card.on{border-left-color:var(--accent)}
+.wx-as-cardhead{display:flex;align-items:center;gap:8px}
+.wx-as-cardhead>b{font-size:13px;color:var(--txt-hi)}
+.wx-as-badge{flex:none;font-size:10px;padding:1px 5px;border-radius:2px;background:var(--accent);color:#1a1400}
+.wx-as-meta{font-size:11.5px;color:var(--dim);font-family:var(--mono);line-height:1.6}
+
 /* ───────────────── 竖屏 ───────────────── */
 @media (max-width:860px){
-  /* 六个按钮在 390px 下合计 521px：靠横向滚动的话"我附近"整颗都在屏幕外，
-     用户根本不知道它存在。竖屏改成换行显示，一行放不下就换第二行。 */
+  /* 这一排按钮（雷达回波…地震…天文）在 390px 下合计超过一屏：靠横向滚动的话
+     排在最右边的那一颗整个都在屏幕外，用户根本不知道它存在。
+     竖屏改成换行显示，一行放不下就换第二行。 */
   .wx-bar{
     padding:4px 8px;gap:5px;row-gap:5px;flex-wrap:wrap;
     overflow:visible;height:auto;

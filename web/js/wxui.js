@@ -897,6 +897,39 @@
       }).join('') + '</div>';
     },
 
+    /* ── 天文 ──
+       四页：观星 / 极光 / 日月 / 流星雨。
+       只有极光那页要打 NOAA SWPC（免 key、CORS 全开），其余三页全靠 astro.js
+       在本地推算 —— 打开就是瞬时的，也不占任何接口额度。 */
+    _as: { page: 'star' },
+    openAstro(page) {
+      const body = $('#wxAstroBody'), sub = $('#wxAstroSub');
+      if (!body) return;
+      if (page) this._as.page = page;
+      const app = window.__APP;
+      const c = (app && app.S && app.S.cur) || null;
+      const d = (app && app.S && app.S.data) || null;
+      const me = this;
+      const PAGES = [['star', '✨ 观星'], ['aurora', '🌌 极光'], ['moon', '🌗 日月'], ['meteor', '☄️ 流星雨']];
+      body.innerHTML =
+        '<div class="wx-seg">' + PAGES.map(p =>
+          '<button class="wx-segbtn' + (p[0] === this._as.page ? ' on' : '') +
+          '" data-asp="' + p[0] + '">' + p[1] + '</button>').join('') + '</div>' +
+        '<div class="wx-as" id="wxAsPane"></div>';
+      body.querySelectorAll('[data-asp]').forEach(b => b.addEventListener('click', () => me.openAstro(b.dataset.asp)));
+      const pane = body.querySelector('#wxAsPane');
+      if (!c || c.lat == null || c.lon == null) {
+        if (sub) sub.textContent = '';
+        pane.innerHTML = '<div class="wx-load">先选一个城市 —— 天文这几样都得知道当地的经纬度。</div>';
+        return;
+      }
+      const now = Date.now();
+      if (this._as.page === 'aurora') { asAurora(pane, sub, c, now); return; }
+      if (this._as.page === 'moon') { asMoon(pane, sub, c, now); return; }
+      if (this._as.page === 'meteor') { asMeteor(pane, sub, c, now); return; }
+      asStar(pane, sub, c, d, now);
+    },
+
     /* 通用开关 */
     open(id) {
       const el = document.getElementById(id);
@@ -911,6 +944,7 @@
       if (id === 'wxTy') this.openTyphoon();
       if (id === 'wxWarn') this.openWarn();
       if (id === 'wxQuake') this.openQuake();
+      if (id === 'wxAstro') this.openAstro();
     },
     close(id) {
       const el = document.getElementById(id);
@@ -918,30 +952,11 @@
       if (this._timer) { clearInterval(this._timer); this._timer = null; }
     },
 
-    /* ── 定位：在本地城市表里找离我最近的城市。
-          坐标换算全部在本机完成，不往任何服务器发位置。 ── */
-    locate() {
-      const hint = $('#wxHint');
-      const say = t => { if (hint) hint.textContent = t; };
-      if (!navigator.geolocation) { say('这个浏览器不支持定位'); return; }
-      say('正在定位…');
-      navigator.geolocation.getCurrentPosition(pos => {
-        const la = pos.coords.latitude, lo = pos.coords.longitude;
-        const cities = (global.API && API.Cities && API.Cities.all) || [];
-        if (!cities.length) { say('城市表还没加载好'); return; }
-        let best = null, bd = Infinity;
-        cities.forEach(c => {
-          if (c.lat == null || c.lon == null) return;
-          // 经度差按纬度收缩，否则高纬度会算歪
-          const dy = c.lat - la, dx = (c.lon - lo) * Math.cos(la * Math.PI / 180);
-          const d = dy * dy + dx * dx;
-          if (d < bd) { bd = d; best = c; }
-        });
-        if (!best) { say('城市表里没有带坐标的城市'); return; }
-        say('最近：' + best.name + '（直线约 ' + Math.round(Math.sqrt(bd) * 111) + ' 公里）');
-        if (global.__APP && __APP.selectCity) __APP.selectCity(best.id);
-      }, () => say('定位被拒绝或不可用'), { timeout: 9000, maximumAge: 600000 });
-    },
+    /* ── 定位 ──
+       原来这里有个 locate()：点工具栏的「📍 我附近」，在本地城市表里找最近的一座。
+       已经删掉了 —— 定位在城市列表那一行「📍 定位当前位置」里（app.js 的 renderGeo），
+       而且应用启动时只要已经授权过就会静默定位到 LOC_ID，工具栏再放一个入口是冗余的。
+       那个方法本身也是重复实现：最近城市的算法 app.js 里有一份（nearestCity + haversine）。 */
 
     init() {
       // 顶栏功能按钮
@@ -983,8 +998,7 @@
         seg.scrollLeft = before + d;
         if (seg.scrollLeft !== before) e.preventDefault();     // 滚到头就把事件还给页面
       }, { passive: false });
-      const lb = document.getElementById('btnLocate');
-      if (lb) lb.addEventListener('click', () => WXUI.locate());
+      // （工具栏那颗「📍 我附近」按钮和它的 WXUI.locate() 已经删掉，见上面"定位"那段注释。）
       // 预警滚动条：拉一次 + 挂 5 分钟定时器（tickerInit 内部防重入）
       WXUI.tickerInit();
     }
@@ -1039,6 +1053,234 @@
     if (m >= 5.0) return '#e67e22';
     if (m >= 4.0) return '#f0c419';
     return '#3498db';
+  }
+
+  /* ───────── 天文面板：四个子页的排版 ─────────
+     壳在 WXUI.openAstro() 里（分段控件 + 分发），这里只管把每一页画出来。
+     数据来源：经纬度取当前城市；逐小时取 S.data.hourly（**异步补的，可能还没到**）；
+     Kp / 太阳黑子打 NOAA SWPC；其余全部由 astro.js 在本地推算。 */
+
+  /** 毫秒 → HH:MM */
+  function asHM(t) {
+    const d = (t instanceof Date) ? t : new Date(t);
+    return isNaN(d.getTime()) ? '--' : pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+  /** 时长 → "3 小时 20 分" */
+  function asDur(ms) {
+    const m = Math.max(0, Math.round(ms / 60000));
+    return m < 60 ? (m + ' 分') : (Math.floor(m / 60) + ' 小时 ' + pad2(m % 60) + ' 分');
+  }
+  /** 逐小时平行数组里落在 [t0,t1] 的整点（连下标一起带出来），最多 cap 个。
+   *  下标必须带 —— cloud/precip/humidity/wind 是跟 time 同长的**平行数组**。 */
+  function asHours(h, t0, t1, cap) {
+    const out = [];
+    if (!h || !h.time) return out;
+    for (let i = 0; i < h.time.length; i++) {
+      const t = Date.parse(String(h.time[i]).replace(' ', 'T'));
+      if (!isFinite(t) || t < t0 || t > t1) continue;
+      out.push({ t: t, i: i });
+      if (cap && out.length >= cap) break;
+    }
+    return out;
+  }
+  function asBar(pct, color) {
+    return '<i class="wx-as-bar"><b style="width:' +
+      Math.max(2, Math.min(100, Math.round(pct))) + '%;background:' + color + '"></b></i>';
+  }
+
+  /* ── ① 观星指数 ── */
+  function asStar(pane, sub, c, d, now) {
+    const A = global.ASTRO;
+    if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
+    const mp = A.moonPhase(now);
+    const night = A.nextNight(now, c.lat, c.lon);
+    const from = night ? Math.max(night.from, now - 3600000) : now;
+    const to = night ? night.to : now + 6 * 3600000;
+    const h = d && d.hourly;
+    const hrs = asHours(h, from, to, 14);
+
+    const rows = hrs.map(x => ({
+      t: x.t,
+      cloud: (h && h.cloud) ? h.cloud[x.i] : null,
+      sc: A.starScore({
+        cloud: (h && h.cloud) ? h.cloud[x.i] : null,
+        precip: (h && h.precip) ? h.precip[x.i] : null,
+        humidity: (h && h.humidity) ? h.humidity[x.i] : null,
+        wind: (h && h.wind) ? h.wind[x.i] : null,
+        moonUp: A.moonAlt(x.t, c.lat, c.lon) > 0,
+        moonIllum: mp.illum
+      })
+    }));
+    const best = rows.slice().sort((p, q) => q.sc.score - p.sc.score)[0] || null;
+
+    if (sub) {
+      sub.textContent = (night ? '天文夜 ' + asHM(night.from) + '→' + asHM(night.to) + '（' + asDur(night.to - night.from) + '）'
+        : '今夜没有真正的天黑') + ' · ' + mp.emoji + ' ' + mp.name + ' ' + Math.round(mp.illum * 100) + '%';
+    }
+
+    let html = '';
+    if (best) {
+      html += '<div class="wx-as-lead">' +
+        '<span class="wx-as-big" style="color:' + best.sc.color + '">' + best.sc.score + '</span>' +
+        '<span class="wx-as-leadlab"><b>' + best.sc.label + '</b><br>' + asHM(best.t) + ' 前后最合适</span></div>';
+      if (best.sc.why.length) html += '<div class="wx-as-note">' + esc(best.sc.why.join(' · ')) + '</div>';
+    }
+    html += '<div class="wx-as-h2">' + (night ? '今晚逐小时' : '接下来几小时') + '</div>';
+    if (!rows.length) {
+      html += '<div class="wx-load">逐小时数据还没到 —— 它跟副图一起异步加载，' +
+        '过一会儿再点开这一页就有逐小时评分了。</div>';
+    } else {
+      html += '<div class="wx-as-list">' + rows.map(r =>
+        '<div class="wx-as-row">' + '<b>' + asHM(r.t) + '</b>' + asBar(r.sc.score, r.sc.color) +
+        '<span style="color:' + r.sc.color + '">' + r.sc.score + ' ' + r.sc.label + '</span>' +
+        '<em>云 ' + (r.cloud == null ? '--' : Math.round(r.cloud) + '%') + '</em></div>').join('') + '</div>';
+    }
+    html += '<div class="wx-as-foot">评分口径：云量 55 分 · 降水 20 · 湿度 10 · 风 10 · 月光 5。' +
+      '「天文夜」是太阳低于 -6°、天真正黑透的那一段。逐小时气象数据来自 Open-Meteo，' +
+      '月相与月光遮挡在本地推算。</div>';
+    pane.innerHTML = html;
+  }
+
+  /* ── ② 极光 / 地磁 ── */
+  function asAurora(pane, sub, c, now) {
+    const A = global.ASTRO;
+    const SW = global.API && global.API.SWPC;
+    if (sub) sub.textContent = 'NOAA 空间天气';
+    if (!A || !SW) { pane.innerHTML = '<div class="wx-load">数据层没就绪（ASTRO / API.SWPC）</div>'; return; }
+    pane.innerHTML = '<div class="wx-load">正在取 NOAA 的 Kp 指数…</div>';
+    Promise.all([
+      SW.kpNow().catch(() => null),
+      SW.kpSeries().catch(() => []),
+      SW.sunspots().catch(() => null)
+    ]).then(res => {
+      const cur = res[0], series = res[1], ssn = res[2];
+      const need = A.auroraNeedKp(c.lat);
+      const sc = A.kpScale(cur ? cur.kp : null);
+      const fut = series.filter(x => x.t.getTime() > now);
+      const peak = fut.reduce((m, x) => (x.kp > m.kp ? x : m), { kp: -1, t: null });
+      const pk = A.kpScale(peak.kp >= 0 ? peak.kp : null);
+      const latTxt = Math.abs(c.lat).toFixed(1) + '°' + (c.lat >= 0 ? 'N' : 'S');
+
+      let html = '<div class="wx-as-lead">' +
+        '<span class="wx-as-big" style="color:' + sc.color + '">' +
+        (cur && cur.kp != null ? cur.kp.toFixed(1) : '--') + '</span>' +
+        '<span class="wx-as-leadlab"><b>Kp ' + (sc.g ? sc.g + ' · ' : '') + sc.text + '</b><br>' +
+        (cur ? asHM(cur.t) + ' 实测' : '取不到实时值') + '</span></div>';
+
+      if (fut.length) {
+        html += '<div class="wx-as-h2">未来 3 天（每 3 小时一档）</div><div class="wx-as-kp">' +
+          fut.slice(0, 24).map(x => {
+            const s2 = A.kpScale(x.kp);
+            return '<i title="' + esc(asHM(x.t) + '  Kp ' + x.kp.toFixed(1) + '  ' + s2.text) +
+              '" style="height:' + Math.max(3, Math.round(x.kp / 9 * 100)) + '%;background:' + s2.color +
+              (x.kind === 'predicted' ? ';opacity:.5' : '') + '"></i>';
+          }).join('') + '</div>' +
+          '<div class="wx-as-axis"><span>现在</span><span>+1 天</span><span>+2 天</span><span>+3 天</span></div>' +
+          '<div class="wx-as-note">未来三天峰值 <b>Kp ' + (peak.kp >= 0 ? peak.kp.toFixed(1) : '--') + '</b>' +
+          '（' + pk.text + '）· 不透明＝实测/估计，半透明＝预报</div>';
+      }
+
+      html += '<div class="wx-as-h2">在你这个纬度看得到吗</div>';
+      if (need > 9) {
+        html += '<div class="wx-as-note">你现在看的是 <b>' + esc(c.name) + '（' + latTxt + '）</b>，' +
+          '按经验口径<b>即使 Kp 满格（9）也基本看不到极光</b>。要看得往北：' +
+          '漠河（53°N）约需 Kp ≥ 7、新疆北部（48°N）≥ 8、华北（44°N）≥ 9。</div>';
+      } else {
+        const ok = (peak.kp >= need) || !!(cur && cur.kp >= need);
+        html += '<div class="wx-as-note">你现在看的是 <b>' + esc(c.name) + '（' + latTxt + '）</b>，' +
+          '这一纬度大约需要 <b>Kp ≥ ' + need + '</b>。当前 ' + (cur && cur.kp != null ? cur.kp.toFixed(1) : '--') +
+          '、未来三天峰值 ' + (peak.kp >= 0 ? peak.kp.toFixed(1) : '--') + ' → <b>' +
+          (ok ? '有机会，往北走、避开城市灯光' : '暂时没戏') + '</b>。</div>';
+      }
+      html += '<div class="wx-as-foot">' +
+        (ssn && ssn.ssn != null
+          ? '太阳黑子数（' + esc(ssn.month) + ' 月均）<b>' + ssn.ssn.toFixed(1) + '</b> —— ' +
+            '黑子多说明太阳活动强，地磁暴和极光也更容易出现。<br>'
+          : '') +
+        '数据来源：NOAA SWPC（免 key、CORS 全开）。Kp 是三小时一档的地磁活动指数，' +
+        '5 以上算地磁暴，也就是 NOAA 的 G1～G5。</div>';
+      pane.innerHTML = html;
+    }).catch(e => {
+      pane.innerHTML = '<div class="wx-load">NOAA 没取到：' + esc(String((e && e.message) || e)) + '</div>';
+    });
+  }
+
+  /* ── ③ 日月（今天的事件表） ── */
+  function asMoon(pane, sub, c, now) {
+    const A = global.ASTRO;
+    if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
+    const t0 = new Date(now); t0.setHours(0, 0, 0, 0);
+    const day0 = t0.getTime(), day1 = day0 + 86400000;
+    const se = A.sunEvents(day0, day1, c.lat, c.lon);
+    const me = A.moonEvents(day0 - 6 * 3600000, day1 + 6 * 3600000, c.lat, c.lon);
+    const mp = A.moonPhase(now);
+    if (sub) sub.textContent = '今天 · ' + mp.emoji + ' ' + mp.name + ' ' + Math.round(mp.illum * 100) + '%';
+
+    const ev = (arr, kind) => arr.filter(x => x.kind === kind)[0] || null;
+    const at = (arr, kind) => { const e = ev(arr, kind); return e ? e.t : null; };
+    // 每一条都是"从一个时刻到另一个时刻"的时段；缺一头就显示 --。
+    const WIN = [
+      ['日出 → 日落', at(se, 'sunrise'), at(se, 'sunset')],
+      ['清晨黄金时刻', at(se, 'blue-end'), at(se, 'golden-end')],
+      ['清晨蓝调时刻', at(se, 'dawn'), at(se, 'blue-end')],
+      ['傍晚黄金时刻', at(se, 'golden'), at(se, 'blue')],
+      ['傍晚蓝调时刻', at(se, 'blue'), at(se, 'dark')],
+      ['天全黑（天文夜）', at(se, 'dark'), at(se, 'dawn')],
+      ['月出 → 月落', at(me, 'moonrise'), at(me, 'moonset')]
+    ];
+    let html = '<div class="wx-as-lead">' +
+      '<span class="wx-as-big">' + mp.emoji + '</span>' +
+      '<span class="wx-as-leadlab"><b>' + mp.name + ' · 照亮 ' + Math.round(mp.illum * 100) + '%</b><br>' +
+      '月龄 ' + mp.age.toFixed(1) + ' 天（朔望月 ' + A.SYNODIC.toFixed(2) + ' 天）</span></div>';
+    html += '<div class="wx-as-h2">' + esc(c.name) + ' · 今天</div><div class="wx-as-list">' +
+      WIN.map(w => {
+        // ⚠「天黑 → 天亮」是**跨午夜**的，w[2] < w[1]，直接相减会得到负数被夹成 0 分。
+        const dur = (w[1] && w[2]) ? (w[2] > w[1] ? w[2] - w[1] : w[2] - w[1] + 86400000) : null;
+        return '<div class="wx-as-row2"><b>' + w[0] + '</b><span>' +
+          (w[1] ? asHM(w[1]) : '--') + (w[2] ? ' → ' + asHM(w[2]) : '') +
+          (dur != null ? '　<i>' + asDur(dur) + '</i>' : '') + '</span></div>';
+      }).join('') + '</div>';
+    html += '<div class="wx-as-foot">全部在本地推算（astro.js，Meeus 简化式）：' +
+      '日出日落 ±1 分钟、月出月落 ±10 分钟。' +
+      '黄金时刻＝太阳高度 +6°～-4°；蓝调时刻＝-4°～-6°；天文夜＝低于 -6°。' +
+      (mp.illum > 0.7 ? '<br>⚠ 今晚月光很亮，深空天体基本被压住 —— 适合看月面和行星。' : '') +
+      '</div>';
+    pane.innerHTML = html;
+  }
+
+  /* ── ④ 流星雨 ── */
+  function asMeteor(pane, sub, c, now) {
+    const A = global.ASTRO;
+    if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
+    const list = A.nextShowers(now, 5);
+    const mpNow = A.moonPhase(now);
+    const first = list[0];
+    if (sub) {
+      sub.textContent = first ? ('下一场 ' + Math.round(first.days) + ' 天后 · ' + first.s.name) : '';
+    }
+    if (!list.length) { pane.innerHTML = '<div class="wx-load">没有算出来</div>'; return; }
+    let html = '<div class="wx-list">' + list.map(x => {
+      const s = x.s, mp = A.moonPhase(x.peak);
+      const moonPen = mp.illum > 0.7 ? '月光强（照亮 ' + Math.round(mp.illum * 100) + '%），实际数量会大打折扣'
+        : mp.illum > 0.4 ? '月光中等（' + Math.round(mp.illum * 100) + '%）'
+          : '月光弱（' + Math.round(mp.illum * 100) + '%），条件不错';
+      const d = new Date(x.peak);
+      return '<div class="wx-as-card' + (x.active ? ' on' : '') + '">' +
+        '<div class="wx-as-cardhead"><b>' + esc(s.name) + '</b>' +
+        (x.active ? '<span class="wx-as-badge">正在活动期</span>' : '') + '</div>' +
+        '<div class="wx-as-meta">极大 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日' +
+        '　·　' + (x.days < 1 ? '就在今天' : '还有 ' + Math.round(x.days) + ' 天') + '</div>' +
+        '<div class="wx-as-meta">ZHR ' + s.zhr + ' 颗/时　·　辐射点 ' + esc(s.radiant) +
+        '　·　母体 ' + esc(s.parent) + '</div>' +
+        '<div class="wx-as-meta">活动期 ' + s.from[0] + '/' + s.from[1] + ' ～ ' + s.to[0] + '/' + s.to[1] +
+        '　·　极大夜月相 ' + mp.emoji + mp.name + '：' + moonPen + '</div>' +
+        '</div>';
+    }).join('') + '</div>';
+    html += '<div class="wx-as-foot">ZHR 是"理想条件下（辐射点在正头顶、天空全黑）每小时的理论流星数"，' +
+      '实际能看到的通常只有它的三分之一到一半。看流星挑后半夜（辐射点最高），' +
+      '避开月光和城市灯光。当前月相 ' + mpNow.emoji + mpNow.name +
+      '（照亮 ' + Math.round(mpNow.illum * 100) + '%），会直接影响今晚能看到几颗。</div>';
+    pane.innerHTML = html;
   }
 
   /* 图片播放器：雷达 / 卫星 / 降水共用。

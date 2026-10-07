@@ -25,6 +25,7 @@ PATHS = [
     '/js/chart.js',
     '/js/util.js',
     '/js/indicators.js',
+    '/js/astro.js',
     '/css/app.css',
     '/vendor/echarts.min.js',
     '/',

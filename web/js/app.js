@@ -434,20 +434,27 @@
     if (v < 11) return '很强';
     return '极强';
   }
-  /** 月相。没有任何数据源直接给这个，只能自己按朔望月算：
-   *  以 2000-01-06 18:14 UTC 那次新月为基准，除以 29.530588853 天取余就是相位。
-   *  相位 0 = 新月、0.5 = 满月，八等分取名字。这是近似算法（真实朔望月长度有 ±0.3 天波动），
-   *  但对"今晚月亮圆不圆"这个问题足够了 —— 显示到"满月 98%"这个精度，不会指错一整档。 */
+  /** 月相。算法统一放在 astro.js（那里还有月出月落、太阳高度、黄金蓝调、流星雨日历），
+   *  这里只做转发 —— 同一套朔望月公式不要在两个文件里各写一遍。
+   *  astro.js 在 index.html 里排在本文件之前，正常不会缺；真缺了也只是这一格显示 --。 */
   function moonPhaseTxt(dt) {
-    const SYN = 29.530588853;
-    const ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000;
-    const days = (dt instanceof Date ? dt.getTime() : Number(dt)) / 86400000;
-    if (!isFinite(days)) return '--';
-    const p = (((days - ref) % SYN) + SYN) % SYN / SYN;
-    const names = ['新月', '蛾眉月', '上弦月', '盈凸月', '满月', '亏凸月', '下弦月', '残月'];
-    const idx = Math.floor(p * 8 + 0.5) % 8;
-    const illum = Math.round((1 - Math.cos(2 * Math.PI * p)) / 2 * 100);
-    return names[idx] + ' ' + illum + '%';
+    return (window.ASTRO && ASTRO.moonPhaseTxt) ? ASTRO.moonPhaseTxt(dt) : '--';
+  }
+
+  /** 今天的月出月落（本地 0 点起 24 小时内）。
+   *  月亮每天要晚出来约 50 分钟，一个月里总有一两天"今天不升"或者"今天不落"——
+   *  那种日子返回 --，不编一个不存在的时间出来充数。 */
+  function moonRiseSet(now) {
+    const c = S.cur;
+    if (!window.ASTRO || !c || c.lat == null || c.lon == null) return null;
+    const t0 = new Date(now == null ? Date.now() : now);
+    t0.setHours(0, 0, 0, 0);
+    const evs = ASTRO.moonEvents(t0.getTime(), t0.getTime() + 86400000, c.lat, c.lon);
+    const pick = k => {
+      const e = evs.filter(x => x.kind === k)[0];
+      return e ? U.fmtHM(new Date(e.t)) : '--';
+    };
+    return { rise: pick('moonrise'), set: pick('moonset') };
   }
   const moonTxt = moonPhaseTxt(new Date());
 
@@ -519,6 +526,14 @@
     const cloudTxt = cloudNow == null ? '--' : Math.round(cloudNow) + '% ' + cloudWord(cloudNow);
     const uvTxt = uvNow == null ? '--' : fx(uvNow, 1) + ' ' + uvWord(uvNow);
 
+    // 日出日落并成一格，空出来的那一格放今天的月出月落（用户要求）。
+    // 月出月落是自己算的 —— 上面几行都来自 Open-Meteo / 中国天气网，
+    // 只有这一格是 astro.js 本地推的（没有任何接口给月出月落，见 astro.js 顶部注释）。
+    const hm = s => (s ? String(s).slice(11, 16) : '--');
+    const sunRS = hm(om.sunrise) + '/' + hm(om.sunset);
+    const mrs = moonRiseSet();
+    const moonRS = mrs ? (mrs.rise + '/' + mrs.set) : '--/--';
+
     // 降水合并成一格：雨量和降水时数是同一件事的两面，拆成两格反而把
     // "同类放一起"的行分组撑到 21 格（4 列排不满，最后一行会落单）。
     const rainTxt = curBar ? fx(curBar.v, 1) + ' mm / ' + (curBar.rainHours || 0) + ' h' : '--';
@@ -547,10 +562,11 @@
         ['湿度', n.humidity == null ? (curBar && curBar.humAvg != null ? curBar.humAvg + '%' : '--') : n.humidity + '%', null],
         ['降水', rainTxt, null, '降水 ' + rainTxt + '（雨量 / 降水时数）']
       ],
-      // ④ 日月与日照
+      // ④ 日月与日照。日出/日落挤进一格（用户要求），省下的那格给月出/月落 ——
+      //    这两对本来就是"成对出现"的东西，各占两格会把这一组撑成 6 格、排不满一行。
       [
-        ['日出', om.sunrise ? String(om.sunrise).slice(11, 16) : '--', null],
-        ['日落', om.sunset ? String(om.sunset).slice(11, 16) : '--', null],
+        ['日出/日落', sunRS, null],
+        ['月出/月落', moonRS, null],
         ['昼长', daylightTxt, null],
         ['月相', moonTxt, null]
       ],

@@ -1029,6 +1029,50 @@
   };
   function wmoText(c) { return WMO[c] || '—'; }
 
+  /* ───────── NOAA SWPC：空间天气（地磁 / 极光） ─────────
+   * 为什么是 NOAA：免 key、`Access-Control-Allow-Origin: *`，浏览器里能直连 ——
+   * 跟当初地震页选 USGS 而不是 ceic.ac.cn 是同一个判据（后者不给 CORS 头）。
+   *   · forecast 那份**同时含 observed / estimated / predicted**，一份就够画
+   *     "过去一天 + 未来三天"，不用再拼两份；
+   *   · 1m 那份每分钟刷新，专门用来显示"现在"。
+   * 实测极光椭圆图那几个 JPG 常年返回 202 空体（不是 200），所以这一页只用 JSON。
+   *
+   * Kp 是**三小时一档**的地磁活动指数（0~9），5 以上就算地磁暴，对应 NOAA 的 G1~G5。
+   * SWPC 的 time_tag 是**不带时区的 UTC**（"2026-10-07T03:00:00"），补个 Z 再解析。 */
+  const SWPC_HOST = 'https://services.swpc.noaa.gov';
+  const swpcTime = s => {
+    const t = Date.parse(String(s).replace(' ', 'T') + 'Z');
+    return isFinite(t) ? new Date(t) : null;
+  };
+  const SWPC = {
+    /** 现在这一刻的 Kp（每分钟更新） */
+    async kpNow() {
+      const j = await getJSON(SWPC_HOST + '/json/planetary_k_index_1m.json',
+        { ttl: 120000, key: 'swpc:kp1m', timeout: 12000 });
+      const last = (j && j.length) ? j[j.length - 1] : null;
+      if (!last) return null;
+      const v = (last.estimated_kp != null) ? last.estimated_kp : last.kp_index;
+      return { t: swpcTime(last.time_tag) || new Date(), kp: v == null ? null : +v };
+    },
+    /** 过去一天 + 未来三天的 Kp 序列（每行带 observed / estimated / predicted） */
+    async kpSeries() {
+      const j = await getJSON(SWPC_HOST + '/products/noaa-planetary-k-index-forecast.json',
+        { ttl: 900000, key: 'swpc:kpf', timeout: 15000 });
+      if (!j || !j.length) return [];
+      return j.map(r => ({ t: swpcTime(r.time_tag), kp: r.kp == null ? null : +r.kp, kind: r.observed || '' }))
+        .filter(x => x.t && x.kp != null);
+    },
+    /** 太阳黑子数（月值）。25 周上行期能到 100+，这也是极光变多的背景原因。 */
+    async sunspots() {
+      const j = await getJSON(SWPC_HOST + '/json/solar-cycle/observed-solar-cycle-indices.json',
+        { ttl: 21600000, key: 'swpc:ssn', timeout: 15000 });
+      if (!j || !j.length) return null;
+      const last = j[j.length - 1];
+      // ⚠ smoothed_ssn 在当月还没算出来时是 **-1**（不是 null），别把 -1 当数据用。
+      return { month: last['time-tag'] || '', ssn: last.ssn == null ? null : +last.ssn };
+    }
+  };
+
   global.U = U;
-  global.API = { Cities, Cma, OpenMeteo, Cn, Store, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num };
+  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num };
 })(window);
