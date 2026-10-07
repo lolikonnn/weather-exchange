@@ -1108,33 +1108,90 @@
    * Open-Meteo 独占、气象局这个接口**确实没有**的：紫外线、降水概率、阵风、
    * 中/高云、露点、气溶胶、以及 560 天历史 —— 这些才由 Open-Meteo 主供。
    *
-   * 对齐方式：两边都是整点键，按 `YYYY-MM-DDTHH` 对齐，**不做插值** ——
-   * 气象局只给 3 小时一档，中间那两小时继续是 Open-Meteo 的值，
-   * 那正好就是"气象局没给的部分由 Open-Meteo 补齐"。
+   * 对齐方式：两边都是整点键，按 `YYYY-MM-DDTHH` 对齐。
    *
-   * @param target  目标对象（例 `out.hourly`；`loadCity` 里传一个临时对象，数组是同一个引用）
-   * @param timeKey target 上时间轴字段名，通常是 `'time'`
-   * @param map     `{ 目标字段: 气象局字段 }`，例 `{ temp:'temp', rh:'humidity' }`
-   * @param cmaH    `Cma.hourlySeries()` 的返回值
-   * @returns 账本 `{ cma, om }`：多少个时次用了气象局、多少继续用 Open-Meteo */
-  function overlayCma(target, timeKey, map, cmaH) {
+   * ── 中间那两小时怎么补：差值插值，不是照搬 ──
+   * 第一版是"气象局那个整点就用气象局的值，中间两小时原样留 Open-Meteo"——
+   * 结果曲线在两种来源之间来回跳，7 日分时看起来**全是锯齿**（使用者一眼就看出来了）。
+   * 现在改成 **以气象局为锚、借 Open-Meteo 的逐时形状**：
+   *   ① 先算出锚点上的差值 `d = 气象局值 − Open-Meteo值`；
+   *   ② 相邻两个锚点之间，把这个差值**线性铺开**加到 Open-Meteo 的逐时值上；
+   *   ③ 锚点本身仍然**严格等于气象局的值**。
+   * 于是曲线逐位经过气象局报的那 8 个点、中间是 Open-Meteo 的平滑形状，
+   * 且锚点上不会再出现台阶 —— **"气象局为主"没有打折，锯齿也没了**。
+   *
+   * 两个例外（`holdKeys`）：**降水**和**天气码**不插值。
+   *   · `weather` 是**分类码**（0=晴、61=雨），插出个 30.5 毫无意义；
+   *   · 降水本来就多为 0，按差值插可能插出负数。
+   * 这两个字段只在锚点上覆盖、中间保持 Open-Meteo 原值 —— 阶梯状反而更诚实。
+   *
+   * @param target   目标对象（例 `out.hourly`；`loadCity` 里传一个临时对象，数组是同一个引用）
+   * @param timeKey  target 上时间轴字段名，通常是 `'time'`
+   * @param map      `{ 目标字段: 气象局字段 }`，例 `{ temp:'temp', rh:'humidity' }`
+   * @param cmaH     `Cma.hourlySeries()` 的返回值
+   * @param holdKeys 不参与差值插值的字段名数组（只覆盖锚点）
+   * @returns 账本 `{ cma, om, interp }`：锚点数 / 其余时次数 / 插值改写过的格子数 */
+  /* 插值之后的收口：湿度/云量别超出 0~100，风速/能见度/降水别变负。
+     `[min, max]`，max 为 null 表示只卡下界。 */
+  const WC_LIMIT = {
+    humidity: [0, 100], cloud: [0, 100], cloudLow: [0, 100], cloudHigh: [0, 100],
+    wind: [0, null], precip: [0, null], vis: [0, null]
+  };
+
+  function overlayCma(target, timeKey, map, cmaH, holdKeys) {
     const t = target[timeKey] || [];
+    const hold = {};
+    (holdKeys || []).forEach(k => { hold[k] = 1; });
     const at = {};
     for (let i = 0; i < t.length; i++) at[String(t[i]).replace(' ', 'T').slice(0, 13)] = i;
-    let hit = 0;
+
+    // 气象局的锚点 = 落在这条时间轴上的那些时次，按时间排好
+    const anchors = [];
     for (let k = 0; k < cmaH.time.length; k++) {
       const i = at[String(cmaH.time[k]).slice(0, 13)];
-      if (i == null) continue;
-      hit++;
-      Object.keys(map).forEach(tk => {
-        const src = cmaH[map[tk]];
-        const v = src ? src[k] : null;
-        if (v == null) return;                    // 气象局这个时次这个字段没给 → 留着 Open-Meteo 的
-        if (!target[tk]) target[tk] = new Array(t.length).fill(null);
-        target[tk][i] = v;
-      });
+      if (i != null) anchors.push({ i: i, k: k });
     }
-    return { cma: hit, om: Math.max(0, t.length - hit) };
+    if (!anchors.length) return { cma: 0, om: t.length, interp: 0 };
+    anchors.sort((a, b) => a.i - b.i);
+
+    let interp = 0;
+    Object.keys(map).forEach(tk => {
+      const src = cmaH[map[tk]];
+      if (!src) return;
+      const arr = target[tk] || (target[tk] = new Array(t.length).fill(null));
+      // ⚠ 差值必须在**动任何一格之前**全部算完：算 d[n] 时读的必须是 Open-Meteo 原值，
+      // 而下面那段循环会改写锚点之间的格子。
+      const d = anchors.map(a => (src[a.k] == null ? null
+        : (+src[a.k]) - (arr[a.i] == null ? +src[a.k] : +arr[a.i])));
+      if (!hold[tk]) {
+        for (let n = 0; n + 1 < anchors.length; n++) {
+          const a = anchors[n], b = anchors[n + 1];
+          if (d[n] == null || d[n + 1] == null) continue;
+          const span = b.i - a.i;
+          if (span <= 1) continue;
+          for (let i = a.i + 1; i < b.i; i++) {
+            if (arr[i] == null) continue;
+            const w = (i - a.i) / span;                      // 0→1 线性铺开
+            // 顺手收到两位小数：插值出来的是 15.000000000000002 这种，
+            // 渲染看不出来，但进了快照/localStorage 就是一堆噪声字符。
+            arr[i] = Math.round(((+arr[i]) + d[n] + (d[n + 1] - d[n]) * w) * 100) / 100;
+            interp++;
+          }
+        }
+      }
+      // 锚点严格落在气象局的值上。**放在最后写** —— 前面算差值时用的还是原值。
+      anchors.forEach(a => { if (src[a.k] != null) arr[a.i] = +src[a.k]; });
+      const lim = WC_LIMIT[tk];
+      if (lim) {
+        for (let i = 0; i < arr.length; i++) {
+          if (arr[i] == null) continue;
+          if (lim[0] != null && arr[i] < lim[0]) arr[i] = lim[0];
+          if (lim[1] != null && arr[i] > lim[1]) arr[i] = lim[1];
+          arr[i] = Math.round(arr[i] * 100) / 100;
+        }
+      }
+    });
+    return { cma: anchors.length, om: Math.max(0, t.length - anchors.length), interp: interp };
   }
 
   /* ═══════════════ 6. 统一取数入口 ═══════════════ */
@@ -1216,8 +1273,10 @@
             'time',
             { temp: 'temp', humidity: 'humidity', wind: 'wind', precip: 'precip',
               cloud: 'cloud', cloudLow: 'cloudLow', wcode: 'wcode', vis: 'vis' },
-            cmaH)
-        : { cma: 0, om: 0 };
+            cmaH,
+            // 降水与天气码不插值（分类码/多为 0，插出来是假的），只覆盖锚点
+            ['precip', 'wcode'])
+        : { cma: 0, om: 0, interp: 0 };
 
       const daily = toDailyBars(times, temps, precs, { humidity: humids, wind: winds, wcode: wcodes });
 

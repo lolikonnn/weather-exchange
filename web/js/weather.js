@@ -202,7 +202,9 @@
             out.hourlySrc = API.overlayCma(out.hourly, 'time', {
               temp: 'temp', precip: 'precip', wind: 'wind', windDir: 'wdirDeg',
               cloud: 'cloud', cloudLow: 'cloudLow', rh: 'humidity', vis: 'vis', wcode: 'wcode'
-            }, cma);
+            }, cma,
+            // 降水与天气码不插值（分类码 / 多为 0，插出来是假的），只覆盖锚点
+            ['precip', 'wcode']);
           }
         } catch (e) {
           // ⚠ 这个 catch 曾经把 `cmaH is not defined` 这种**引用错误**一起吞掉，

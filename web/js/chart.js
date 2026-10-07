@@ -367,7 +367,13 @@
         //     · **副图悬停 → 映射到主图第 0 系列（空）→ 主图窗格不弹**（反方向失效）。
         //   它靠 `z: 1` 压在气温/均温下面，所以挪到数组末尾不影响画面层级。
         {
+          // smooth: 0.25 —— 温和圆角，**不是** `true`（那等于 0.5，会过冲、
+          // 让曲线跑到轴刻度之外，看着比真实数据还夸张）。
+          // 为什么现在要开：7 日分时是**逐小时**的真数据（约 168 个点挤在 1100px 里），
+          // 昼夜循环本身就长得像锯齿；不开平滑的话每个小时都是一个硬折角，
+          // 看上去比实际天气"尖锐"得多。0.25 只把折角磨圆，不改变数据。
           name: '气温', type: 'line', data: ys, showSymbol: false, symbol: 'circle', symbolSize: 5,
+          smooth: 0.25,
           lineStyle: { width: 1.5, color: C.up }, z: 5,
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -381,7 +387,8 @@
           } : undefined
         },
         {
-          name: '均温', type: 'line', data: avg, showSymbol: false,
+          // 均温跟气温用同一档平滑，否则两根线一圆一尖、看着像两条不同来源的数据
+          name: '均温', type: 'line', data: avg, showSymbol: false, smooth: 0.25,
           lineStyle: { width: 1, color: C.avg }, z: 4
         },
         // 叠加线：挂在第 3 根 Y 轴上（右轴再往外 offset 44px），不跟百分比轴抢刻度
