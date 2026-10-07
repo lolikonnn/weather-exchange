@@ -616,6 +616,28 @@
     return (window.ASTRO && ASTRO.moonPhaseTxt) ? ASTRO.moonPhaseTxt(dt) : '--';
   }
 
+  /** 今天的日出日落（本地 0 点起 24 小时内）—— 只在 Open-Meteo 那份拿不到时用。
+   *
+   *  为什么要有这个兜底：Open-Meteo 额度用尽时，行情头的「日出/日落」会变成 `--/--`，
+   *  可这一格**根本不需要联网** —— astro.js 按经纬度和日期就能推（天文页一直用的是它）。
+   *  使用者的原话："有些不是可以在天文功能页里看到吗，为什么不补上呢"。
+   *  返回 null = 算不出来（缺经纬度或 astro.js 不在），调用方就退回 Open-Meteo 那份。 */
+  function sunRiseSet(now) {
+    const c = S.cur;
+    if (!window.ASTRO || !c || c.lat == null || c.lon == null) return null;
+    try {
+      const t0 = new Date(now == null ? Date.now() : now);
+      t0.setHours(0, 0, 0, 0);
+      const evs = ASTRO.sunEvents(t0.getTime(), t0.getTime() + 86400000, c.lat, c.lon);
+      const pick = k => {
+        const e = evs.filter(x => x.kind === k)[0];
+        return e ? U.fmtHM(new Date(e.t)) : '--';
+      };
+      const rise = pick('sunrise'), set = pick('sunset');
+      return (rise === '--' && set === '--') ? null : (rise + '/' + set);
+    } catch (e) { return null; }
+  }
+
   /** 今天的月出月落（本地 0 点起 24 小时内）。
    *  月亮每天要晚出来约 50 分钟，一个月里总有一两天"今天不升"或者"今天不落"——
    *  那种日子返回 --，不编一个不存在的时间出来充数。 */
@@ -710,16 +732,25 @@
     const uvTxt = uvNow == null ? '--' : fx(uvNow, 1) + ' ' + uvWord(uvNow);
 
     // 日出日落并成一格，空出来的那一格放今天的月出月落（用户要求）。
-    // 月出月落是自己算的 —— 上面几行都来自 Open-Meteo / 中国天气网，
-    // 只有这一格是 astro.js 本地推的（没有任何接口给月出月落，见 astro.js 顶部注释）。
+    // ⚠ 这两格**都不能只挂在 Open-Meteo 上**：astro.js 本地就能推（天文页用的就是它）。
+    //   以前日出日落只读 `om.sunrise/om.sunset`，Open-Meteo 一断就成了 `--/--` ——
+    //   而屏上明明算得出来。使用者原话："有些不是可以在天文功能页里看到吗，为什么不补上呢"。
     const hm = s => (s ? String(s).slice(11, 16) : '--');
-    const sunRS = hm(om.sunrise) + '/' + hm(om.sunset);
+    // ⚠ 这里**不能**写 `sunRiseSet(om)` —— 参数是"基准时间"，om 是个对象，
+    //   `new Date(对象)` 是 Invalid Date，一路 NaN 到 sunEvents 算不出任何事件（第一版就栽在这）。
+    const sunRS = sunRiseSet() || (hm(om.sunrise) + '/' + hm(om.sunset));
     const mrs = moonRiseSet();
     const moonRS = mrs ? (mrs.rise + '/' + mrs.set) : '--/--';
 
     // 降水合并成一格：雨量和降水时数是同一件事的两面，拆成两格反而把
     // "同类放一起"的行分组撑到 21 格（4 列排不满，最后一行会落单）。
-    const rainTxt = curBar ? fx(curBar.v, 1) + ' mm / ' + (curBar.rainHours || 0) + ' h' : '--';
+    // Open-Meteo 那路没有日K时，退回**气象局实况的降水量**（`now.precipitation`）——
+    // 那格本来就有值，不该因为曲线断了就跟着变 `--`。
+    const rainTxt = curBar ? fx(curBar.v, 1) + ' mm / ' + (curBar.rainHours || 0) + ' h'
+      : (n.precip != null ? fx(n.precip, 1) + ' mm' : '--');
+    const rainTip = curBar ? ('降水 ' + rainTxt + '（雨量 / 降水时数）')
+      : (n.precip != null ? '降水 ' + rainTxt + '（中国气象局实况，只有瞬时降水量、没有降水时数）'
+        : '降水 --');
 
     // 统计格按"同类"分组 —— 用户反馈："行情头里同类型的数据是不是放一起更好啊"。
     // 每组尽量凑满 4 格：4 列栅格下每组正好占一行，从左往右扫过去就是一类；组间用一条横线隔开。
@@ -743,7 +774,7 @@
         ['云量', cloudTxt, null],
         ['紫外线', uvTxt, null],
         ['湿度', n.humidity == null ? (curBar && curBar.humAvg != null ? curBar.humAvg + '%' : '--') : n.humidity + '%', null],
-        ['降水', rainTxt, null, '降水 ' + rainTxt + '（雨量 / 降水时数）']
+        ['降水', rainTxt, null, rainTip]
       ],
       // ④ 日月与日照。日出/日落挤进一格（用户要求），省下的那格给月出/月落 ——
       //    这两对本来就是"成对出现"的东西，各占两格会把这一组撑成 6 格、排不满一行。
@@ -827,7 +858,15 @@
     const q = quoteOf(S.cur.id);
     const cur = q.temp;
     const src = list[0].src;
-    box.appendChild(el('div', { class: 'ob-src', text: src === 'cma' ? '中国气象局预报 · 未来 5 日' : 'Open-Meteo 预报 · 未来 5 日（官方源不可用）' }));
+    /* 盘口这块同样是**传播**气象局的预报（未来 5 日），所以一样要注明台站与发布时间 ——
+       《气象预报发布与传播管理办法》第九条要求"注明气象预报发布的气象台名称和发布时间"，
+       第十四条第三项就是这条的罚则。发布时间取气象局逐小时那份带的 `publishTime`
+       （同一次发布的预报）。 */
+    const pubTxt = (S.data && S.data.cmaHourly && S.data.cmaHourly.publishTime)
+      ? ' · 台站 ' + (S.cur.cma || '—') + ' · 发布 ' +
+        String(S.data.cmaHourly.publishTime).replace(/\//g, '-').slice(5, 16)
+      : '';
+    box.appendChild(el('div', { class: 'ob-src', text: (src === 'cma' ? '中国气象局预报 · 未来 5 日' : 'Open-Meteo 预报 · 未来 5 日（官方源不可用）') + (src === 'cma' ? pubTxt : '') }));
     // 排布仍照股票盘口的习惯（上高下低、单调排列），但标签换成天气话：
     // 原来的"卖五/买一"对不炒股的人等于天书。
     const md = s => String(s || '').slice(5);   // 'YYYY-MM-DD' → 'MM-DD'
@@ -1078,7 +1117,18 @@
         if (p === 'trend' || p === '7day') renderVolSub(pts);
         else Chart.renderSub({ indName: 'vol', bars: d.daily, ind: d.indicators, metric: S.metric, view: 90, period: p });
       }
-      $('#chartHint').textContent = '昨收 ' + (d.base == null ? '--' : fx(d.base, 1)) + ' ℃　最新 ' + (qp.temp == null ? '--' : fx(qp.temp, 1)) + ' ℃　逐时点 ' + pts.length;
+      /* 图旁边这行小字是**合规位置**：
+         《气象预报发布与传播管理办法》第九条要求传播气象预报时"注明气象预报发布的**气象台名称和发布时间**"，
+         第十四条第三项就是这事的罚则。保底曲线又是把官方逐 3 小时插值放大的，
+         更要说清"这条线是官方发布值的平滑连线示意、不是官方逐时预报"（同条"不得自行更改内容和结论"）。 */
+      const pub = (d.cmaHourly && d.cmaHourly.publishTime)
+        ? ' · 气象局发布 ' + String(d.cmaHourly.publishTime).replace(/\//g, '-').slice(5, 16) : '';
+      const stn = S.cur && S.cur.cma ? ' · 台站 ' + S.cur.cma : '';
+      $('#chartHint').textContent = '昨收 ' + (d.base == null ? '--' : fx(d.base, 1)) + ' ℃　最新 ' +
+        (qp.temp == null ? '--' : fx(qp.temp, 1)) + ' ℃　逐时点 ' + pts.length +
+        (d.cmaCurveOnly
+          ? '　⚠ 曲线＝中国气象局逐 3 小时发布值的平滑连线示意，非官方逐时预报' + stn + pub
+          : '');
     } else {
       const s = seriesFor(p);
       if (!s) {

@@ -303,6 +303,14 @@
           const w = S.hours ? S.hours[i] : null;
           let html = '<div style="font-weight:700;color:#e9edf4">' + String(t).replace('T', ' ').slice(0, 16) + ' ' + (w ? w : '') + '</div>';
           html += row('气温', fx(p, 1) + ' ℃', U.trendColor(chg));
+          /* ⚠ 「官方发布值」与「插值示意」必须在光标里分清。
+           * 保底曲线（Open-Meteo 额度用尽时拿气象局逐 3 小时插出来的那条）里只有锚点那几格
+           * 是气象台发布的原值，其余是我们插出来的数 —— 《气象预报发布与传播管理办法》第九条
+           * 要求传播时"不得自行更改气象预报的内容和结论"，所以插值点**必须自报家门**，
+           * 不能让屏幕上这个数字看起来跟官方发布的一样权威。`p.off` 由 api.js 打（1=官方锚点，0=插值）。 */
+          const of = pts[i] && pts[i].off;
+          if (of === 0) html += row('来源', '插值示意（非官方逐时值）', '#ffb74d');
+          else if (of === 1) html += row('来源', '气象局逐 3 小时发布值', C.avg);
           if (base != null) html += row('较昨收', sgn(chg, 1) + ' ℃  ' + sgn(pct, 2) + '%', U.trendColor(chg));
           html += row('均温', fx(avg[i], 1) + ' ℃', C.avg);
           if (S.precips) html += row('降水', fx(S.precips[i], 1) + ' mm', '#4fc3f7');

@@ -395,8 +395,19 @@
         });
       });
       if (!time.length) return null;
+      /* `publishTime` = 气象局发布这份预报的时刻。
+       * 为什么必须带出去：《气象预报发布与传播管理办法》第九条要求**传播**气象预报时
+       * "注明气象预报发布的气象台名称和发布时间"（第十四条第三项就是这条的罚则）。
+       * 保底曲线是把这份预报插值放大的，更得把台站与发布时间摆在旁边。 */
+      let publishTime = '';
+      for (let i = 0; i < days.length && !publishTime; i++) {
+        const lst = days[i] && days[i].list;
+        for (let j = 0; j < (lst ? lst.length : 0); j++) {
+          if (lst[j] && lst[j].publishTime) { publishTime = String(lst[j].publishTime); break; }
+        }
+      }
       return {
-        src: 'cma', time: time,
+        src: 'cma', time: time, publishTime: publishTime,
         temp: temp, humidity: humidity, wind: wind, wdir: wdir, wdirDeg: wdirDeg,
         precip: precip, cloud: cloud, cloudLow: cloudLow, wcode: wcode,
         vis: vis, pressure: pressure
@@ -1297,6 +1308,19 @@
       const cmaCurve = (hist.time.length + recent.time.length) === 0 && cmaH
         ? cmaHourlyCurve(cmaH) : null;
 
+      /* 给保底曲线的每个点打上「是不是气象局的官方锚点」。
+       * 为什么：《气象预报发布与传播管理办法》第九条要求传播时不得自行更改预报内容与结论。
+       * 插值出来的中间值**是气象台没发过的数**，所以：
+       *   · 界面要说明这条线是"官方点的平滑连线示意"；
+       *   · 十字光标停在插值点上时，必须标明它是插值、不是官方值 ——
+       *     否则屏幕上那个数字看起来跟气象台发布的一样权威，那才是真的踩线。 */
+      const anchorSet = {};
+      if (cmaH && cmaH.time) for (let i = 0; i < cmaH.time.length; i++) anchorSet[String(cmaH.time[i])] = 1;
+      const markCurve = (pts) => {
+        if (!cmaCurve || !pts || !pts.length) return pts;
+        return pts.map(x => Object.assign({}, x, { off: anchorSet[String(x.t)] ? 1 : 0 }));
+      };
+
       // 湿度/风速/天气码只有近期 92 天，补齐到与 times 等长（前段补 null）
       const off = hist.time.length;
       const padTo = (arr) => {
@@ -1400,7 +1424,7 @@
       // ⚠ 保底曲线是从"下一个 3 小时槽"开始的（今晚 23:00 这种），按**当天**截只会剩一个孤点，
       //   所以这里取**从它开始往后的 24 小时** —— 屏幕上要看的是一条线，不是一个点。
       const intraday = dayIdx >= 0 ? toHourlyPoints(times, temps, precs, dayIdx, 1)
-        : (cmaCurve ? toHourlyPoints(cmaCurve.time, cmaCurve.temp, cmaCurve.precip, 0, 99).slice(0, 24) : []);
+        : markCurve(cmaCurve ? toHourlyPoints(cmaCurve.time, cmaCurve.temp, cmaCurve.precip, 0, 99).slice(0, 24) : []);
 
       // 7 日分时：**昨天 → 未来第五天**（共 7 天）。
       // 原来取的是"今天往前数 5 天"，全是已经发生过的历史，而天气预报最该看的
@@ -1414,7 +1438,7 @@
       const d7idx = d7start ? times.findIndex(t => String(t).slice(0, 10) === d7start) : -1;
       // 同样退回保底曲线：7 日视图要的是"今天往后"，气象局的 3 小时序列正好覆盖未来 7 天
       const seven = d7idx >= 0 ? toHourlyPoints(times, temps, precs, d7idx, 7)
-        : (cmaCurve ? toHourlyPoints(cmaCurve.time, cmaCurve.temp, cmaCurve.precip, 0, 7) : []);
+        : markCurve(cmaCurve ? toHourlyPoints(cmaCurve.time, cmaCurve.temp, cmaCurve.precip, 0, 7) : []);
 
       // official / cnFcst / calDaily 已经在上面那一批并发请求里一起取回来了
 
