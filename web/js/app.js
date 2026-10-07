@@ -48,7 +48,16 @@
   /* ═══════════ 行情计算 ═══════════ */
   function quoteOf(id) {
     const q = S.quotes[id], b = S.briefs[id];
-    const temp = (q && q.temp != null) ? q.temp : (b ? b.now : null);
+    /* 第三个来源：当前城市详情里那份实况（`S.data.now`）。
+       它不是冗余。`S.briefs` 的两个来源里，Open-Meteo brief 会带 now，而 **`Cn.brief`
+       （气象局日历兜底）是故意把 now 留成 null 的**（api.js 里那行 `now: null`）；轮询
+       （`S.quotes`）以前又只覆盖自选，于是"不在自选里的城市 + Open-Meteo 当天不可用"
+       这一格就成了灰 `--` —— 而同一屏统计格里的 体感/湿度/气压 却是有值的（使用者报的成都）。
+       同源的 `d.now` 就在手上，没理由不兜这一层。 */
+    const dn = (S.cur && S.cur.id === id && S.data) ? S.data.now : null;
+    const temp = (q && q.temp != null) ? q.temp
+      : (b && b.now != null) ? b.now
+        : (dn && dn.temp != null) ? dn.temp : null;
     const prev = b ? b.prevClose : null;
     const chg = (temp != null && prev != null) ? temp - prev : null;
     // 涨幅的分母必须走绝对温标 —— 摄氏 0℃ 以下整个符号会翻转，见 U.pctOf 的注释
@@ -1378,6 +1387,7 @@
     // 以前这里还要并上「热门前 16 城」。热门城市那块删掉之后，
     // 就不再为没人看的城市去预热行情了 —— 省下的正是每次刷新的那十几个请求。
     const ids = S.watch.slice();
+    if (S.cur) ids.push(S.cur.id);        // ★ 正在看的这个城市必须有报价
     if (S.geo) ids.push(LOC_ID);          // 当前所在地也要有报价
     return Array.from(new Set(ids));
   }
@@ -1418,6 +1428,26 @@
     const cities = ids.map(i => API.Cities.get(i)).filter(Boolean);
     const qs = await API.Store.quotes(cities, 6);
     Object.assign(S.quotes, qs);
+
+    /* ★ 把轮询拿到的实况写回详情页那一份。
+       实况标签（「中国气象局实况 23:30」）和统计格里的 体感·湿度·气压·风速 读的都是
+       `d.now`，而它**只在 loadCity 那一刻取过一次**；列表轮询每轮其实都把同一份更新的
+       实况取回来了，却没人写回去 —— 于是「行情在动、实况时间戳原地不动」：手机上刚
+       打开是 23:30，电脑上开了两小时还写着 22:00（使用者正是拿这两个数对出来的）。
+       只认**更新**的那一份，免得把刚 loadCity 到的新数据覆盖成旧的。
+       （time 有两种格式：气象局 "2026/10/07 23:30"、Open-Meteo "2026-10-07T23:30"，
+        所以两种分隔符都得认。） */
+    const obsStamp = t => {
+      const m = /^(\d{4})[-/](\d{2})[-/](\d{2})[ T](\d{2}):(\d{2})/.exec(String(t || ''));
+      return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() : NaN;
+    };
+    if (S.cur && S.data) {
+      const fresh = qs[S.cur.id];
+      if (fresh && fresh.temp != null) {
+        const tNew = obsStamp(fresh.time), tOld = obsStamp(S.data.now && S.data.now.time);
+        if (isFinite(tNew) ? (tNew > tOld || !isFinite(tOld)) : !isFinite(tOld)) S.data.now = fresh;
+      }
+    }
 
     // 昨收 / 迷你走势（Open-Meteo brief）：只有收藏 + 当前所在地。
     //
