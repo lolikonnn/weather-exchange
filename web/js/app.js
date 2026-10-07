@@ -925,6 +925,15 @@
     $('#statusSrc').textContent = srcs.join(' + ') || '—';
   }
 
+  /** 时间戳 → "刚刚 / 12 分钟前 / 3 小时前 / 2 天前"。给"当前显示的是什么时候的数据"用。 */
+  function agoTxt(t) {
+    const s = Math.max(0, Math.round((Date.now() - (t || 0)) / 1000));
+    if (s < 90) return '刚刚';
+    if (s < 3600) return Math.round(s / 60) + ' 分钟前';
+    if (s < 86400) return Math.round(s / 3600) + ' 小时前';
+    return Math.round(s / 86400) + ' 天前';
+  }
+
   /* ═══════════ 选中城市 ═══════════ */
   async function selectCity(id) {
     const c = API.Cities.get(id);
@@ -942,8 +951,35 @@
     renderQStar();
     Chart.showLoading('正在拉取 ' + c.name + ' 行情…');
     $('#statusLeft').textContent = '加载 ' + c.name + ' …';
+
+    /* ── 先把上次打开这座城市时的那份**原样显示出来** ──
+     * 手机天气软件就是这个体感：进去先看到上次的情报，停一会儿自己更新成最新的。
+     * 冷启动要并发拉六份数据（历史 560 天、近 92 天 + 未来 16 天、实况、预报、
+     * 官方快照、官方月度日历），手机上一次就是好几秒；而这里面**绝大部分根本不会变** ——
+     * 昨天的日K、上个月的历史、上周的逐小时，跟刚才打开时一模一样。
+     * 这一步**不 await**：先把画面填上，网络照常在后面跑。 */
+    const snap = API.Store.peekCity ? API.Store.peekCity(c) : null;
+    if (snap && snap.out) {
+      snap.out.city = c;                     // 用刚查出来的城市对象，别拿快照里那份旧的
+      S.data = snap.out;
+      S.lastFullAt = snap.at || 0;           // 如实记成"手上这份是那个时刻的"
+      Chart.hideLoading();
+      renderQuoteHead(); renderOrderbook(); renderTape(); renderChart();
+      renderStatus();
+      $('#statusLeft').textContent = '正在更新 ' + c.name + ' …（当前显示 ' + agoTxt(snap.at) + '的数据）';
+    }
+
     try {
-      const d = await API.Store.loadCity(c, (m) => { $('#statusLeft').textContent = m; Chart.showLoading(m); });
+      const d = await API.Store.loadCity(c, (m) => {
+        // 已经显示旧数据时，状态栏要**一直**说清楚"你看的是什么时候的数据"。
+        // 直接写 m 的话，那句提示只活一个 tick —— loadCity 第一步就把它覆盖成"正在拉取…"了，
+        // 用户根本来不及看见自己看的是旧数据。
+        $('#statusLeft').textContent = snap
+          ? '正在更新 ' + c.name + ' …（当前显示 ' + agoTxt(snap.at) + '的数据）'
+          : m;
+        // 已经在显示旧数据了，就别再拿加载遮罩把它盖住 —— 那正是要避免的"进去先看一片空"
+        if (!snap) Chart.showLoading(m);
+      });
       S.data = d;
       S.lastFullAt = Date.now();
       if (!S.briefs[id] || !S.briefs[id].prevClose) {

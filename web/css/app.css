@@ -878,7 +878,20 @@ body{
   .wxbtn{height:24px;padding:0 8px;font-size:11.5px}
   .wx-bar-hint{display:none}
   .wx-panel,.wx-panel-wide{width:100%;max-width:100%;height:100%;border-radius:0}
-  .wx-sub{display:none}
+  /* 竖屏**不再把 .wx-sub 藏起来**。它装的正是"这一屏在看什么"：雷达用的是哪一站、
+     离你多少公里、播放到几点；天文页是"天文夜 18:14→05:49 · 残月 17%"。
+     当初藏它只是为了省抽屉头部那一行高度，代价是用户只剩一个光秃秃的标题。
+     现在改成：标题和 ✕ 占第一行，说明文字换到第二行、占满整行（太长就折行）。
+     ⚠ 只作用于 .wx-panel（七个天气功能页）—— 城市列表和术语表那两个抽屉的头部
+     里放的是搜索框，不能跟着换行。
+     用 order:3 是把说明排到最后：光靠 flex-wrap 的话，flex-basis:100% 的说明
+     会把后面的 ✕ 挤到第三行去。 */
+  .wx-panel .drawer-head{flex-wrap:wrap;height:auto;row-gap:3px;padding:7px 10px}
+  .wx-panel .drawer-head .mini{margin-left:auto}
+  .wx-panel .wx-sub{
+    display:block;order:3;flex:1 1 100%;max-width:100%;margin-left:0;
+    white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;
+  }
   .wx-pbar{flex-wrap:wrap;row-gap:6px}
   .wx-pt{margin-left:0}
   /* 竖屏下 .wx-pbar 会换行，那就让搜索框**独占一行**、把宽度用起来 ——

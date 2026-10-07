@@ -885,32 +885,131 @@
     return out;
   }
 
+  /* ───────── 城市快照：跨会话的持久缓存 ─────────
+   * 为什么要有：一次冷启动要拉六份数据（历史 560 天、近 92 天 + 未来 16 天、实况、
+   * 预报、官方快照、官方月度日历），手机上一次就是好几秒。可这里面**绝大部分根本不会变** ——
+   * 昨天的日K、上个月的历史、甚至上周的逐小时，跟刚才打开时一模一样。
+   * 所以先把上次那份**原样渲染出来**，同时照常去拉最新的，回来再替换一遍。
+   * 这就是手机天气软件那个体感："进去先看到上次的情报，停一会儿自己更新成最新的"。
+   *
+   * 存哪儿：localStorage。key 里带**结构版本号**，`out` 的形状一改就把版本 +1，
+   * 旧的一律不认 —— 免得读出一份缺字段的旧结构，在渲染里炸出一堆 undefined。
+   * 存多少：只留最近 CX_KEEP 座城市（一份 200~400 KB，localStorage 一共才 5 MB）。
+   */
+  const CX_VER = 1, CX_KEEP = 2, CX_MAX_AGE = 30 * 86400000;
+  const CX_HOURS = 2800;
+  const cxKey = id => 'cx' + CX_VER + '.' + id;
+  const cxIndex = () => storeGet('cx.idx', null) || [];
+
+  /** 派生数据**一律不存**：`indicators` / `week` / `month` 全都能由 `daily` 现算，
+   *  而它们加起来 **524 KB**，占了整份快照的 61%（实测：indicators 221 + week 154 + month 149）。
+   *  读回来的时候现算一遍，既省了 2/3 的空间，也顺带保证"指标"和"日K"永远是**同一版公式**
+   *  算出来的 —— 不会出现"存的时候是老公式、读回来还没重算"这种鬼故事。 */
+  const CX_DERIVED = ['indicators', 'week', 'month'];
+
+  /** 存之前瘦身：① 扔掉派生数据；② 裁掉逐小时的历史长尾。
+   *  为什么要裁逐小时：它是 **560 天 × 24 小时 × 12 条平行数组**，整份 JSON 实测 1622 KB；
+   *  localStorage 一共才 5 MB，而 `setItem` 是**同步**的 —— 手机上一次写 1.6 MB 会明显卡一下。
+   *  裁掉安全吗：日K 是**另外单独存的**（`daily` 里每天还自带 `hours` 数组），
+   *  真正会去翻 `hourly` 的只有三处，而且全都只看"最近"：
+   *    · `renderTape` 从末尾往前数 60 行；
+   *    · `hourIndexAt` 找"现在"是哪个时次；
+   *    · 天文页取今晚 18:00 → 明晨 06:00 那一窗。
+   *  留 2800 小时（≈116 天）把最近 92 天 + 未来 16 日预报全包住，够用。 */
+  function cxSlim(out) {
+    const copy = {};
+    Object.keys(out).forEach(k => { if (CX_DERIVED.indexOf(k) < 0) copy[k] = out[k]; });
+    const h = out.hourly;
+    if (h && h.time && h.time.length > CX_HOURS) {
+      const cut = h.time.length - CX_HOURS;
+      const slim = {};
+      Object.keys(h).forEach(k => {
+        const v = h[k];
+        slim[k] = Array.isArray(v) ? v.slice(cut) : v;   // 平行数组必须一起裁，否则下标全错位
+      });
+      copy.hourly = slim;
+      copy.cxCut = cut;                                  // 记一笔裁了多少，方便排查
+    }
+    return copy;
+  }
+
+  function cxSave(out) {
+    if (!out || !out.city || !out.city.id) return;
+    if (!out.daily || !out.daily.length) return;          // 空壳不存，否则下次开出一片空白
+    const id = out.city.id;
+    const rec = { at: Date.now(), out: cxSlim(out) };
+    try { storeSet(cxKey(id), rec); }
+    catch (e) {
+      // 配额爆了：先把别的几份清掉再试一次；还写不进去就放弃 —— 缓存失败绝不能影响主流程
+      try { cxIndex().forEach(o => { if (o !== id) storeSet(cxKey(o), null); }); storeSet(cxKey(id), rec); }
+      catch (e2) { }
+    }
+    const idx = cxIndex().filter(x => x !== id);
+    idx.unshift(id);
+    idx.slice(CX_KEEP).forEach(old => storeSet(cxKey(old), null));
+    storeSet('cx.idx', idx.slice(0, CX_KEEP));
+  }
+  /** 读上次那份。**不检查有效期到秒**，只要没超过一个月就给 —— 反正马上会去拉新的。
+   *  派生数据（indicators / week / month）存的时候扔掉了，这里现算回来：
+   *  它们本来就是 daily 的函数，算一遍几十毫秒，比存 524 KB 划算得多。 */
+  function cxPeek(city) {
+    if (!city || !city.id) return null;
+    const rec = storeGet(cxKey(city.id), null);
+    if (!rec || !rec.out || !rec.out.daily || !rec.out.daily.length) return null;
+    if (Date.now() - (rec.at || 0) > CX_MAX_AGE) return null;
+    const out = rec.out;
+    try {
+      if (!out.indicators) out.indicators = IND.computeAll(out.daily);
+      if (!out.week) out.week = IND.aggregate(out.daily, 'week');
+      if (!out.month) out.month = IND.aggregate(out.daily, 'month');
+    } catch (e) { return null; }        // 重算失败就当没有快照，走正常加载
+    return rec;
+  }
+
   /* ═══════════════ 6. 统一取数入口 ═══════════════ */
   const Store = {
+    /** 上次打开这座城市时看到的整份行情（可能为 null）。给 app.js 做"先显示旧的"。 */
+    peekCity(city) { return cxPeek(city); },
+    /** 手动丢缓存（调试/排错用） */
+    dropCity(city) { if (city && city.id) storeSet(cxKey(city.id), null); },
+
     /** 一次性拉齐某城市的全部分析数据 */
     async loadCity(city, onStep) {
       const step = onStep || function () { };
       step('连接中国气象局…');
-      const [now0, fcst] = await Promise.all([Cma.now(city), Cma.forecast(city)]);
+      /* ── 六件事一次性全发出去 ──
+       * 它们之间**没有任何依赖**，原来却是一条 `await` 接一条的瀑布：手机上一次冷启动
+       * 要串行等六轮网络往返（实况 → 预报 → 历史 560 天 → 近 92 天 + 16 日预报 →
+       * 官方快照 → 官方日历），这是"打开要爬一会儿"的一半原因。
+       * 现在并发发出去，总耗时约等于**最慢的那一份**。
+       * 必要的几份（Cma.now / Cma.forecast / Cn.snapshot）故意不加 catch —— 它们挂了本来就
+       * 该让上层报"加载失败"；可选的几份各自 catch 成 null，缺了不阻塞主流程。 */
+      step('正在拉取 ' + city.name + ' 的行情…');
+      const hasLL = city.lat != null && city.lon != null;
+      // 历史窗口故意停在「今天-93」：最后 92 天 + 未来 16 天由 recent 接上
+      const archStart = shiftDate(todayStr(), -560);
+      const archEnd = shiftDate(todayStr(), -93);
+      const [now0, fcst, hist0, recent0, official, cnPair] = await Promise.all([
+        Cma.now(city),
+        Cma.forecast(city),
+        hasLL ? OpenMeteo.archive(city.lat, city.lon, archStart, archEnd).catch(() => null) : null,
+        hasLL ? OpenMeteo.forecast(city.lat, city.lon, 92, 16).catch(() => null) : null,
+        Cn.snapshot(city.id),
+        city.id
+          ? Promise.all([Cn.forecast(city.id).catch(() => null), Cn.officialDaily(city.id).catch(() => null)])
+          : Promise.resolve([null, []])
+      ]);
+      const hist = hist0 || { time: [], temp: [], precip: [] };
+      const recent = recent0 || {
+        time: [], temp: [], precip: [], humidity: [], wind: [], wcode: [],
+        cloud: [], uv: [], cloudLow: [], cloudMid: [], cloudHigh: [], vis: [], daily: null
+      };
+      // 中国天气网 d1 域：当日预报/预警 + 官方月度日历（历史同期均值 / 最近观测 / 15·40 日预报）
+      const cnFcst = cnPair ? cnPair[0] : null;
+      const calDaily = (cnPair && cnPair[1]) || [];
       // 没有气象局站号的城市（例如「当前所在地」这种纯坐标点）实况是空的。
       // 不补的话报价头会是一片 "--"（体感 / 风向 / 气压最明显），所以退回 Open-Meteo 当前值。
-      const now = now0 || (city.lat != null ? await Store.quote(city) : null);
-
-      step('拉取历史逐小时（Open-Meteo）…');
-      let hist = { time: [], temp: [], precip: [] };
-      const archStart = shiftDate(todayStr(), -560);
-      if (city.lat != null && city.lon != null) {
-        // 窗口故意停在「今天-93」：最后 92 天 + 未来 16 天由下面的 recent 接上。
-        const end = shiftDate(todayStr(), -93);
-        try { hist = await OpenMeteo.archive(city.lat, city.lon, archStart, end); } catch (e) { hist = { time: [], temp: [], precip: [] }; }
-      }
-
-      step('拉取近期与 16 日预报…');
-      let recent = { time: [], temp: [], precip: [], humidity: [], wind: [], wcode: [] };
-      if (city.lat != null && city.lon != null) {
-        try { recent = await OpenMeteo.forecast(city.lat, city.lon, 92, 16); }
-        catch (e) { recent = { time: [], temp: [], precip: [], humidity: [], wind: [], wcode: [] }; }
-      }
+      const now = now0 || (hasLL ? await Store.quote(city) : null);
 
       const times = hist.time.concat(recent.time);
       const temps = hist.temp.concat(recent.temp);
@@ -972,15 +1071,7 @@
       const d7idx = times.findIndex(t => String(t).slice(0, 10) === d7start);
       const seven = d7idx >= 0 ? toHourlyPoints(times, temps, precs, d7idx, 7) : [];
 
-      const official = await Cn.snapshot(city.id);
-      // 中国天气网 d1 域：当日预报/预警 + 官方月度日历（历史同期均值 / 最近观测 / 15·40 日预报）
-      let cnFcst = null, calDaily = [];
-      if (city.id) {
-        try {
-          const r = await Promise.all([Cn.forecast(city.id), Cn.officialDaily(city.id)]);
-          cnFcst = r[0]; calDaily = r[1] || [];
-        } catch (e) { /* 官方源不可用不阻塞主流程 */ }
-      }
+      // official / cnFcst / calDaily 已经在上面那一批并发请求里一起取回来了
 
       const out = {
         city, now, fcst, official, cnFcst, calDaily,
@@ -992,6 +1083,9 @@
       };
       out.indicators = IND.computeAll(daily);
       out.stamp = new Date();
+      // 存一份快照给**下次打开**用（先把旧的显示出来，同时照常去拉新的）。
+      // 放在最后：此时 out 已经完整，缺字段的半成品绝不会被存进去。
+      cxSave(out);
       return out;
     },
 
