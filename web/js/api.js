@@ -954,9 +954,10 @@
         /* ⚠ 这里原来是写死的 `now: null`。气象局月度日历里确实没有"当前值"这回事，
            但正因为是 null，行情栏的价格就只能靠 `S.quotes` 那份**轮询**；
            而轮询只覆盖自选，**正在看的城市若不在自选里就没人管它** → 最新价恒为 `--`
-           （使用者报的港澳台就是这一格）。按口径「气象局最新 → 本地缓存的 meteo → 空着」，
-           用长期缓存里那份 meteo 顶上；没有就仍是 null，界面照实 `--`。 */
-        now: cmaBriefNow(city),
+           （使用者截图的娄底、天津、石家庄都是这一格）。
+           按口径「气象局最新 → 本地缓存的 meteo → 空着」补上（`cmaBriefNow` 是异步的，
+           本函数就是 async，直接 await）。 */
+        now: await cmaBriefNow(city),
         wcode: null, precip: null,
         spark: days.slice(-24).map(function (x) { return x.c; }),
         sparkPts: [], days: days
@@ -1187,15 +1188,24 @@
   }
   /** 给 `Cn.brief` 用：气象局日历那条路上**本来没有"当前值"**（所以 `now` 一直是 null），
    *  于是行情栏的价格只能靠 `S.quotes` 那份轮询 —— 而轮询只覆盖自选，
-   *  **正在看的城市如果不在自选里就没人管它**，价格恒为 `--`。
-   *  按口径「气象局最新 → **本地缓存的 meteo** → 空着」，把缓存里那份的温度填进来当第二级；
-   *  没有就照样 null（界面照实 `--`，不编数字）。
-   *  ⚠ **必须返回数字**，不能返回对象：`quoteOf()` 拿到 `b.now` 之后直接做算术
-   *  （`temp - prev`），给对象会一路 NaN 成 `--`。`OpenMeteo.brief` 给的也是数字
-   *  （`now: cur ? cur.c : null`），这里跟它对齐。时刻由行情栏的实况标签（`d.now.time`）负责说明。 */
-  function cmaBriefNow(city) {
-    const v = city && omCurLoad(city.id);
-    return (v && v.temp != null) ? v.temp : null;
+   *  **正在看的城市如果不在自选里就没人管它**，价格恒为 `--`（使用者截图的娄底、天津、石家庄都是这个）。
+   *  按口径补上两级：**气象局最新 → 本地缓存的 meteo**，都没有就 null（界面照实 `--`，不编数字）。
+   *  ⚠ 一级必须是**气象局**，不能只查 meteo 缓存 —— 今天 Open-Meteo 是 429、缓存是空的，
+   *    可气象局那份温度就在手上（行情栏的实况标签都在显示它）。漏了气象局这一级，
+   *    就会变成"标签有 07:20、价格却是 `--`"。
+   *  ⚠ 返回值**必须是数字**，不能是对象：`quoteOf()` 拿到 `b.now` 之后直接做算术
+   *    （`temp - prev`），给对象会一路 NaN 成 `--`。`OpenMeteo.brief` 给的也是数字
+   *    （`now: cur ? cur.c : null`），这里跟它对齐。时刻由行情栏的实况标签（`d.now.time`）负责说明。
+   *  代价：每个走 `Cn.brief` 的城市多一次 `Cma.now()` —— 而它带 3 分钟缓存、
+   *  轮询那边刚用同一个 key（`now:<站号>`）取过，所以基本全是缓存命中。 */
+  async function cmaBriefNow(city) {
+    if (!city) return null;
+    try {
+      const n = await Cma.now(city);                 // ① 气象局最新
+      if (n && n.temp != null) return n.temp;
+    } catch (e) { }
+    const v = omCurLoad(city.id);                    // ② 本地缓存的 meteo
+    return (v && v.temp != null) ? v.temp : null;    //    ③ 都没有 → 空着
   }
   /** 读上次那份。**不检查有效期到秒**，只要没超过一个月就给 —— 反正马上会去拉新的。
    *  派生数据（indicators / week / month）存的时候扔掉了，这里现算回来：
