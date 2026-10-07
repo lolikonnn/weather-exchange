@@ -162,8 +162,16 @@ body{
   position:relative;transition:background .12s;
 }
 /* 名字那一行 = 城市名 + 星。桌面端星就贴在名字右边（同一个 flex 行）。
-   min-width:0 是为了长名字能正常收缩、不把整行撑破。 */
+   ⚠ **城市名这一格必须是固定宽**，星才能每行都在同一个横坐标上。
+   星是跟着名字走的（flex 行里排在它后面），名字长短不同星就跟着跑 ——
+   实测把 2 字名和 4 字名混在一起，星的 left 从 38 一路飘到 63（**歪 25px**），
+   就是使用者说的"歪歪扭扭"。钉死这一格之后，星永远落在 名字格宽 + 间距 处。
+   固定宽 72px ≈ 5 个汉字（12.5px 字号），再长的名字用省略号收尾。
+   注意这一格只框住**名字那一行**，小字在下一行、宽度一点没被挤掉。 */
 .stock-row .sw-name-row{display:flex;align-items:center;gap:5px;min-width:0}
+.stock-row .sw-name-row .sw-name{
+  width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 .stock-row:hover{background:#212734}
 .stock-row.on{background:#2a3140}
 .stock-row.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
@@ -485,22 +493,33 @@ body{
   /* 右栏装的是盘口+明细两块，按标签只留一块（规则见上面的 .rblock 段） */
 
   /* ── 手机端：把星从名字行里"拿出来"，放到城市名与价格之间那片空档、跨两行垂直居中 ──
-     桌面端星是贴在名字右边的（见 .sw-name-row），位置在行的最左边；
-     手机上横向宽松、名字与价格之间空一大片，放那儿更好点（也是使用者点名要的位置）。
+     桌面端星贴在名字右边（见 .sw-name-row 那段）；手机上横向宽松、名字与价格之间空一大片，
+     放那儿更好点（也是使用者点名要的位置）。
      做法：两层包装 `display:contents` 之后，星和名字/小字都成了**行的网格项**，
      于是能单独用 grid-column / grid-row 摆位 —— 不需要两个星、也不需要绝对定位。
+
+     ⚠ **星的横坐标要钉死，右边那两格就必须是固定宽**：
+     星在第 2 格，它的 left = 行宽 − (价格 + 涨跌幅 + 各间距)。价格/涨跌幅原来是按文字
+     自适应的（`18.1` 与 `--` 不一样宽、涨跌幅只有 min-width），于是每行星的 left 都在飘 ——
+     实测 355…363（**歪 9px**）。把这两格钉死、名字格改成可收缩的 `minmax(0,1fr)`，
+     星的 left 就只由固定量决定，跟城市名长短、小字长短全都无关。
+     名字/小字加省略号兜底，免得长文本把名字格撑开又把星顶歪（手机上宽度够，正常不会截）。
      ⚠ `display:contents` 只在这里用：桌面端一旦拆散，星就没法跟着名字同一行了。 */
-  .stock-row{grid-template-columns:1fr auto auto auto;grid-template-rows:auto auto;gap:6px}
+  .stock-row{grid-template-columns:minmax(0,1fr) auto auto auto;grid-template-rows:auto auto;gap:6px}
   .stock-row > div:first-child{display:contents}
   .stock-row .sw-name-row{display:contents}
-  .stock-row .sw-name{grid-column:1;grid-row:1}
+  .stock-row .sw-name-row .sw-name{width:auto;grid-column:1;grid-row:1}
+  .stock-row .sw-name,.stock-row .sw-sub{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;   /* 可收缩 → 不把星顶歪 */
+  }
   .stock-row .sw-sub{grid-column:1;grid-row:2}
   .stock-row .sw-star{
     grid-column:2;grid-row:1 / span 2;align-self:center;justify-self:start;
     width:30px;font-size:16px;padding:5px 0;     /* 手指点的东西，22px 太抠 */
   }
-  .stock-row .sw-price{grid-column:3;grid-row:1 / span 2;align-self:center}
-  .stock-row .sw-pct{grid-column:4;grid-row:1 / span 2;align-self:center}
+  /* 这两格必须是**固定宽**，星的位置才算得出来。58px 装得下 `-0.10%`（约 49px）。 */
+  .stock-row .sw-price{grid-column:3;grid-row:1 / span 2;align-self:center;width:52px}
+  .stock-row .sw-pct{grid-column:4;grid-row:1 / span 2;align-self:center;width:58px;text-align:center}
 
   /* ── 行情头：横排改竖排。
      基线是 .quote-head{display:flex} + .qh-left{flex:none}，窄屏下 .qh-left 的
