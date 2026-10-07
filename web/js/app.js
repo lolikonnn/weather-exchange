@@ -56,7 +56,7 @@
     const ids = idxIds();
     box.innerHTML = '';
     if (!ids.length) {
-      box.appendChild(el('span', { class: 'idx-empty', text: '自选为空 —— 用上面的搜索框或左栏 ＋ 添加城市' }));
+      box.appendChild(el('span', { class: 'idx-empty', text: '还没有收藏的城市 —— 用上面的搜索框，或点任意一行右边的 ☆' }));
       return;
     }
     ids.forEach(id => {
@@ -67,7 +67,7 @@
       const cv = el('canvas', { width: 56, height: 18 });
       const item = el('div', {
         class: 'strip-item' + (S.cur && S.cur.id === id ? ' on' : ''),
-        title: (c.loc ? '当前所在地 · ' : '自选城市 · ') + c.name +
+        title: (c.loc ? '当前所在地 · ' : '收藏城市 · ') + c.name +
                (c.prov ? '（' + c.prov + '）' : '') + ' —— 点击查看',
         onclick: () => selectCity(id)
       }, [
@@ -100,7 +100,7 @@
     box.innerHTML = '';
     // 放在最前面：自选清空时下面会提前 return，指数条也得跟着清干净
     renderIndexes();
-    if (!S.watch.length) { box.appendChild(el('div', { class: 'sr-empty', text: '自选为空，点搜索添加城市' })); return; }
+    if (!S.watch.length) { box.appendChild(el('div', { class: 'sr-empty', text: '还没有收藏的城市，点右边那颗 ☆ 收藏' })); return; }
     let ids = S.watch.slice();
     if (S.sortMode === 1) ids.sort((a, b) => {
       // 分母改成绝对温标后，平盘就是货真价实的 0%。这里必须显式判 null：
@@ -124,7 +124,7 @@
         // 比自己去算"插到第几个下标"稳得多（自选行没有 id 时也不至于写坏）。
         'data-id': id,
         onclick: (e) => {
-          if (e.target.classList.contains('sw-del')) return;
+          if (e.target.classList.contains('sw-star')) return;
           if (wlSuppressClick) return;        // 刚拖完的那一下别顺手切城市
           selectCity(id);
         }
@@ -136,7 +136,13 @@
         el('div', { class: 'sw-price', style: { color: col }, text: q.temp == null ? '--' : fx(q.temp, 1) }),
         el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
       ]);
-      row.appendChild(el('span', { class: 'sw-del', text: '✕', title: '从自选移除', onclick: (e) => { e.stopPropagation(); removeWatch(id); } }));
+      row.appendChild(el('span', {
+        // 实心星 = 已收藏，点它 = 取消收藏 —— 跟热门列表那颗空心星是同一套语义，
+        // 也跟搜索结果行 / 行情头 / 全部城市抽屉里的星一致（全站就这一个符号）。
+        // 以前这里是 ✕，而且桌面端只在 hover 才显形，等于看不见（使用者提的）。
+        class: 'sw-star on', text: '★', title: '取消收藏',
+        onclick: (e) => { e.stopPropagation(); removeWatch(id); }
+      }));
       box.appendChild(row);
     });
   }
@@ -232,7 +238,7 @@
     // 否则用户拖完看到的还是按涨幅/名称排的，会以为拖了没用。
     if (S.sortMode !== 0) S.sortMode = 0;
     renderWatchlist();
-    toast('自选顺序已保存');
+    toast('收藏顺序已保存');
   }
 
   function bindWatchDrag() {
@@ -244,7 +250,7 @@
       if (!t || !t.closest) return;
       const row = t.closest('.stock-row');
       if (!row || !row.dataset.id) return;
-      if (t.closest('.sw-del') || t.closest('.sw-add')) return;    // 删除 / 加星不算拖拽
+      if (t.closest('.sw-star')) return;    // 删除 / 加星不算拖拽
       wlCancel();
       wlDrag = { row: row, y: e.clientY, x: e.clientX, on: false, timer: 0 };
       wlDrag.timer = setTimeout(() => {
@@ -270,8 +276,11 @@
       const starred = S.watch.indexOf(c.id) >= 0;
       const row = el('div', {
         class: 'stock-row' + (S.cur && S.cur.id === c.id ? ' on' : ''),
+        // 收藏行早就有 data-id（拖拽排序要用）。热门行也补上：
+        // 行本身可识别之后，探针/调试就不用靠"第几行"去猜是哪座城。
+        'data-id': c.id,
         onclick: (e) => {
-          if (e.target.classList.contains('sw-add') || e.target.classList.contains('sw-del')) return;
+          if (e.target.classList.contains('sw-star')) return;
           selectCity(c.id);
         }
       }, [
@@ -282,12 +291,12 @@
         el('div', { class: 'sw-price', style: { color: col }, text: q.temp == null ? '--' : fx(q.temp, 1) }),
         el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
       ]);
-      // 热门列表原来【没有】加自选的入口，导致除了搜索框 Ctrl+Enter 之外
-      // 用户根本没办法把城市加进自选。这里补一个 ＋ / ✕。
+      // 热门列表原来【没有】收藏的入口，导致除了搜索框 Ctrl+Enter 之外
+      // 用户根本没办法把城市加进收藏。这里补一颗星：空心 = 没收藏，实心 = 收藏了。
       row.appendChild(el('span', {
-        class: starred ? 'sw-del' : 'sw-add',
-        text: starred ? '✕' : '＋',
-        title: starred ? '从自选移除' : '加入自选',
+        class: 'sw-star' + (starred ? ' on' : ''),
+        text: starred ? '★' : '☆',
+        title: starred ? '取消收藏' : '收藏这座城市',
         onclick: (e) => {
           e.stopPropagation();
           if (starred) removeWatch(c.id); else addWatch(c.id);
@@ -305,14 +314,14 @@
     renderWatchlist(); renderHotlist(); renderIndexes(); buildDrawer(); renderQStar();
   }
   function addWatch(id) {
-    if (S.watch.indexOf(id) >= 0) { toast('已在自选中'); return; }
+    if (S.watch.indexOf(id) >= 0) { toast('已经收藏过了'); return; }
     S.watch.push(id); storeSet('watch', S.watch);
     refreshWatchViews(); warmQuotes();
-    toast('已加入自选：' + (API.Cities.get(id) || {}).name);
+    toast('已收藏：' + (API.Cities.get(id) || {}).name);
   }
   function removeWatch(id) {
     S.watch = S.watch.filter(x => x !== id); storeSet('watch', S.watch);
-    refreshWatchViews(); toast('已移出自选');
+    refreshWatchViews(); toast('已取消收藏');
   }
   /* 行情头里城市名旁边那颗星。
    * 为什么要有它：以前只有「搜索结果行」「全部城市抽屉」「定位行」三处能加星，
@@ -330,7 +339,7 @@
     b.hidden = false;
     b.textContent = on ? '★' : '☆';
     b.classList.toggle('on', on);
-    b.title = on ? '从自选移除' : '加入自选';
+    b.title = on ? '取消收藏' : '收藏';
   }
 
   /* ═══════════ 当前所在地 ═══════════ */
@@ -508,8 +517,9 @@
 
     const row = el('div', {
       class: 'stock-row' + (S.cur && S.cur.id === LOC_ID ? ' on' : ''),
+      'data-id': LOC_ID,
       onclick: (e) => {
-        if (e.target.classList.contains('sw-add') || e.target.classList.contains('sw-del')) return;
+        if (e.target.classList.contains('sw-star')) return;
         selectCity(LOC_ID);
       }
     }, [
@@ -522,9 +532,9 @@
     ]);
     const starred = S.watch.indexOf(LOC_ID) >= 0;
     row.appendChild(el('span', {
-      class: starred ? 'sw-del' : 'sw-add',
-      text: starred ? '✕' : '＋',
-      title: starred ? '从自选移除' : '加入自选',
+      class: 'sw-star' + (starred ? ' on' : ''),
+      text: starred ? '★' : '☆',
+      title: starred ? '取消收藏' : '收藏当前所在地',
       onclick: (e) => {
         e.stopPropagation();
         if (starred) removeWatch(LOC_ID); else addWatch(LOC_ID);
@@ -1345,7 +1355,7 @@
       row.appendChild(el('span', {
         class: 'sr-star' + (starred ? ' on' : ''),
         text: starred ? '★' : '☆',
-        title: starred ? '从自选移除' : '加入自选（也可按 Ctrl+Enter）',
+        title: starred ? '取消收藏' : '收藏（也可按 Ctrl+Enter）',
         onclick: (e) => {
           e.stopPropagation();
           if (S.watch.indexOf(c.id) >= 0) removeWatch(c.id); else addWatch(c.id);
@@ -1412,7 +1422,7 @@
           el('span', {
             class: 'star' + (star ? ' on' : ''),
             text: star ? '★' : '☆',
-            title: star ? '从自选移除' : '加入自选'
+            title: star ? '取消收藏' : '收藏'
           }),
           el('i', { text: c.id.slice(-3) })
         ]));

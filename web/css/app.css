@@ -151,8 +151,12 @@ body{
 .dl:hover{background:rgba(240,185,11,.14);border-color:var(--accent)}
 
 /* ───────────────── 行情列表 ───────────────── */
+/* ⚠ 这里**必须是 4 列**：带收藏星的行是「城市名 / 价格 / 涨跌幅 / ★」四个孩子。
+   只写 3 列的话，第 4 个孩子不会自动延伸出隐式列，而是被排到**下一行**
+   —— 星就掉到城市名下面去了（截图里亲眼看到才发现，光看"有没有重叠"是查不出来的）。
+   第 4 列是 `auto`，所以"点这里定位"那种不带星的占位行（3 个孩子）照样正常。 */
 .stock-row{
-  display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:8px;
+  display:grid;grid-template-columns:1fr auto auto auto;align-items:center;gap:8px;
   padding:5px 8px;cursor:pointer;border-bottom:1px solid #1d212a;
   position:relative;transition:background .12s;
 }
@@ -178,19 +182,21 @@ body{
   min-width:58px;padding:1px 4px;border-radius:2px;color:#fff;
 }
 .sw-pct.p-up{background:var(--up)} .sw-pct.p-down{background:var(--down)} .sw-pct.p-flat{background:var(--flat)}
-.stock-row .sw-del{
-  position:absolute;right:3px;top:3px;font-size:10px;color:var(--dim2);
-  opacity:0;cursor:pointer;padding:0 3px;border-radius:2px;line-height:1.3;
+/* 收藏星：**常显**。以前这里是 ＋ / ✕，而且只在 hover 才 opacity:1 ——
+   桌面端等于看不见（使用者反馈"太不明显"）。现在跟搜索结果行 `.sr-star`、
+   行情头 `.qh-star`、全部城市抽屉 `.dw-city .star` 统一成同一个符号：
+   **空心 ☆ = 没收藏，实心 ★ = 收藏了**。
+   落位方式：行是 `grid-template-columns:1fr auto auto`，星是第 4 个孩子 →
+   自动进第 4 列（隐式列）、跟着 `align-items:center` 垂直居中。
+   ⚠ 不要再改回 `position:absolute;right:3px;top:3px` —— 那是原来 hover 才显形时的写法，
+   常显之后正好压在右边的涨跌幅标签上。 */
+.stock-row .sw-star{
+  width:22px;text-align:center;font-size:13px;line-height:1;padding:2px 0;
+  color:var(--dim2);cursor:pointer;border-radius:3px;
+  transition:color .12s,background .12s;
 }
-.stock-row:hover .sw-del{opacity:1}
-.stock-row .sw-del:hover{background:var(--down);color:#fff}
-/* ＋ = 加入自选。和 ✕ 同位置，默认淡出、悬停显形；触摸屏上常显（见文末 @media） */
-.stock-row .sw-add{
-  position:absolute;right:2px;top:2px;font-size:12px;color:var(--dim2);
-  opacity:0;cursor:pointer;padding:0 4px;border-radius:2px;line-height:1.2;
-}
-.stock-row:hover .sw-add{opacity:1}
-.stock-row .sw-add:hover{background:var(--accent);color:#12141a}
+.stock-row .sw-star.on{color:var(--accent)}
+.stock-row .sw-star:hover{background:#3a4152;color:var(--accent)}
 /* 搜索下拉里的自选星标：常显，比 ✕/＋ 更好点 */
 .sr-item .sr-star{margin-left:6px;color:var(--dim2);font-size:13px;cursor:pointer;padding:0 3px;border-radius:2px}
 .sr-item .sr-star.on{color:var(--accent)}
@@ -474,8 +480,9 @@ body{
   body[data-mtab="3"] .pane-right{display:flex}
   /* 右栏装的是盘口+明细两块，按标签只留一块（规则见上面的 .rblock 段） */
 
-  /* ── 手机上没有 hover，加/删自选的按钮必须常显 ── */
-  .stock-row .sw-add,.stock-row .sw-del{opacity:1;font-size:13px;padding:2px 6px}
+  /* ── 手机上星星再大一点：手指点的东西，22px 太抠了 ──
+     （它本来就是常显的，不再需要这里补 opacity） */
+  .stock-row .sw-star{width:28px;font-size:16px;padding:4px 0}
 
   /* ── 行情头：横排改竖排。
      基线是 .quote-head{display:flex} + .qh-left{flex:none}，窄屏下 .qh-left 的
