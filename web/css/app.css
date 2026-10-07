@@ -166,11 +166,14 @@ body{
    星是跟着名字走的（flex 行里排在它后面），名字长短不同星就跟着跑 ——
    实测把 2 字名和 4 字名混在一起，星的 left 从 38 一路飘到 63（**歪 25px**），
    就是使用者说的"歪歪扭扭"。钉死这一格之后，星永远落在 名字格宽 + 间距 处。
-   固定宽 72px ≈ 5 个汉字（12.5px 字号），再长的名字用省略号收尾。
+   ⚠ 宽度要按**目录里最长的名字**给足：352 座城市里名字长度分布是
+   2 字 297 个 / 3 字 32 / 4 字 19 / **6 字 2 / 7 字 2**，最长的两个是
+   `恩施土家族苗族`、`红河哈尼族彝族`（实测 87.5px）。所以给 **90px**（≈7 个汉字）——
+   给 72px 的话这两个名字会被省略号截掉（星还是齐的，但名字少了尾巴，那不算"对上"）。
    注意这一格只框住**名字那一行**，小字在下一行、宽度一点没被挤掉。 */
 .stock-row .sw-name-row{display:flex;align-items:center;gap:5px;min-width:0}
 .stock-row .sw-name-row .sw-name{
-  width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .stock-row:hover{background:#212734}
 .stock-row.on{background:#2a3140}
