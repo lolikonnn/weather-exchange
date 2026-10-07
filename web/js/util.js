@@ -220,11 +220,59 @@
     return 'closed';
   }
 
+  /** 单调三次插值（Fritsch–Carlson），返回一个"给 x 求 y"的函数。
+   *
+   *  为什么不用普通三次样条：普通样条保证的是"二阶连续"，**不保证不过冲** ——
+   *  拿它去插 3 小时间隔的气温，两个锚点之间能鼓出比两端都高的包，
+   *  画出来就是一个**气象局根本没报过的高峰**。而这里的用途正是
+   *  "锚点用官方值、中间补顺"（Open-Meteo 额度用尽时的保底曲线），过冲等于造假。
+   *
+   *  单调三次的做法：每个节点的斜率由相邻差商加权得出，遇到极值点（两侧差商异号）斜率取 0，
+   *  再用 Fritsch–Carlson 条件把斜率限制在 3 倍差商以内。结果：
+   *  **插出来的值永远落在相邻两个锚点之间**，且两头是平的（不会冲出去）。
+   *  —— 这是"保证锚点正确"这句话在算法上的落点。
+   *
+   *  xs 必须严格递增。区间外按端点值取平（不外推，避免编出不存在的极值）。 */
+  function monoCubic(xs, ys) {
+    const n = Math.min((xs || []).length, (ys || []).length);
+    if (n === 0) return () => null;
+    if (n === 1) return () => ys[0];
+    const h = [], d = [];
+    for (let i = 0; i < n - 1; i++) {
+      h[i] = xs[i + 1] - xs[i];
+      d[i] = h[i] ? (ys[i + 1] - ys[i]) / h[i] : 0;
+    }
+    const m = new Array(n);
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (let i = 1; i < n - 1; i++) {
+      if (d[i - 1] * d[i] <= 0) m[i] = 0;                 // 极值点：斜率 0，防过冲
+      else {
+        const w1 = 2 * h[i] + h[i - 1], w2 = h[i] + 2 * h[i - 1];
+        m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]);
+      }
+    }
+    for (let i = 0; i < n - 1; i++) {                      // Fritsch–Carlson 单调性约束
+      if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+      const a = m[i] / d[i], b = m[i + 1] / d[i], s = a * a + b * b;
+      if (s > 9) { const t = 3 / Math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+    }
+    return function (x) {
+      if (x <= xs[0]) return ys[0];
+      if (x >= xs[n - 1]) return ys[n - 1];
+      let lo = 0, hi = n - 2;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (xs[mid] <= x) lo = mid; else hi = mid - 1; }
+      const i = lo, t = (x - xs[i]) / h[i], t2 = t * t, t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t;
+      const h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+      return h00 * ys[i] + h10 * h[i] * m[i] + h01 * ys[i + 1] + h11 * h[i] * m[i + 1];
+    };
+  }
+
   global.U = {
     $, $$, el, pad2, fx, sgn, cls, fmtDate, fmtTime, fmtHM, parseDate, parseISO, weekday,
     pluck, clamp, sum, avg, last, clone, storeGet, storeSet,
     UP, DOWN, FLAT, upColor, downColor, flatColor, trendColor, K0, pctOf, diffOf,
     wxIcon, wxShort, wxSeverity, windLevel, sessionLabel, sparkPath,
-    toast, debounce, marketPhase
+    toast, debounce, marketPhase, monoCubic
   };
 })(window);

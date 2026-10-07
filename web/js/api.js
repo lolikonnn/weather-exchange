@@ -999,6 +999,46 @@
   }
 
   /** 逐小时数组 -> 分时点 [{t, p, v}] */
+  /** 把气象局的**逐 3 小时**序列插成**逐小时**，给"Open-Meteo 全挂"时的保底曲线用。
+   *
+   *  锚点 = 官方原值，一个不改；中间用单调三次插值（`U.monoCubic`）——
+   *  它保证插出来的值**落在相邻两个锚点之间**，不会鼓出气象局根本没报过的高峰
+   *  （普通三次样条就会过冲，画出来是个假峰，那不叫"解析度小"，那叫编）。
+   *  降水/天气码这类**分类量不插值**（"半个天气码"没有意义），取最近的锚点原值。
+   *
+   *  ⚠ 两条边界，界面必须如实说：
+   *   ① 这是**预报**，不是观测；
+   *   ② 气象局这条序列只有**未来**（第一格 = 发布时刻之后的下一个 3 小时槽），
+   *      今天已经过去的那几个小时**没有** —— 曲线是从现在往后画的。 */
+  function cmaHourlyCurve(cmaH) {
+    if (!cmaH || !cmaH.time || cmaH.time.length < 2) return null;
+    const xs = [], ys = [], keep = [];
+    for (let i = 0; i < cmaH.time.length; i++) {
+      const raw = String(cmaH.time[i]);
+      const ms = Date.parse(raw.length === 16 ? raw + ':00' : raw.replace(' ', 'T'));
+      if (!isFinite(ms) || cmaH.temp[i] == null) continue;
+      xs.push(ms); ys.push(cmaH.temp[i]); keep.push(i);
+    }
+    if (xs.length < 2) return null;
+    const f = U.monoCubic(xs, ys);
+    const HOUR = 3600000, last = xs[xs.length - 1];
+    const time = [], temp = [], precip = [], humidity = [], wind = [], cloud = [], wcode = [], vis = [];
+    for (let ms = xs[0], k = 0; ms <= last; ms += HOUR) {
+      const d = new Date(ms);
+      time.push(U.fmtDate(d) + 'T' + U.pad2(d.getHours()) + ':00');
+      temp.push(Math.round(f(ms) * 10) / 10);
+      while (k < xs.length - 1 && xs[k + 1] <= ms) k++;      // 落在哪个锚点区间，就取那个锚点的分类值
+      const src = keep[k];
+      precip.push(cmaH.precip ? cmaH.precip[src] : null);
+      humidity.push(cmaH.humidity ? cmaH.humidity[src] : null);
+      wind.push(cmaH.wind ? cmaH.wind[src] : null);
+      cloud.push(cmaH.cloud ? cmaH.cloud[src] : null);
+      wcode.push(cmaH.wcode ? cmaH.wcode[src] : null);
+      vis.push(cmaH.vis ? cmaH.vis[src] : null);
+    }
+    return { time, temp, precip, humidity, wind, cloud, wcode, vis, anchors: xs.length, hours: time.length };
+  }
+
   /** 从 fromIdx 起按天截取逐时点。days 用于封顶（分时=1 天，7日分时=7 天），
       否则会把 Open-Meteo 未来 16 天的预报一股脑画进"分时图"。 */
   function toHourlyPoints(times, temps, precs, fromIdx, days) {
@@ -1246,6 +1286,17 @@
       const times = hist.time.concat(recent.time);
       const temps = hist.temp.concat(recent.temp);
       const precs = hist.precip.concat(recent.precip || []);
+
+      /* ── 保底曲线：Open-Meteo 两路都空时，用气象局的逐 3 小时把气温曲线撑起来 ──
+       * 锚点 = 官方原值（一个不改），中间用单调三次插值补到逐小时（`U.monoCubic`），
+       * 所以使用者那句"解析度小了但是保证锚点正确、中间拟合出一条相对光滑的曲线"是成立的。
+       *
+       * ⚠ 只喂**折线**视图（分时 / 7日），**不合成日K** —— 日K 要 OHLC，那得从插出来的值里凑，
+       *   等于凭空造蜡烛，那不是"解析度小"，是"编"。日K 该空就还它空着。
+       * ⚠ 气象局这条序列只有**未来**（第一格 = 下一个 3 小时槽），今天已经过去的小时没有。 */
+      const cmaCurve = (hist.time.length + recent.time.length) === 0 && cmaH
+        ? cmaHourlyCurve(cmaH) : null;
+
       // 湿度/风速/天气码只有近期 92 天，补齐到与 times 等长（前段补 null）
       const off = hist.time.length;
       const padTo = (arr) => {
@@ -1345,7 +1396,11 @@
       }
       const lastDay = ti >= 0 ? daily[ti].d : today;
       const dayIdx = times.findIndex(t => String(t).slice(0, 10) === lastDay);
-      const intraday = dayIdx >= 0 ? toHourlyPoints(times, temps, precs, dayIdx, 1) : [];
+      // 分时：优先用 Open-Meteo 的逐小时；它整条都空时退回气象局插出来的保底曲线。
+      // ⚠ 保底曲线是从"下一个 3 小时槽"开始的（今晚 23:00 这种），按**当天**截只会剩一个孤点，
+      //   所以这里取**从它开始往后的 24 小时** —— 屏幕上要看的是一条线，不是一个点。
+      const intraday = dayIdx >= 0 ? toHourlyPoints(times, temps, precs, dayIdx, 1)
+        : (cmaCurve ? toHourlyPoints(cmaCurve.time, cmaCurve.temp, cmaCurve.precip, 0, 99).slice(0, 24) : []);
 
       // 7 日分时：**昨天 → 未来第五天**（共 7 天）。
       // 原来取的是"今天往前数 5 天"，全是已经发生过的历史，而天气预报最该看的
@@ -1357,7 +1412,9 @@
       // 让 chart.js 去画它自己的"暂无K线数据"。
       const d7start = daily.length ? daily[Math.max(0, ti - 1)].d : null;
       const d7idx = d7start ? times.findIndex(t => String(t).slice(0, 10) === d7start) : -1;
-      const seven = d7idx >= 0 ? toHourlyPoints(times, temps, precs, d7idx, 7) : [];
+      // 同样退回保底曲线：7 日视图要的是"今天往后"，气象局的 3 小时序列正好覆盖未来 7 天
+      const seven = d7idx >= 0 ? toHourlyPoints(times, temps, precs, d7idx, 7)
+        : (cmaCurve ? toHourlyPoints(cmaCurve.time, cmaCurve.temp, cmaCurve.precip, 0, 7) : []);
 
       // official / cnFcst / calDaily 已经在上面那一批并发请求里一起取回来了
 
@@ -1382,7 +1439,11 @@
            逐时流水（`#tape`）原来只读 Open-Meteo 的 d.hourly，额度一尽就「暂无观测」；
            而这条路是**气象局自己给的**，正好能顶上 —— 只是颗粒度是 3 小时，
            界面上会说清楚（见 renderTape）。体积很小（约 10 KB），直接随 out 走。 */
-        cmaHourly: cmaH || null
+        cmaHourly: cmaH || null,
+        /* 保底曲线是否生效（Open-Meteo 逐小时整条为空 → 分时/7日 用的是气象局逐 3 小时插值出来的线）。
+           只给探针与界面文案用：曲线是**预报**、且只有未来，今天已经过去的小时没有。 */
+        cmaCurveOnly: !!cmaCurve,
+        cmaCurve: cmaCurve ? { anchors: cmaCurve.anchors, hours: cmaCurve.hours } : null
       };
       out.indicators = IND.computeAll(daily);
       out.stamp = new Date();

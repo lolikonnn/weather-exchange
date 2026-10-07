@@ -1045,10 +1045,13 @@
 
   function renderChart() {
     const d = S.data; if (!d) return;
-    // 降级、而且一条 K 线都没有时，把**原因**直接写在图上。
+    // 降级、而且**一条曲线都没有**时，把**原因**直接写在图上。
     // chart.js 默认那句"暂无K线数据"只说了现象，用户会以为是 bug ——
     // 实际情况是：行情栏（报价头/盘口/流水）是气象局的实时数据，只有逐小时与 K 线这一路没拿到。
-    if (d.degraded && !(d.daily && d.daily.length)) {
+    // ⚠ 但**保底曲线**（气象局逐 3 小时插值，见 api.js 的 cmaHourlyCurve）算"有曲线"：
+    //   以前这里只看 daily，于是线都插好了还能被这一句"暂时取不到"顶掉 —— 白插。
+    const hasCurve = !!((d.intraday && d.intraday.length) || (d.seven && d.seven.length));
+    if (d.degraded && !(d.daily && d.daily.length) && !hasCurve) {
       Chart.renderEmpty('Open-Meteo 额度用尽，K 线与逐小时暂时取不到。' +
         '左边行情栏与右侧盘口是气象局的实时数据，额度恢复后曲线会自动补上。');
       return;
@@ -1068,7 +1071,8 @@
         seven: p === '7day',
         precips: pts.map(x => x.v),
         hours: pts.map(x => U.sessionLabel(Number(String(x.t).slice(11, 13)))),
-        title: (p === 'trend' ? '分时' : '7日分时') + ' · ' + (p === 'trend' ? d.today : '近 7 日')
+        title: (p === 'trend' ? (d.cmaCurveOnly ? '分时 · 未来 24 小时（气象局插值）' : '分时') : '7日分时') +
+          ' · ' + (p === 'trend' ? d.today : '近 7 日')
       });
       if (!renderWxSub()) {
         if (p === 'trend' || p === '7day') renderVolSub(pts);
@@ -1077,7 +1081,16 @@
       $('#chartHint').textContent = '昨收 ' + (d.base == null ? '--' : fx(d.base, 1)) + ' ℃　最新 ' + (qp.temp == null ? '--' : fx(qp.temp, 1)) + ' ℃　逐时点 ' + pts.length;
     } else {
       const s = seriesFor(p);
-      if (!s) { Chart.renderEmpty('暂无K线数据'); return; }
+      if (!s) {
+        // K 线视图（日/周/月/预报K）**必须**有历史，而气象局只给未来 ——
+        // 这几张图在降级时确实画不出来，所以如实说清"是哪一路没有"，
+        // 而不是让用户对着一句"暂无K线数据"猜。分时/7日 那两张图有保底曲线，不受影响。
+        Chart.renderEmpty(d.degraded
+          ? 'Open-Meteo 额度用尽，K 线暂时取不到（这几张图要历史数据，气象局只给未来）。' +
+            '点上面的「分时」或「7日」——那两张图用的是气象局逐 3 小时插出来的保底曲线。'
+          : '暂无K线数据');
+        return;
+      }
       Chart.renderMain({
         mode: 'kline', bars: s.bars, ind: s.ind, base: s.base, today: s.today, ov: ov,
         metric: S.metric, view: s.view, monthMode: s.monthMode, title: s.title,
@@ -1216,8 +1229,15 @@
           city: c,
           now: d.now, fcst: d.fcst, official: d.official, cnFcst: d.cnFcst, calDaily: d.calDaily,
           today: d.today,                  // renderTape 按它筛"最近观测"
+          // 这份新的气象局逐 3 小时**始终带上**：曲线走的是快照那条路，
+          // 但逐时流水在快照里没观测时还要靠它顶上（见 renderTape）。
+          cmaHourly: d.cmaHourly || oldOut.cmaHourly || null,
           degraded: true,
-          staleCharts: true                // 曲线是历史，界面照这个说
+          staleCharts: true,               // 曲线是历史，界面照这个说
+          // 曲线本身来自快照（不是保底插值），所以这两项必须显式清掉 ——
+          // 否则会从旧 out 里继承过来，状态栏就会说"曲线是气象局插值的"，而屏上画的是历史K线。
+          cmaCurveOnly: false,
+          cmaCurve: null
         });
       }
       S.data = d;
@@ -1234,12 +1254,19 @@
       if (d.degraded) {
         // **降级但可用**：报价头 / 五档盘口 / 逐时流水来自中国气象局，是实时的。
         // 必须说清哪部分是新的、哪部分是旧的 —— 不能让用户以为整页都是实时的。
+        // 第三种情况：连保底曲线都用上了（气象局逐 3 小时插值）—— 那是**预报**、且只有未来，
+        // 今天已经过去的小时没有，所以文案要跟"历史记录"分开说。
         $('#statusLeft').textContent = '已加载 ' + c.name + ' —— 行情来自中国气象局（实时）；' +
-          (d.staleCharts
-            ? 'Open-Meteo 额度用尽，曲线显示的是' + agoTxt(snap && snap.at) + '的历史记录'
-            : 'Open-Meteo 额度用尽，逐小时与 K 线暂时没有数据') +
+          (d.cmaCurveOnly
+            ? 'Open-Meteo 额度用尽，气温曲线改用气象局逐 3 小时预报插值（' +
+              (d.cmaCurve ? d.cmaCurve.anchors + ' 个锚点 → ' + d.cmaCurve.hours + ' 小时' : '') + '）'
+            : d.staleCharts
+              ? 'Open-Meteo 额度用尽，曲线显示的是' + agoTxt(snap && snap.at) + '的历史记录'
+              : 'Open-Meteo 额度用尽，逐小时与 K 线暂时没有数据') +
           '，恢复后会自动补上';
-        toast(d.staleCharts ? '曲线用的是历史记录（Open-Meteo 额度用尽）' : 'Open-Meteo 额度用尽，曲线暂时为空');
+        toast(d.cmaCurveOnly ? '曲线用的是气象局逐 3 小时预报（插值，Open-Meteo 额度用尽）'
+          : d.staleCharts ? '曲线用的是历史记录（Open-Meteo 额度用尽）'
+            : 'Open-Meteo 额度用尽，曲线暂时为空');
       } else {
         $('#statusLeft').textContent = '已加载 ' + c.name + '（' + d.daily.length + ' 根日K / ' + d.hourly.time.length + ' 个时次）';
         toast('已切换到 ' + c.name + ' ' + c.id);
