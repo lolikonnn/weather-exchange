@@ -102,6 +102,30 @@
   }
 
   /* ═══════════ 自选列表 ═══════════ */
+
+  /** 量一下这一行的名字比格子宽出多少，记在元素上 —— **只有选中那一行**会据此滚动
+   *  （CSS 只认 `.stock-row.on`，所以一屏最多一行在动）。
+   *
+   *  为什么需要它：桌面端名字格是**固定 90px**（≈7 个汉字，星才钉得住），
+   *  而收藏列表里是可能出现超长名字的 —— 定位到某个区县后可以给它加星，
+   *  区县全名最长 15 个字（`双江拉祜族佤族布朗族傣族自治县`），90px 装不下。
+   *
+   *  ⚠ 必须在元素**进文档之后**调用：没进文档量不出 scrollWidth。
+   *  ⚠ 内层 `.sw-name-in` 必须是 inline-block —— 行内元素的 clientWidth/scrollWidth 恒为 0。 */
+  function markNameOverflow(row, id) {
+    const nm = row.querySelector('.sw-name');
+    const inn = row.querySelector('.sw-name-in');
+    if (!nm || !inn) return;
+    const over = inn.scrollWidth - nm.clientWidth;
+    if (over > 1) {
+      nm.style.setProperty('--sw-over', over + 'px');
+      nm.classList.add('ovf');
+    }
+    // 悬停看全名（手机上滚不了，这是兜底；桌面端也能鼠标一放就看全）
+    const c = API.Cities.get(id);
+    nm.title = (c && c.name) || inn.textContent || '';
+  }
+
   function renderWatchlist() {
     const box = $('#watchlist');
     box.innerHTML = '';
@@ -142,7 +166,11 @@
           // 竖屏另有安排：靠 CSS 把这两层包装 display:contents 散开，
           // 星就变成行的网格项，挪到「名字与价格之间的空档」、跨两行垂直居中（好点，像苹果天气）。
           el('div', { class: 'sw-name-row' }, [
-            el('div', { class: 'sw-name', text: c.name }),
+            // 名字里面再包一层 `.sw-name-in`：超长名字滚动时**动内层**，
+            // 外层那 90px 的格子纹丝不动 —— 右边的星因此一点都不会跟着晃。
+            // （区县全名可以长到 15 个字，比如「双江拉祜族佤族布朗族傣族自治县」；
+            //   而收藏列表里是可能有区县的：定位到某个区县后可以给它加星。）
+            el('div', { class: 'sw-name' }, [el('span', { class: 'sw-name-in', text: c.name })]),
             el('span', {
               // 实心星 = 已收藏，点它 = 取消收藏 —— 跟搜索结果行/全部城市抽屉里的空心星是同一套语义，
               // 也跟搜索结果行 / 行情头 / 全部城市抽屉里的星一致（全站就这一个符号）。
@@ -157,6 +185,9 @@
         el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
       ]);
       box.appendChild(row);
+      // 名字比格子宽就记下超出多少 —— 只有**选中那一行**会据此滚动（CSS 只看 .on）。
+      // 必须在 append 之后量：没进文档的元素量不出 scrollWidth。
+      markNameOverflow(row, id);
     });
   }
 
@@ -501,7 +532,11 @@
     }, [
       el('div', {}, [
         el('div', { class: 'sw-name-row' }, [
-          el('div', { class: 'sw-name', text: '📍 ' + (g.district || g.city || '当前所在地') }),
+          // 定位到的可能是**区县**，全名最长 15 个字（`双江拉祜族佤族布朗族傣族自治县`）——
+          // 比名字格宽得多。同样包一层内层，选中这一行时横向滚动看全（见 markNameOverflow）。
+          el('div', { class: 'sw-name' }, [
+            el('span', { class: 'sw-name-in', text: '📍 ' + (g.district || g.city || '当前所在地') })
+          ]),
           el('span', {
             class: 'sw-star' + (starred ? ' on' : ''),
             text: starred ? '★' : '☆',
@@ -519,6 +554,7 @@
       el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
     ]);
     box.appendChild(row);
+    markNameOverflow(row, LOC_ID);
   }
 
   /** 启动时恢复上次定位；**不会**在加载时弹权限框（只在已授权时静默刷新）。

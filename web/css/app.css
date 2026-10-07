@@ -175,6 +175,28 @@ body{
 .stock-row .sw-name-row .sw-name{
   width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
+/* ── 超长名字：**只有选中那一行**横向滚动把名字看全（桌面端） ──
+   90px 的格子装不下区县全名（最长 15 个字，`双江拉祜族佤族布朗族傣族自治县`，
+   而收藏列表里是可能有区县的 —— 定位到区县后可以加星）。
+   两个关键点：
+   ① **动的是内层 `.sw-name-in`，外层格子宽度不变** —— 所以右边的星一点都不会跟着晃
+      （这正是前几轮反复修的那个毛病，不能再犯一次）；
+   ② 内层必须**常驻** `inline-block`：行内元素的 clientWidth/scrollWidth 恒为 0，
+      那样 JS 就量不出超了多少（markNameOverflow 依赖它）。
+   `--sw-over` 由 JS 写在这一格上（值 = 文字宽 − 格子宽），自定义属性会继承给内层。 */
+.stock-row .sw-name-row .sw-name > .sw-name-in{display:inline-block;white-space:nowrap}
+.stock-row.on .sw-name.ovf > .sw-name-in{
+  animation: swMarquee 7s ease-in-out infinite alternate;
+}
+/* 两头停一下再走，别像跑马灯那样一刻不停 */
+@keyframes swMarquee{
+  0%, 15%   { transform: translateX(0); }
+  85%, 100% { transform: translateX(calc(-1 * var(--sw-over, 0px))); }
+}
+/* 系统里开了"减少动态效果"就别动 */
+@media (prefers-reduced-motion: reduce){
+  .stock-row.on .sw-name.ovf > .sw-name-in{animation:none}
+}
 .stock-row:hover{background:#212734}
 .stock-row.on{background:#2a3140}
 .stock-row.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
@@ -532,6 +554,9 @@ body{
   .stock-row .sw-name,.stock-row .sw-sub{
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;   /* 可收缩 → 不把星顶歪 */
   }
+  /* 竖屏**不滚动**：这里名字列占满剩下的宽度（实测 15 字名也放得下），
+     滚动反而会在手指边上一刻不停地动。桌面端格子只有 90px，才需要滚。 */
+  .stock-row.on .sw-name.ovf > .sw-name-in{animation:none}
   .stock-row .sw-sub{grid-column:1;grid-row:2}
   .stock-row .sw-star{
     grid-column:2;grid-row:1 / span 2;align-self:center;justify-self:start;
