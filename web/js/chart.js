@@ -199,7 +199,16 @@
        ③ 刻度函数一样（否则同一根刻度线上下写的是不同的字）
      再加一条：K 线主图有 dataZoom、副图没有的话，可见区间根本不是同一段。
      所以这四样收成一份，主图和副图都从这里取，谁也别自己定。 */
-  const PAD_L = 52, PAD_R = 56;
+  const PAD_L = 52;
+  /* 右侧留白是**主图和副图共用的一份契约** —— 两块图必须用同一个值，否则同一个时刻
+     会落在不同的 x 像素上（"上下日期没对齐"那个老问题）。
+     所以叠加线开着的时候要**两边一起加宽**，不能只加主图那一边。
+     为什么需要加宽：叠加线挂的是第三根 Y 轴，`position:'right' + offset:44`，
+     它的刻度文字比百分比轴还要往右 44px —— 56px 的留白装不下，最右边那几个数会被
+     容器边缘切掉（用户报的"主图右侧竖轴上的数据被遮挡显示不全"）。 */
+  let PAD_R = 56;
+  const PAD_R_OV = 104;                       // 有叠加线时用的右留白
+  function setPadR(overlayOn) { PAD_R = overlayOn ? PAD_R_OV : 56; }
 
   /** 某一周期的横轴刻度参数（interval + formatter）。n = 类别数。
       hourly（趋势/7日）的类别是原始时间键 `YYYY-MM-DDTHH:MM`，K 线是日期（月K 是 `YYYY-MM`）。 */
@@ -273,6 +282,7 @@
     const ov = S.ov;
     const od = ov && ov.byKey ? xs.map(k => (ov.byKey[k] == null ? null : ov.byKey[k])) : null;
     const ovOk = !!(od && od.some(v => v != null));
+    setPadR(ovOk);   // 右留白必须在这里就位：副图跟着一起用（见 PAD_R 上面那段）
     const ovAxis = ovOk ? {
       type: 'value', position: 'right', offset: 44, scale: true,
       axisLine: { show: false }, axisTick: { show: false },
@@ -441,6 +451,7 @@
     const ov = S.ov;
     const od = ov && ov.byKey ? xs.map(k => (ov.byKey[k] == null ? null : ov.byKey[k])) : null;
     const ovOk = !!(od && od.some(v => v != null));
+    setPadR(ovOk);   // 同上：K 线档挂了叠加线也要把右留白让出来
     const ovAxis = ovOk ? {
       type: 'value', scale: true, position: 'right', offset: 44,
       axisLine: { show: false }, axisTick: { show: false },
@@ -727,7 +738,9 @@
     setTheme() { readTheme(); },
     // 副图（wxui.js 画的天气副图）必须复用同一套横轴契约，
     // 否则同一个时刻会落在不同的 x 像素上 —— 用户报的"上下日期没对齐"。
-    axisOf, zoomStart, PAD_L, PAD_R,
+    axisOf, zoomStart, PAD_L, setPadR,
+    // PAD_R 用 getter 导出：它现在是可变的（叠加线开着时要加宽），副图每次都读当前值
+    get PAD_R() { return PAD_R; },
     hasMain() { return !!main; },
     /** 主图当前用的横轴类别数组。副图必须吃同一份（见 wxui.js 的 alignSeries）——
         副图自己的聚合桶数跟主图 K 线根数能差一个数量级（实测 60 vs 553 根），

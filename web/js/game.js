@@ -2274,11 +2274,19 @@
       }
     }
     try {
+      // ⚠ 均线和大盘线也要跟着**实时窗口**一起滚。
+      //   它们是在整份 option 里按当时的 from..n 切好的，而 liveTick 每帧只换
+      //   series[0]（蜡烛）和 series[1]（活跃度）—— 窗口一往前走，这两条线还停在
+      //   旧位置上，几根之后就被甩出可视区。用户看到的就是"某条线过一会儿不见了"
+      //   （竖屏可视根数少，窗口滑得更快，所以手机上更容易撞见）。
+      const extra = [];
+      if (G._ma) G._ma.forEach(a => extra.push({ data: a.slice(from, n) }));
+      if (G.regLine) extra.push({ data: G.regLine.slice(from, n) });
       G.main.setOption({
         series: [
           { data: d.bars, markLine: { silent: true, symbol: 'none', data: marks } },
           { data: d.vols }
-        ]
+        ].concat(extra)
       }, false, true);   // notMerge=false 保留其余字段；lazyUpdate=true 交给 ECharts 合并到下一帧画
     } catch (e) { /* 合并失败就算了，下一根收盘时 render() 会整个重画 */ }
 
@@ -2777,6 +2785,10 @@
 
   function endRound(why) {
     G.running = false;
+    // 这一局到头了，存档就没意义了 —— 存档记的是"打到一半的那一局"，留着它下次进来会弹
+    // 「有一局尚未结束」。结算卡上有「退出」可以清，但**用户完全可能直接关掉页面/标签**，
+    // 那条路走不到 exitFlow，所以在这里就清掉（覆盖所有结局）。
+    clearSave();
     G.ended = true;
     stopTimer();
 
@@ -3186,7 +3198,13 @@
 
   /** 点 ✕ / 点遮罩 / 按返回键都走这里。 */
   async function exitFlow() {
-    if (!G.running || G.ended) { close(); return; }
+    // 这一局**已经打完了**（爆仓 / 到期结算）却点了退出：存档里记的是"打到一半的那一局"，
+    // 留着它下次进来就会弹「有一局尚未结束」—— 可那一局早就结束了。
+    // 所以这里要清掉。（真正的兜底在 endRound 里也清了一次，那条路覆盖"直接关掉页面"。）
+    // ⚠ 只在 G.ended 时清：如果只是"没在跑"（刚打开、还没点继续 / 还没点开始），
+    //   那份存档是用户还没决定要不要继续的那一局，清掉就等于替他扔了。
+    if (G.ended) { G.running = false; G.ended = false; clearSave(); close(); return; }
+    if (!G.running) { close(); return; }
     const v = await askChoice({
       title: '退出游戏',
       body: '行情不会因为退出而暂停。<br>选择「保留进度」，下次进入时会按真实经过的时间' +

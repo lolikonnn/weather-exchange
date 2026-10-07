@@ -356,17 +356,24 @@
   100% { opacity: 0; transform: translate(-50%, -8px) scale(.98); }
 }
 
-/* ───────── 结算 / 开场遮罩 ───────── */
+/* ───────── 结算 / 开场遮罩 ─────────
+   ⚠ 居中**不能用 `align-items:center`**：
+   卡片比容器高的时候，flex 居中会让它上下各溢出一半，而溢出的上半截在
+   `overflow-y:auto` 的滚动区**之外**（滚动只能往下走）—— 于是卡片顶端永远看不到。
+   手机竖屏上开场卡本来就比屏幕高，用户报的"开场卡片顶端被吞了"就是这个。
+   改法：容器 `align-items:flex-start`，卡片自己 `margin:auto` ——
+   卡片矮的时候上下 auto 把它居中，卡片高的时候从顶端开始、整张都能滚到。 */
 .gg-cover {
   position: absolute; inset: 0; z-index: 6;
   background: rgba(8, 10, 15, .93);
-  display: flex; align-items: center; justify-content: center; padding: 20px;
+  display: flex; align-items: flex-start; justify-content: center; padding: 20px;
   overflow-y: auto;
 }
 .gg-card {
   width: min(560px, 100%); text-align: center;
   border: 1px solid var(--line, #262b36); border-radius: 12px;
   background: #141821; padding: 26px 26px 22px;
+  margin: auto;
 }
 .gg-card h2 { margin: 0 0 4px; font-size: 30px; letter-spacing: 6px; }
 .gg-card h2.win  { color: #2bd6a0; text-shadow: 0 0 26px rgba(43, 214, 160, .5); }
