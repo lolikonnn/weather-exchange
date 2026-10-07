@@ -439,9 +439,10 @@
       if (prov && provs.indexOf(prov) < 0) prov = provs[0] || null;
       // 城市同样**列全**：没有单站雷达的城市照常可选 —— 打开时用**离它最近的那个有站城市**
       // 的单站产品（比大区拼图贴近得多，大区图一覆盖就是几百公里，看不出本地那块雨）。
-      // 名字后面标「就近站」让用户事先知道会拿到什么。
+      // 名字后面**不再标「就近站」**：头部那句已经写明用哪一站、多远，
+      // 选项卡里再标一遍是冗余，反而把城市名挤长了（使用者提的）。
       const cityBtns = prov
-        ? all.filter(c => c.prov === prov).map(c => [c.id, stations[c.id] ? c.name : c.name + ' · 就近站'])
+        ? all.filter(c => c.prov === prov).map(c => [c.id, c.name])
         : [];
       if (cityId && cityBtns.every(x => x[0] !== cityId)) cityId = null;
 
