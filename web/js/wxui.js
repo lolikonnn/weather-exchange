@@ -437,10 +437,11 @@
       });
       if (!prov && provs.length) prov = provs[0];        // 别让城市行空着
       if (prov && provs.indexOf(prov) < 0) prov = provs[0] || null;
-      // 城市同样**列全**：没有单站雷达的城市照常可选，点了就回落到所在大区的拼图，
-      // 名字后面标一个「大区」让用户事先知道会拿到什么（标题里还会再说明一次）。
+      // 城市同样**列全**：没有单站雷达的城市照常可选 —— 打开时用**离它最近的那个有站城市**
+      // 的单站产品（比大区拼图贴近得多，大区图一覆盖就是几百公里，看不出本地那块雨）。
+      // 名字后面标「就近站」让用户事先知道会拿到什么。
       const cityBtns = prov
-        ? all.filter(c => c.prov === prov).map(c => [c.id, stations[c.id] ? c.name : c.name + ' · 大区'])
+        ? all.filter(c => c.prov === prov).map(c => [c.id, stations[c.id] ? c.name : c.name + ' · 就近站'])
         : [];
       if (cityId && cityBtns.every(x => x[0] !== cityId)) cityId = null;
 
@@ -455,28 +456,49 @@
       const body = $('#wxRadarBody'), sub = $('#wxRadarSub');
       if (!body) return;
 
-      const st = cityId && stations[cityId];
-      const key = st ? 'S:' + cityId : region;
+      const stId = (cityId && stations[cityId]) ? cityId : null;
+      const st = stId ? stations[stId] : null;
       const rname = (W.RADAR_REGIONS.filter(x => x.k === region)[0] || {}).n || region;
-      // 选中的城市**没有单站雷达**时，图还是所在大区的拼图 —— 但标题必须说清楚
-      // 是哪座城市、以及为什么给的是大区图。否则点了没反应，用户会以为列表坏了。
       const cityNm = cityId ? ((API.Cities.get(cityId) || {}).name || '') : '';
+      /* 选中的城市**没有自己的雷达站**时，用**离它最近的那个有站城市**，而不是大区拼图 ——
+         大区图一覆盖就是几百公里，本地那块雨根本看不出来。
+         这跟上面「当前位置」那条回落路径是**同一条规则**（气象局没有"按坐标取雷达"的接口，
+         只能落到最近的单站产品上）。真的一个站都够不着时才退回大区拼图。 */
+      let near = null, nearKm = 0;
+      if (cityId && !stId) {
+        const me = API.Cities.get(cityId);
+        if (me && me.lat != null && me.lon != null) {
+          let bk = Infinity;
+          all.forEach(c => {
+            if (!stations[c.id] || c.lat == null || c.lon == null) return;
+            const k = hv(me.lat, me.lon, c.lat, c.lon);
+            if (k < bk) { bk = k; near = c; nearKm = k; }
+          });
+        }
+      }
+      // 真正去取数的那个站（自己的站优先，没有就用就近站）。
+      // ⚠ 站对象里**没有 `id` 字段** —— id 就是 `stations` 的键，所以要单独记一份。
+      const useId = stId || (near ? near.id : null);
+      const useSt = useId ? stations[useId] : null;
+      const key = useId ? 'S:' + useId : region;
       const label = st
         ? ((cityId === locSt ? '📡 当前位置 · ' : cityId === curSt ? '📍 ' + (API.Cities.get(curSt) || {}).name + ' · ' : '') + st.name + ' 单站雷达')
-        : (cityNm
-            ? '雷达回波 · ' + rname + '（' + cityNm + ' 没有单站雷达，用大区拼图）'
-            : '雷达回波 · ' + rname);
+        : (useSt
+            ? '雷达回波 · ' + useSt.name + ' 单站雷达（' + cityNm + ' 没有自己的站，用最近的 ' + useSt.name + '，约 ' + Math.round(nearKm) + ' km）'
+            : (cityNm
+                ? '雷达回波 · ' + rname + '（' + cityNm + ' 附近没有单站雷达，用大区拼图）'
+                : '雷达回波 · ' + rname));
 
       let frames = this._radarFrames;
       if (this._radarKey !== key || !frames || !frames.length) {
         body.innerHTML = '<div class="wx-load">正在探测最近有货的雷达帧…</div>';
         // 单站和大区都没有 small/ 档，每帧 500–900 KB，所以只取 8 帧；
         // 只有全国拼图有 small/（约 200 KB），可以取 16 帧。
-        const want = st ? 8 : (region === 'ACHN' ? 16 : 8);
+        const want = useSt ? 8 : (region === 'ACHN' ? 16 : 8);
         const step = (g, t) => { if (sub) sub.textContent = '已找到 ' + g + ' 帧'; };
         try {
-          frames = st ? await W.probeStation(st.az, want, step)
-                      : await W.probeRadar(region, want, step);
+          frames = useSt ? await W.probeStation(useSt.az, want, step)
+                         : await W.probeRadar(region, want, step);
         } catch (e) {
           this._radarFrames = null; this._radarKey = null;
           body.innerHTML = '<div class="wx-load">雷达数据获取失败：' + esc(e.message) + '</div>';
@@ -1048,6 +1070,12 @@
     const pt = body.querySelector('.wx-pt');
     const idx = body.querySelector('.wx-pidx');
 
+    /* 头部固定显示"这一次在看什么"（哪一站 / 哪一档时效 / 哪片大区）。
+       ⚠ 以前 title 只进了 `<img alt>`，而 show() 每帧又把 sub 覆盖成时间戳 ——
+       于是调用方精心拼的那句说明（比如「珠海 没有自己的站，用最近的 广州，约 108 km」）
+       **用户一个字都看不到**。时间戳本来就有一个专用的 `.wx-pt` 在显示，不必再塞进头部。 */
+    if (sub) sub.textContent = title;
+
     // 全部预载，播放才不卡
     frames.forEach(f => { const im = new Image(); im.src = f.url; });
 
@@ -1059,7 +1087,6 @@
       pt.textContent = f.t.getFullYear() + '-' + pad2(f.t.getMonth() + 1) + '-' + pad2(f.t.getDate()) +
         ' ' + pad2(f.t.getHours()) + ':' + pad2(f.t.getMinutes());
       idx.textContent = (i + 1) + ' / ' + frames.length;
-      if (sub) sub.textContent = pt.textContent;
     }
     show(frames.length - 1);
 
