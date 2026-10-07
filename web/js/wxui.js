@@ -517,9 +517,15 @@
         segs: [
           { regions: jumpBtns, region: activeJump, act: 'jump' },
           { regions: W.RADAR_REGIONS.map(r => [r.k, r.n]), region: region, act: 'reg' },
-          { regions: provs.map(p => [p, p.replace(/省|市|自治区|回族|维吾尔|壮族|特别行政区/g, '')]), region: prov, act: 'prov' },
-          { regions: cityBtns, region: cityId, act: 'city' }
+          { regions: provs.map(p => [p, shortProv(p)]), region: prov, act: 'prov' },
+          { regions: cityBtns, region: cityId, act: 'city', key: 'city' }
         ],
+        // 城市搜索框，就放在「📡 当前位置」那一行按钮的右边。
+        // 为什么要有它：一个省列全就是二十多个按钮，横着翻半天才能找到自己要的那座。
+        tools: '<label class="wx-find" title="搜城市：城市名 / 拼音 / 城市代码都行">' +
+          '<span class="wx-find-ico" aria-hidden="true">🔍</span>' +
+          '<input id="wxRadarQ" type="search" placeholder="搜城市…" autocomplete="off" spellcheck="false" />' +
+          '<span class="wx-find-x" id="wxRadarQX" hidden title="清空">✕</span></label>',
         onSeg: (act, k) => {
           if (act === 'jump') {
             const c = API.Cities.get(k === '@loc' ? locSt : curSt);
@@ -527,6 +533,55 @@
           } else if (act === 'reg') WXUI.openRadar(k, null, null);
           else if (act === 'prov') WXUI.openRadar(region, k, null);
           else WXUI.openRadar(region, prov, k);
+        },
+        onReady: (api) => {
+          const qi = body.querySelector('#wxRadarQ');
+          const qx = body.querySelector('#wxRadarQX');
+          const row = body.querySelector('.wx-seg[data-row="city"]');
+          if (!qi || !row) return;
+
+          /** 重画城市行。每一颗按钮的点击 = 换城市，必须**先停掉播放**，
+           *  否则那个 420ms 的定时器会挂在被换掉的旧节点上继续空转。 */
+          const paint = (list) => {
+            row.innerHTML = list.length
+              ? list.map(x => '<button class="wx-segbtn' + (x[0] === cityId ? ' on' : '') +
+                  '" data-city="' + esc(x[0]) + '">' + esc(x[1]) + '</button>').join('')
+              : '<span class="wx-none">没有匹配的城市</span>';
+            row.querySelectorAll('.wx-segbtn').forEach(b => b.addEventListener('click', () => {
+              api.stopPlay();
+              const c = API.Cities.get(b.dataset.city);
+              if (!c) return;
+              // 跨省命中的结果，大区/省也得跟着换 —— regionFor 能从一个城市反推它属于哪个大区
+              if (c.prov && c.prov !== prov) WXUI.openRadar(W.regionFor(c), c.prov, c.id);
+              else WXUI.openRadar(region, prov, c.id);
+            }));
+          };
+
+          const run = () => {
+            const q = qi.value.trim().toLowerCase();
+            if (qx) qx.hidden = !q;
+            if (!q) { paint(cityBtns); return; }   // 空搜索 = 回到"本省列全"
+            // 先在本省里找（绝大多数情况都够），没有再去全国目录找，并且**带上省份** ——
+            // 不然搜出个"城关区"，根本不知道是哪个省的。
+            const inProv = cityBtns.filter(x =>
+              x[1].toLowerCase().indexOf(q) >= 0 || String(x[0]).indexOf(q) >= 0);
+            if (inProv.length) { paint(inProv); return; }
+            // 全国目录里找。⚠ 命中里既有城市也有区县，而**雷达站是按城市建的** ——
+            // 搜「成都」如果连它的 20 个区县一起倒出来，就又把列表变长了。
+            // 所以只要有一个城市级命中，就只给城市级；全都没有（比如搜「武侯区」）才退回区县。
+            const hits = API.Cities.search(q, 60);
+            const onlyCity = hits.filter(c => !c.place);
+            const use = (onlyCity.length ? onlyCity : hits).slice(0, 30);
+            paint(use.map(c => [c.id, c.name + ' · ' + shortProv(c.prov || '')]));
+          };
+
+          qi.addEventListener('input', run);
+          qi.addEventListener('keydown', e => {
+            if (e.key === 'Escape') { qi.value = ''; run(); qi.blur(); return; }
+            // 回车直接进第一条：搜完不必再伸手点一下
+            if (e.key === 'Enter') { const f = row.querySelector('.wx-segbtn'); if (f) f.click(); }
+          });
+          if (qx) qx.addEventListener('click', () => { qi.value = ''; run(); qi.focus(); });
         }
       });
     },
@@ -1494,12 +1549,22 @@
   /* 图片播放器：雷达 / 卫星 / 降水共用。
      opt.segs 可以给多行分段控件（雷达用三行：大区 → 省 → 市）；
      opt.regions 是单行的简写，两者等价。 */
+  /** 省名缩写：`广东省`→`广东`、`新疆维吾尔自治区`→`新疆`、`内蒙古自治区`→`内蒙古`、
+   *  `香港特别行政区`→`香港`。按钮上放全名会把那一行撑得很长；
+   *  搜索结果里带上缩写，才知道跨省命中的那个"城关区"到底在哪。 */
+  function shortProv(p) {
+    const s = String(p || '');
+    return s.replace(/省|市|自治区|回族|维吾尔|壮族|特别行政区/g, '') || s;
+  }
+
   function renderPlayer(body, sub, frames, title, opt) {
     opt = opt || {};
     let i = 0;
     const rows = opt.segs || (opt.regions ? [{ regions: opt.regions, region: opt.region, act: '' }] : []);
     const segRows = rows.filter(s => s && (s.regions || []).length).map(s =>
-      '<div class="wx-seg">' + s.regions.map(r =>
+      // s.key 可选：给这一行挂个名字（`data-row="city"`），调用方之后能精确找到它、
+      // 单独重画它（雷达页的城市行要按搜索词过滤，靠下标找太脆）。
+      '<div class="wx-seg"' + (s.key ? ' data-row="' + s.key + '"' : '') + '>' + s.regions.map(r =>
         '<button class="wx-segbtn' + (r[0] === s.region ? ' on' : '') +
         '" data-seg="' + (s.act || '') + '" data-reg="' + esc(r[0]) + '">' + esc(r[1]) + '</button>'
       ).join('') + '</div>'
@@ -1508,6 +1573,9 @@
       '<div class="wx-player">' +
         '<div class="wx-pbar">' +
           (segRows ? '<div class="wx-segs">' + segRows + '</div>' : '') +
+          // opt.tools：调用方自己塞的控件（雷达页的城市搜索框就放这儿 ——
+          // 在 .wx-segs 右边、播放键左边，正好挨着第一行「📡 当前位置」那颗按钮）
+          (opt.tools || '') +
           '<span class="wx-pt"></span>' +
           '<button class="wx-btn" data-act="play">▶ 播放</button>' +
         '</div>' +
@@ -1545,6 +1613,9 @@
 
     let timer = null;
     const btn = body.querySelector('[data-act="play"]');
+    /** 停掉自动播放。调用方自己重画了某一行之后，要在它的点击处理里先调这个，
+     *  否则切城市时那个 420ms 的定时器会挂在已经脱离文档的旧节点上继续空转。 */
+    function stopPlay() { if (timer) { clearInterval(timer); timer = null; btn.textContent = '▶ 播放'; } }
     btn.addEventListener('click', () => {
       if (timer) { clearInterval(timer); timer = null; btn.textContent = '▶ 播放'; return; }
       btn.textContent = '⏸ 暂停';
@@ -1553,6 +1624,7 @@
         if (i >= frames.length - 1) { show(0); } else { show(i + 1); }
       }, 420);
     });
+    if (opt.onReady) opt.onReady({ stopPlay: stopPlay });
     body.querySelectorAll('.wx-segbtn').forEach(b => b.addEventListener('click', () => {
       if (timer) { clearInterval(timer); timer = null; }
       const act = b.dataset.seg;

@@ -669,6 +669,33 @@ body{
 }
 .wx-segbtn.on{background:var(--accent);border-color:var(--accent);color:#1a1400;font-weight:600}
 .wx-pt{margin-left:auto;font-family:var(--mono);font-size:12.5px;color:var(--txt-hi)}
+/* 雷达页的城市搜索框：挨着第一行「📡 当前位置」那颗按钮。
+   为什么要有它：一个省的城市是**列全**的（广东 21 个），横着翻半天才找到自己要的那座。
+   放在 .wx-segs 右边（而不是塞进某一 .wx-seg 里）—— 那些行本身是横向可滚的，
+   塞进去会跟着一起滚走。 */
+.wx-find{
+  flex:0 0 auto;display:flex;align-items:center;gap:3px;height:22px;padding:0 6px;
+  background:var(--panel3);border:1px solid var(--line2);border-radius:var(--r);
+  /* 顶对齐：.wx-pbar 是 align-items:center，不写这条它就会挂在四行按钮的正中间，
+     看起来像贴着"省"那一行。顶对齐之后它正好和第一行「📡 当前位置」齐平。 */
+  align-self:flex-start;
+}
+.wx-find-ico{font-size:11px;line-height:1}
+.wx-find input{
+  width:96px;min-width:0;padding:0;background:none;border:0;outline:none;border-radius:0;
+  color:var(--txt-hi);font-family:inherit;font-size:12px;
+  /* ⚠ 必须关掉原生外观：`<input type=search>` 在 Chrome 里默认画一条底边线，
+     截图里就是"深"字下面那道横杠 —— border:0 管不了它（那是 appearance 画的）。 */
+  -webkit-appearance:none;appearance:none;
+}
+.wx-find input::placeholder{color:var(--dim2)}
+/* 原生小叉和放大镜装饰一起去掉，用自己那两颗 */
+.wx-find input::-webkit-search-decoration,
+.wx-find input::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none;display:none}
+.wx-find-x{cursor:pointer;color:var(--dim2);font-size:11px;line-height:1;padding:1px 2px}
+.wx-find-x:hover{color:var(--accent)}
+/* 城市行被搜空时的占位（别留一行空白让人以为卡住了） */
+.wx-none{flex:none;color:var(--dim2);font-size:11.5px;padding:3px 2px}
 .wx-btn{
   flex:none;height:22px;padding:0 13px;border-radius:var(--r);
   background:var(--panel3);border:1px solid var(--line2);color:var(--txt-hi);
@@ -854,6 +881,10 @@ body{
   .wx-sub{display:none}
   .wx-pbar{flex-wrap:wrap;row-gap:6px}
   .wx-pt{margin-left:0}
+  /* 竖屏下 .wx-pbar 会换行，那就让搜索框**独占一行**、把宽度用起来 ——
+     窄屏上 96px 只能搜两个字，城市名根本打不全。 */
+  .wx-find{flex:1 1 100%;height:26px}
+  .wx-find input{width:100%;flex:1 1 auto;font-size:13px}
   .wx-ty{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
   .wx-tylist{
     flex-direction:row;overflow-x:auto;overflow-y:hidden;
