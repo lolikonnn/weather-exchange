@@ -280,22 +280,22 @@
         }
       }
     ];
-    // 紫外线单开一根右轴：AQI 是 0~500、PM2.5 是 μg/m³，跟 UV 指数（0~11+）放同一根轴上，
-    // 要么把 UV 压成一条贴地的直线，要么把 AQI 顶出画面。固定 0~12 好读。
+    // ── 紫外线并到 AQI 那根轴上（**不再单开第三根轴**）──
+    // 这张图已经有两套刻度：右侧 AQI（0~500）、左侧 PM2.5（μg/m³）。
+    // 右留白一共只有 56px，塞不下第三列，试过的两条路都不行：
+    //   · `offset:38` 推出 AQI 外面 → 被容器切掉（"右侧数字被遮住"）；
+    //   · 刻度画进图内 → 正好压在高高的 PM2.5 柱子上（"跟柱状图叠一起"），
+    //     而且轴自己的 `name:'UV'` 还留在图外顶部，看着像"有个东西没删干净"。
+    // 所以 UV 按 0~12 → 0~AQI轴上限 做**线性映射**，当第三条线画在 AQI 那根轴上；
+    // 它的真值在 tooltip 里（带「弱 / 中等 / 强」字样），不靠刻度读。
     if (uvOk) {
-      o.yAxis.push({
-        // ⚠ UV 这根轴原来用 offset:38 推到 AQI 外面，但右侧留白一共只有 56px ——
-        //   AQI 三位数 + 38 + UV 两位数是装不下的，最右边那列被容器切掉（"右侧的数字被遮住"）。
-        //   改成刻度画在**图内**（inside），留白一个字不动：跟主图那根叠加线是同一个做法。
-        type: 'value', name: 'UV', min: 0, max: 12, position: 'right',
-        nameTextStyle: { color: TH.dim, fontSize: 10, align: 'right' },
-        axisLine: { show: false }, splitLine: { show: false },
-        axisLabel: { color: TH.dim, fontSize: 10, inside: true, margin: 2 }
-      });
+      const aVals = aq.filter(v => v != null && isFinite(v));
+      const aMax = Math.max(100, Math.ceil(Math.max.apply(null, aVals.concat([0])) / 50) * 50);
+      o.yAxis[0].max = aMax;
       o.series.push({
-        name: '紫外线', type: 'line', yAxisIndex: 2, smooth: true, showSymbol: false, z: 4,
-        // 逐点着色让"今天什么时候晒"一眼看出来，而不用回头去看右边那根刻度
-        data: uv.map(v => ({ value: v, itemStyle: { color: uvColor(v) } })),
+        name: '紫外线', type: 'line', yAxisIndex: 0, smooth: true, showSymbol: false, z: 4,
+        // 逐点着色让"今天什么时候晒"一眼看出来
+        data: uv.map(v => ({ value: v == null ? null : +(v / 12 * aMax).toFixed(1), itemStyle: { color: uvColor(v) } })),
         lineStyle: { width: 1.5, color: '#ffb74d' }, itemStyle: { color: '#ffb74d' }
       });
     }
