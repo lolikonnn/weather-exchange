@@ -1073,13 +1073,18 @@ body.fullchart .mtabs{visibility:hidden}
 }
 .disclaimer:hover{color:var(--dim);background:#161a22}
 @media (max-width:860px){
-  /* 免责声明在手机上要**允许多行**：这条是"你别拿它当官方预报"的正经事，
-     以前整条 nowrap + ellipsis + 固定 24px 行高，等于只显示前半句
-     （用户报过「免责文字也显示不完全」）。改成块级 + 正常换行，
-     行高交给 grid 的 auto 行自己撑。 */
+  /* 免责声明在手机上**必须只有一行**。
+     ⚠ 这里翻过两次车，都记下来：
+       ① 最初是 nowrap + ellipsis，但**文案太长**，于是只显示前半句 —— 用户报「免责文字也显示不完全」；
+       ② 我当时的修法是**允许换行**（就是下面这行 white-space:normal），
+          结果合规那轮文案加长到 120 字，撑成三四行，把地图挤上去了。
+     真正的解法是**把文案缩短到一行装得下** —— 现在是 27 个汉字，而 10px 字号在 390px 宽里
+     放得下约 55 个。不该让它在「显示不全」和「太高」之间来回横跳，该动的是文案长度。
+     仍然保留 overflow+ellipsis 作**兜底**：真遇到 250px 这种极窄屏也只是末尾省略，
+     不会溢出、也不会把别的东西顶下去。完整的免责内容一律在弹窗里（index.html 的 welcome）。 */
   .disclaimer{
     display:block;padding:3px 8px;font-size:10px;
-    white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.6;
   }
 }
 
