@@ -405,7 +405,11 @@ body{
     grid-template-columns:minmax(0,1fr);
     /* body 是 grid，行数必须跟直接子元素一一对上，多一个少一个都会整体错位。
        顺序：顶栏 / 天气条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签。 */
-    grid-template-rows:auto auto auto minmax(0,1fr) 22px 24px 54px;  /* 顶栏 / 天气条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签 */
+    /* 状态栏和免责声明必须是 auto 而不是写死 22px / 24px：
+       手机宽度下这两行里的文字放不下，写死高度就只能看着它被截掉
+       （用户报过「下方一加载信息、数据来源与免责文字也显示不完全」）。
+       给 auto 让它们自己长高，主体区用 minmax(0,1fr) 吸收剩余空间。 */
+    grid-template-rows:auto auto auto minmax(0,1fr) auto auto 54px;  /* 顶栏 / 天气条 / 指数条 / 主体 / 状态栏 / 免责声明 / 四页签 */
     overflow-x:hidden;
     font-size:13px;
     -webkit-text-size-adjust:100%;
@@ -426,7 +430,12 @@ body{
      下面那行 row-gap 只有配了 wrap 才有意义。 */
   .topbar-ctrl{flex:1 1 100%;flex-wrap:wrap;margin-left:0;justify-content:space-between;gap:6px;row-gap:6px}
   .topbar-ctrl .ctrl>span{display:none}          /* 只留下拉框，藏掉"行情刷新"这类标签 */
-  .topbar-ctrl select{height:26px;font-size:11.5px;padding:0 4px;max-width:96px;min-width:0}
+  /* ⚠ 这里**不能**给 select 设 max-width 把文字夹住。
+     下拉框显示的是选中项的完整文字（例如「红＝升温（国内习惯）」，约 139px），
+     以前限成 96px，选中项就被从中间切断，看起来像"选框文字显示不全"
+     （用户报的正是这个）。让它们按内容取宽，这一排本来就是 flex-wrap:wrap，
+     放不下会自己换到下一行，不会顶穿视口。 */
+  .topbar-ctrl select{height:26px;font-size:11.5px;padding:0 4px;max-width:none;min-width:0;flex:0 1 auto}
   .clock{flex-direction:row;align-items:baseline;min-width:0;gap:5px;line-height:1}
   #clock{font-size:11.5px;letter-spacing:-.2px}
   #clockDate{display:none}
@@ -515,14 +524,20 @@ body{
   .mtab.active{color:var(--accent)}
   .mtab.active i{transform:translateY(-1px)}
 
-  .statusbar{padding:0 8px;font-size:10.5px}
+  /* 状态栏：手机上一行塞不下「已加载 …（86 根日K / 2592 个时次）＋ 下次刷新 ＋ 版本 ＋ 下载客户端」。
+     以前只改 padding/font-size，flex 子项仍然会被压缩，于是**在每个子项内部**折行
+     （截图里那半截「载 客」就是这么来的）。正确做法：子项不收缩、整条自己换行。 */
+  .statusbar{flex-wrap:wrap;row-gap:2px;padding:3px 8px;font-size:10.5px;min-height:22px}
+  .statusbar>*{flex:0 0 auto;white-space:nowrap;min-width:0}
+  .statusbar .grow{display:none}         /* 换行排版下这个"把右侧推到底"的占位符没用了 */
+  #statusLeft{flex:1 1 100%}             /* 「已加载 …」独占一行，其余排到第二行 */
   #statusSrc{display:none}
 }
 
 /* 横屏手机 / 小平板：回到两栏（自选 + 图表），盘口折到下面 */
 @media (max-width:860px) and (orientation:landscape){
   .mtabs{display:none}
-  body{grid-template-rows:auto auto auto minmax(0,1fr) 22px 24px}
+  body{grid-template-rows:auto auto auto minmax(0,1fr) auto auto}
   .layout{grid-template-columns:170px minmax(0,1fr)}
   .pane-left,.pane-center,.pane-right{display:flex;grid-area:auto}
   .pane-right{display:none}
@@ -815,7 +830,14 @@ body.fullchart .mtabs{visibility:hidden}
 }
 .disclaimer:hover{color:var(--dim);background:#161a22}
 @media (max-width:860px){
-  .disclaimer{padding:0 8px;font-size:10px}
+  /* 免责声明在手机上要**允许多行**：这条是"你别拿它当官方预报"的正经事，
+     以前整条 nowrap + ellipsis + 固定 24px 行高，等于只显示前半句
+     （用户报过「免责文字也显示不完全」）。改成块级 + 正常换行，
+     行高交给 grid 的 auto 行自己撑。 */
+  .disclaimer{
+    display:block;padding:3px 8px;font-size:10px;
+    white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;
+  }
 }
 
 /* ───────────────── 首次访问的免责弹窗 ───────────────── */

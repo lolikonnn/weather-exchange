@@ -176,6 +176,40 @@
 
 > 以下按时间**倒序**。日期后面括号里是本机时间（UTC+8）。
 
+## 2026-10-07（16:00）— 竖屏：三个下拉框 / 状态栏 / 免责声明的文字被夹断
+
+> 使用者提：「竖屏界面：顶端三个选框（行情刷新、涨跌颜色、波动柱口径）的文字显示不全，
+> 下方一加载信息、数据来源与免责文字也显示不完全」
+
+### 🐛 修复（全在 `web/css/app.css` 的 `@media (max-width:860px)` 块里）
+
+- **顶栏三个下拉框**：原来写的是 `max-width:96px`。下拉框显示的是**选中项的完整文字**
+  （`红＝升温（国内习惯）` 约需 139px），限成 96px 就从中间切断（看着像「红 = 升温（国内」）。
+  改成 `max-width:none;min-width:0;flex:0 1 auto` —— 这一排本来就是 `flex-wrap:wrap`，
+  放不下会自己换行，不会顶穿视口。
+- **状态栏**：一行要塞「已加载 …（86 根日K / 2592 个时次）＋ 下次刷新 ＋ 版本 ＋ 下载客户端」，
+  flex 子项被压缩后在**每个子项内部**折行（截图里那半截「载 客」就是这么来的）。
+  改成子项不收缩、整条自己换行：`flex-wrap:wrap;row-gap:2px` + `.statusbar>*{flex:0 0 auto;white-space:nowrap}` +
+  `.grow{display:none}` + `#statusLeft{flex:1 1 100%}`。
+- **免责声明**：`.disclaimer` 是 `white-space:nowrap;overflow:hidden;text-overflow:ellipsis`，
+  而行高只有 24px → 只显示前半句。改成 `display:block;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35`。
+- **两处 grid 行高改 auto**：竖屏 `grid-template-rows` 的 `22px 24px` → `auto auto`；
+  横屏块同样改。写死高度时这两行放不下就只能被截。
+
+### 🧪 验证
+
+探针 `tmp/port3.js`（390×844 iframe）：
+
+| 检查 | 结果 |
+| --- | --- |
+| `#refreshRate` | 框宽 115 / 需要 111「15 分钟（默认）」✅ |
+| `#colorMode` | 框宽 145 / 需要 141「红＝升温（国内习惯）」✅ |
+| `#volumeMetric` | 框宽 76 / 需要 72「日内温差」✅ |
+| 状态栏 | 整条高 **38**（原 22），`wrap=wrap`；`#statusLeft` 374×15 完整显示「已加载 北京（554 根日K / 13824 个时次）」✅ |
+| 免责声明 | 高 **34**（原 24），`scrollH 33 = clientH 33` → 90 字全显示 ✅ |
+| 页面 | `scrollWidth 390 = clientWidth 390`、`scrollHeight 844 = clientHeight 844`、报错 0 条 ✅ |
+
+
 ## 2026-10-07（15:00）— 温差副图补单位；副图刻度字体跟主图统一
 
 > 使用者提：「副图温差项目里左侧轴没带单位。还有副图里数字的字体能否跟主图统一？」
