@@ -129,15 +129,18 @@
         '<br/>概率 ' + Math.round(w.prob[i] || 0) + '%' +
         '<br/>气温 ' + fx1(w.temp[i]) + '℃';
     };
+    // ⚠ 这根轴必须**显式写到右边**：base() 建的轴默认 left，两根都留在左边的话，
+    //   两列数字会画在同一个 52px 的左边距里，互相压、还溢出到柱子上。
     o.yAxis = [o.yAxis, {
-      type: 'value', max: 100, min: 0, name: '%', nameTextStyle: { color: TH.dim, fontSize: 10 },
+      type: 'value', max: 100, min: 0, name: '%', position: 'right',
+      nameTextStyle: { color: TH.dim, fontSize: 10 },
       axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10, formatter: '{value}' },
       splitLine: { show: false }
     }];
     const mx = Math.max(0.6, ...w.precip.map(v => v || 0));
     o.series = [
       {
-        name: '降水量', type: 'bar', yAxisIndex: 0, barWidth: '62%',
+        name: '降水量', type: 'bar', yAxisIndex: 0, barWidth: '62%', clip: true,
         data: (w.precip || []).map(v => ({
           value: v == null ? 0 : v,
           itemStyle: { color: (v || 0) > 0 ? TH.blue : 'rgba(74,168,255,.22)' }
@@ -257,13 +260,15 @@
         '<br/>PM2.5 ' + fx1(pm[i]) + ' μg/m³' +
         (uvOk ? '<br/>紫外线 ' + fx1(uv[i]) + (uv[i] == null ? '' : '（' + uvWord(uv[i]) + '）') : '');
     };
+    // 同上：不写 position 就默认留在左边，跟 AQI 那根叠在一起
     o.yAxis = [o.yAxis, {
-      type: 'value', name: 'μg/m³', nameTextStyle: { color: TH.dim, fontSize: 10 },
+      type: 'value', name: 'μg/m³', position: 'right',
+      nameTextStyle: { color: TH.dim, fontSize: 10 },
       axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10 }, splitLine: { show: false }
     }];
     o.series = [
       {
-        name: 'PM2.5', type: 'bar', yAxisIndex: 1, barWidth: '55%',
+        name: 'PM2.5', type: 'bar', yAxisIndex: 1, barWidth: '55%', clip: true,
         data: (pm || []).map(v => ({ value: v == null ? 0 : v, itemStyle: { color: 'rgba(169,123,255,.55)' } }))
       },
       {
