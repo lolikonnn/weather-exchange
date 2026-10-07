@@ -353,17 +353,16 @@
         { type: 'slider', xAxisIndex: [0], start: 0, end: 100, show: false }
       ],
       series: [
-        // 日界背景带单独挂在一个不画线的系列上：z 最低，保证明暗带在气温/均价下面，
-        // 顺便在每条分界线上画一根竖虚线，即使被面积渐变盖住也还能看出"一天到这儿结束"。
-        bands.length ? {
-          name: '_days', type: 'line', data: [], silent: true, z: 1, showSymbol: false,
-          markArea: { silent: true, data: bands },
-          markLine: {
-            silent: true, symbol: 'none', label: { show: false }, animation: false,
-            lineStyle: { color: 'rgba(255,255,255,.16)', type: 'dashed', width: 1 },
-            data: dayBoundary.map(b => ({ xAxis: b.xAxis - 0.5 }))
-          }
-        } : null,
+        // ⚠ 系列的**数组下标**决定 `echarts.connect('tjs')` 的悬停联动方向 ——
+        //   它是按 seriesIndex 一一对应的，不是按名字。所以要跟副图对齐：
+        //     主图[0] = 气温   ↔  副图[0] = 柱子（温差/降水/风/空气）
+        //   K 线那几档一直好使，正是因为主图[0] 是蜡烛、副图[0] 是柱子，两边都有数。
+        //
+        //   **日界带 `_days` 必须排在最后**：它的 `data: []` 是空的，
+        //   排在 0 号位时会出两个毛病（都是使用者报过的）：
+        //     · 主图悬停 → 映射到副图，落不到数据上，副图窗格不弹；
+        //     · **副图悬停 → 映射到主图第 0 系列（空）→ 主图窗格不弹**（反方向失效）。
+        //   它靠 `z: 1` 压在气温/均温下面，所以挪到数组末尾不影响画面层级。
         {
           name: '气温', type: 'line', data: ys, showSymbol: false, symbol: 'circle', symbolSize: 5,
           lineStyle: { width: 1.5, color: C.up }, z: 5,
@@ -387,6 +386,17 @@
           name: ov.name, type: 'line', yAxisIndex: 2, data: od, showSymbol: false,
           connectNulls: false, z: 6,
           lineStyle: { width: 1.3, color: ov.color }, itemStyle: { color: ov.color }
+        } : null,
+        // 日界背景带（不画线）：z 最低，保证明暗带在气温/均价下面，
+        // 顺便在每条分界线上画一根竖虚线，即使被面积渐变盖住也还能看出"一天到这儿结束"。
+        bands.length ? {
+          name: '_days', type: 'line', data: [], silent: true, z: 1, showSymbol: false,
+          markArea: { silent: true, data: bands },
+          markLine: {
+            silent: true, symbol: 'none', label: { show: false }, animation: false,
+            lineStyle: { color: 'rgba(255,255,255,.16)', type: 'dashed', width: 1 },
+            data: dayBoundary.map(b => ({ xAxis: b.xAxis - 0.5 }))
+          }
         } : null
       ].filter(Boolean)
     };
