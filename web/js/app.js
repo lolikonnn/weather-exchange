@@ -171,14 +171,39 @@
     });
   }
 
+  /* 自选变了之后要跟着刷的所有视图，收在一处 —— 以前是每个调用点自己挑着刷，
+   * 于是总有漏的（行情头那颗星加进来时，左边的自选列表和「全部城市」抽屉
+   * 都不会更新）。以后再加显示自选的地方，只改这一个函数。 */
+  function refreshWatchViews() {
+    renderWatchlist(); renderHotlist(); renderIndexes(); buildDrawer(); renderQStar();
+  }
   function addWatch(id) {
     if (S.watch.indexOf(id) >= 0) { toast('已在自选中'); return; }
     S.watch.push(id); storeSet('watch', S.watch);
-    renderWatchlist(); warmQuotes(); toast('已加入自选：' + (API.Cities.get(id) || {}).name);
+    refreshWatchViews(); warmQuotes();
+    toast('已加入自选：' + (API.Cities.get(id) || {}).name);
   }
   function removeWatch(id) {
     S.watch = S.watch.filter(x => x !== id); storeSet('watch', S.watch);
-    renderWatchlist(); renderIndexes(); toast('已移出自选');
+    refreshWatchViews(); toast('已移出自选');
+  }
+  /* 行情头里城市名旁边那颗星。
+   * 为什么要有它：以前只有「搜索结果行」「全部城市抽屉」「定位行」三处能加星，
+   * 所以**点开一座城之后就没地方加它了**，只能回搜索框再搜一遍（使用者反馈）。
+   * 现在不管这座城是怎么进来的（搜索 / 指数条 / 抽屉 / 定位 / 自选本身），
+   * 正在看的是哪座，就在它名字旁边加。
+   * ⚠ 星号必须**永远**画出来（只在已自选时才画的话，没自选的城市就没有星可点，
+   *   也就永远加不进去 —— buildDrawer 那边踩过同一个坑，见那里的注释）。 */
+  function renderQStar() {
+    const b = $('#qStar');
+    if (!b) return;
+    const c = S.cur;
+    if (!c) { b.hidden = true; return; }
+    const on = S.watch.indexOf(c.id) >= 0;
+    b.hidden = false;
+    b.textContent = on ? '★' : '☆';
+    b.classList.toggle('on', on);
+    b.title = on ? '从自选移除' : '加入自选';
   }
 
   /* ═══════════ 当前所在地 ═══════════ */
@@ -470,6 +495,7 @@
     const col = U.trendColor(chg);
 
     $('#qName').textContent = c.name;
+    renderQStar();
     // 定位城市是合成出来的记录（id 是 '__loc__' 这个内部占位），
     // 把它当城市编号打出来就是「__loc__ · 广东省」—— 用户截图里就是这么显示错的。
     $('#qCode').textContent = (c.id === LOC_ID)
@@ -911,6 +937,9 @@
     storeSet('last', id);
     renderWatchlist(); renderHotlist(); renderIndexes();
     $('#qName').textContent = c.name;
+    // 城市名旁边那颗星要立刻对上（数据还没到也得对）—— 这正是本来的诉求：
+    // 点开一座城之后就能直接加自选，不用回搜索框重搜一遍。
+    renderQStar();
     Chart.showLoading('正在拉取 ' + c.name + ' 行情…');
     $('#statusLeft').textContent = '加载 ' + c.name + ' …';
     try {
@@ -1171,6 +1200,17 @@
 
   /* ═══════════ 交互绑定 ═══════════ */
   function bind() {
+    // 行情头城市名旁边那颗星：点一下就把**正在看的这座城**加/取自选。
+    // 这是「点开某城后没法加星」的直接解法 —— 以前只能在搜索行、城市抽屉、
+    // 定位行三处加，点进来之后就只剩"回搜索框再搜一遍"这一条路。
+    const qs = $('#qStar');
+    if (qs) qs.addEventListener('click', () => {
+      const c = S.cur;
+      if (!c) return;
+      // 先改数据再刷星，别依赖 addWatch 里的 renderQStar（那条路也可能被别处调用）
+      if (S.watch.indexOf(c.id) >= 0) removeWatch(c.id); else addWatch(c.id);
+      renderQStar();
+    });
     $('#periodTabs').addEventListener('click', e => {
       const t = e.target.closest('.tab[data-period]'); if (!t) return;
       U.$$('#periodTabs .tab').forEach(x => x.classList.remove('active'));

@@ -120,6 +120,11 @@
       <div class="qh-left">
         <div class="qh-name">
           <h1 id="qName">—</h1>
+          <!-- 自选星标。为什么要放在这儿：以前只有「搜索结果行」「全部城市抽屉」「定位行」
+               三处能加星，所以**点开一座城市之后就再也加不了它了**，只能回搜索框重搜一遍
+               （使用者反馈）。现在不管这座城是怎么进来的 —— 搜索 / 指数条 / 抽屉 / 定位 / 自选本身 ——
+               正在看的是哪座城，就在它名字旁边加星。 -->
+          <button type="button" class="qh-star" id="qStar" hidden title="加入自选">☆</button>
           <span class="qh-code" id="qCode">—</span>
           <span class="qh-tags" id="qTags"></span>
         </div>
