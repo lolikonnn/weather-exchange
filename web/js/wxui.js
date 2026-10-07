@@ -93,9 +93,10 @@
       },
       xAxis: {
         type: 'category', data: xs,
-        // 趋势/7日的主图是折线（boundaryGap:false），K 线主图是蜡烛（true）。
-        // 副图得跟着走：两者之间每个点都差半格，而且是逐点渐偏，越往后越明显。
-        boundaryGap: !hourly,
+        // 主图七档**统一** boundaryGap: true（一格一个点、居中），副图跟着走。
+        // 以前这里是 `!hourly` —— 逐小时那两档跟着折线用 false，于是柱子骑在刻度点上、
+        // 左右各探半根压住左边的刻度。现在两边都是 true，柱子在格里、和主图一格对一格。
+        boundaryGap: true,
         axisLine: { lineStyle: { color: TH.line } },
         axisLabel: { color: TH.dim, fontSize: 10, interval: ax.interval, formatter: ax.formatter, hideOverlap: true },
         splitLine: { show: false }

@@ -309,7 +309,13 @@
         }
       }),
       xAxis: [{
-        type: 'category', data: xs, boundaryGap: false,
+        // ⚠ 这里**必须是 true**（曾经是 false）。分时 / 7日 的主图是折线，而它下面的副图
+        //   常常是柱子；柱子是「骑」在刻度点上的，boundaryGap:false 会让最左 / 最右那根
+        //   各探出半根、压到左边的刻度栏上，两块图的点看着也错开半格。
+        //   改成 true 之后**七个周期口径统一**（K 线本来就是 true）：一格一个点、居中，
+        //   副图柱子落在自己的格里，既不探出去也和主图一格对一格。
+        //   代价：折线两端各内缩半格，不再贴着左右边框（这是使用者确认过的取舍）。
+        type: 'category', data: xs, boundaryGap: true,
         axisLine: { lineStyle: { color: C.axis } }, axisTick: { show: false },
         // 刻度规则来自共用的 axisOf()：副图用同一份，上下两块图的刻度才会对齐。
         // interval:0 让每个时刻都参与排版；7日图靠 formatter 只在 00:00 写日期、12:00 写"12:00"，
