@@ -950,7 +950,13 @@
       return {
         today: today, src: 'cma',
         prevClose: prev.c, prevDay: prev.d,
-        open: null, high: null, low: null, now: null,
+        open: null, high: null, low: null,
+        /* ⚠ 这里原来是写死的 `now: null`。气象局月度日历里确实没有"当前值"这回事，
+           但正因为是 null，行情栏的价格就只能靠 `S.quotes` 那份**轮询**；
+           而轮询只覆盖自选，**正在看的城市若不在自选里就没人管它** → 最新价恒为 `--`
+           （使用者报的港澳台就是这一格）。按口径「气象局最新 → 本地缓存的 meteo → 空着」，
+           用长期缓存里那份 meteo 顶上；没有就仍是 null，界面照实 `--`。 */
+        now: cmaBriefNow(city),
         wcode: null, precip: null,
         spark: days.slice(-24).map(function (x) { return x.c; }),
         sparkPts: [], days: days
@@ -1134,6 +1140,62 @@
     idx.unshift(id);
     idx.slice(CX_KEEP).forEach(old => storeSet(cxKey(old), null));
     storeSet('cx.idx', idx.slice(0, CX_KEEP));
+  }
+
+  /* ── Open-Meteo 当前值的**长期兜底缓存** ─────────────────────────────────
+     它跟 `getJSON` 那份 5 分钟缓存不是一回事：那份一过期就当没有；这一份只为一件事 ——
+     行情栏的口径是「**能用气象局的最新数据就用，用不了再用本地缓存的 meteo 天气数据，
+     再没有就空着**」。所以：
+
+       · 每次**成功**从 Open-Meteo 拿到当前值，就在这里留一份（带 `at` 写入时刻）；
+       · 气象局没有可用观测（无站号 / 9999 哨兵 / 停报超过 24 小时）、Open-Meteo 又连不上
+         或额度用尽（429）时，把这一份拿出来顶，并打上 `src: 'om-cache'` —— 界面照旧显示
+         它**自己的观测时刻**，不会假装是刚刚的，也不会把旧的冒充成实况。
+
+     为什么按城市存、还要限个数：它是"每城一条"，不设上限会把 localStorage 撑爆；
+     一条不到 200 字节，留 80 座城市约 16 KB，可以忽略。
+     有效期取 30 天，跟城市快照 `CX_MAX_AGE` 同一个尺度 —— 再旧就没有参考价值了，
+     那时候按口径就该"空着"。 */
+  const OMCUR_KEY = 'omcur1';
+  const OMCUR_KEEP = 80;
+  const OMCUR_MAX_AGE = 30 * 86400000;
+  function omCurAll() {
+    const v = storeGet(OMCUR_KEY, null);
+    return (v && typeof v === 'object') ? v : {};
+  }
+  function omCurSave(id, q) {
+    if (!id || !q || q.temp == null) return;
+    const all = omCurAll();
+    all[id] = {
+      temp: q.temp, feels: q.feels, precip: q.precip, humidity: q.humidity,
+      pressure: q.pressure, windSpeed: q.windSpeed, windDeg: q.windDeg,
+      windDir: q.windDir, windScale: q.windScale, wcode: q.wcode,
+      time: q.time, at: Date.now()
+    };
+    const ids = Object.keys(all);
+    if (ids.length > OMCUR_KEEP) {
+      ids.sort((a, b) => (all[a].at || 0) - (all[b].at || 0));
+      ids.slice(0, ids.length - OMCUR_KEEP).forEach(k => { delete all[k]; });
+    }
+    storeSet(OMCUR_KEY, all);
+  }
+  function omCurLoad(id) {
+    const v = id ? omCurAll()[id] : null;
+    if (!v || v.temp == null) return null;
+    if (Date.now() - (v.at || 0) > OMCUR_MAX_AGE) return null;
+    return v;
+  }
+  /** 给 `Cn.brief` 用：气象局日历那条路上**本来没有"当前值"**（所以 `now` 一直是 null），
+   *  于是行情栏的价格只能靠 `S.quotes` 那份轮询 —— 而轮询只覆盖自选，
+   *  **正在看的城市如果不在自选里就没人管它**，价格恒为 `--`。
+   *  按口径「气象局最新 → **本地缓存的 meteo** → 空着」，把缓存里那份的温度填进来当第二级；
+   *  没有就照样 null（界面照实 `--`，不编数字）。
+   *  ⚠ **必须返回数字**，不能返回对象：`quoteOf()` 拿到 `b.now` 之后直接做算术
+   *  （`temp - prev`），给对象会一路 NaN 成 `--`。`OpenMeteo.brief` 给的也是数字
+   *  （`now: cur ? cur.c : null`），这里跟它对齐。时刻由行情栏的实况标签（`d.now.time`）负责说明。 */
+  function cmaBriefNow(city) {
+    const v = city && omCurLoad(city.id);
+    return (v && v.temp != null) ? v.temp : null;
   }
   /** 读上次那份。**不检查有效期到秒**，只要没超过一个月就给 —— 反正马上会去拉新的。
    *  派生数据（indicators / week / month）存的时候扔掉了，这里现算回来：
@@ -1473,15 +1535,22 @@
       out.stamp = new Date();
       // 存一份快照给**下次打开**用（先把旧的显示出来，同时照常去拉新的）。
       // 放在最后：此时 out 已经完整，缺字段的半成品绝不会被存进去。
+      // 顺手把这一份 **meteo** 实况记进长期兜底缓存（见 omCurSave 的注释）——
+      // 这样「这次打开时 meteo 还是好的、下次打开时两个源都断了」也有东西可顶。
+      if (out.now && out.now.src === 'om') omCurSave(out.city.id, out.now);
       cxSave(out);
       return out;
     },
 
-    /** 轻量行情：只取实况（用于列表轮询） */
+    /** 轻量行情：只取实况（用于列表轮询）。
+     *  口径（使用者定）：**气象局最新 → 本地缓存的 meteo → 空着**。
+     *  所以这里有三级，最后一级**不编数字** —— 两个来源都没有就返回 null，
+     *  界面照实显示 `--`。（`--` 是"取不到"，不是"气温是零下"。） */
     async quote(city) {
+      // ① 气象局最新数据
       const n = await Cma.now(city);
       if (n && n.temp != null) return n;
-      // 官方站号缺省时退回 Open-Meteo 当前值
+      // ② Open-Meteo 当前值。成功了顺手留一份**长期缓存**，供 ③ 顶班。
       if (city.lat != null) {
         try {
           const d = await omGetJSON('?latitude=' + city.lat + '&longitude=' + city.lon +
@@ -1490,16 +1559,24 @@
             '&wind_speed_unit=ms' +          // 同上：默认 km/h，不指定会和气象局的 m/s 混着显示
             '&timezone=' + encodeURIComponent(TZ), { ttl: 300000, key: 'q|' + city.id });
           const c = d && d.current;
-          if (c) return {
-            src: 'om', temp: c.temperature_2m, precip: c.precipitation, humidity: c.relative_humidity_2m,
-            windSpeed: c.wind_speed_10m, wcode: c.weather_code, time: c.time,
-            // 这几个字段以前没取，导致无站号城市的报价头「体感 / 风向 / 气压」恒为 "--"
-            feels: c.apparent_temperature, pressure: c.surface_pressure,
-            windDeg: c.wind_direction_10m,
-            windDir: (global.Weather ? global.Weather.dirName(c.wind_direction_10m) : null)
-          };
+          if (c) {
+            const q = {
+              src: 'om', temp: c.temperature_2m, precip: c.precipitation, humidity: c.relative_humidity_2m,
+              windSpeed: c.wind_speed_10m, wcode: c.weather_code, time: c.time,
+              // 这几个字段以前没取，导致无站号城市的报价头「体感 / 风向 / 气压」恒为 "--"
+              feels: c.apparent_temperature, pressure: c.surface_pressure,
+              windDeg: c.wind_direction_10m,
+              windDir: (global.Weather ? global.Weather.dirName(c.wind_direction_10m) : null)
+            };
+            omCurSave(city.id, q);
+            return q;
+          }
         } catch (e) { }
+        // ③ 本地缓存的 meteo：上一段注释里说明的那份长期缓存
+        const cached = omCurLoad(city.id);
+        if (cached) return Object.assign({}, cached, { src: 'om-cache' });
       }
+      // ④ 气象局没有可用观测、meteo 也没有缓存 → 空着
       return null;
     },
 

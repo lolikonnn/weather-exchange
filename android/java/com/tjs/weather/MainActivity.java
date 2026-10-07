@@ -366,7 +366,13 @@ public class MainActivity extends Activity {
 
     private WebResourceResponse cma(String sub, Map<String, String> qs) {
         String st = qs.get("st");
-        if (st == null || !st.matches("^[0-9A-Za-z_]{3,12}$")) return bad();
+        /* 站号里除了字母数字，还可能是 `54517_tj` / `53698-sjz` 这种**带后缀**的
+           （天津、石家庄）。这里原来只收 `[0-9A-Za-z_]`，少一个 `-` ——
+           于是石家庄 `53698-sjz` 在 APK 上必挂（天津带 `_` 反而没事），
+           表现就是那一座城市行情栏拿不到气象局实况。
+           跟 server/app.py 的 CMA_ST_RE 保持一致：字母数字加 `_` 和 `-`。
+           （`-` 放在字符类末尾，Java 正则里就是字面量，不是区间。） */
+        if (st == null || !st.matches("^[0-9A-Za-z_-]{3,12}$")) return bad();
         String up;
         if ("now".equals(sub)) up = "https://weather.cma.cn/api/now/" + st;
         else if ("view".equals(sub)) up = "https://weather.cma.cn/api/weather/view?stationid=" + st;
