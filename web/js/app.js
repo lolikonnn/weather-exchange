@@ -39,7 +39,10 @@
     quotes: {}, briefs: {}, briefAt: 0,
     overlay: false,
     geo: null, geoBusy: false, geoErr: '',
-    loading: false, timer: null, lastQuoteAt: 0, lastFullAt: 0, tick: 0
+    loading: false, timer: null, lastQuoteAt: 0, lastFullAt: 0, tick: 0,
+    /* 实况自己的节拍（obsAt）与行情轮询的到期时刻（refreshDue）——
+       两者解耦，理由见 scheduleRefresh() 上面那段注释 */
+    obsAt: 0, refreshDue: 0, polls: 0
   };
 
   /** 副图口径的中文名（给提示语和叠加按钮的 tooltip 用） */
@@ -1317,6 +1320,10 @@
       }
       S.data = d;
       S.lastFullAt = Date.now();
+      /* 实况的节拍从"这一份是真从网上下来的"那一刻起算。
+         上面快照那条路（S.data = snap.out）故意**不**碰 obsAt：快照是旧的，
+         obsAt 留在 0 才能让下一个心跳立刻去取一份真的。 */
+      S.obsAt = Date.now();
       if (!S.briefs[id] || !S.briefs[id].prevClose) {
         const b = await briefOf(c, 600000);
         if (b) S.briefs[id] = b;
@@ -1422,6 +1429,42 @@
     return b;
   }
 
+  /* ── 实况（`d.now`）的写回 + 它自己的节拍 ───────────────────────────────
+     详情页的实况标签（「中国气象局实况 23:45」）和统计格里的 体感·湿度·气压·风向风速
+     读的都是 `S.data.now`，而它**只在 loadCity 那一刻取过一次**。列表轮询其实每轮都把
+     同一份更新的实况取回来了，却没人写回去 —— 于是「行情在动、实况时间戳原地不动」：
+     手机刚打开是 23:30，电脑开了两小时还写着 22:00（使用者正是拿这两个数对出来的）。
+     光在 `warmQuotes()` 里补写回还不够：那只在「行情刷新频率」到点时才跑，而频率能调成
+     **手动刷新**（value 0，老 `scheduleRefresh` 一个定时器都不挂）—— 实况就再也跟不上。
+     所以实况另有 `warmObs()` 与固定心跳，见 `scheduleRefresh()`。 */
+  /** 只认**更新**的那一份，免得把刚 loadCity 到的新数据覆盖成旧的。
+      （time 有两种格式：气象局 "2026/10/07 23:45"、Open-Meteo "2026-10-07T23:45"，
+       所以两种分隔符都得认。） */
+  const obsStamp = t => {
+    const m = /^(\d{4})[-/](\d{2})[-/](\d{2})[ T](\d{2}):(\d{2})/.exec(String(t || ''));
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() : NaN;
+  };
+  function applyObs(fresh) {
+    if (!S.cur || !S.data || !fresh || fresh.temp == null) return false;
+    const tNew = obsStamp(fresh.time), tOld = obsStamp(S.data.now && S.data.now.time);
+    if (isFinite(tNew) ? (tNew > tOld || !isFinite(tOld)) : !isFinite(tOld)) {
+      S.data.now = fresh;
+      return true;
+    }
+    return false;
+  }
+
+  /** 只刷「当前城市」的实况：一个请求，跟行情刷新频率完全无关 */
+  async function warmObs() {
+    try {
+      const city = S.cur && API.Cities.get(S.cur.id);
+      if (!city) return;
+      const fresh = await API.Store.quote(city);
+      S.obsAt = Date.now();          // 失败也算「试过了」：3 分钟后再来，别每秒捶它
+      if (applyObs(fresh)) { renderQuoteHead(); renderOrderbook(); renderTape(); }
+    } catch (e) { S.obsAt = Date.now(); }
+  }
+
   async function warmQuotes() {
     const ids = watchHotIds();
     const ttl = Math.max(S.refreshMs, 30000);
@@ -1429,25 +1472,8 @@
     const qs = await API.Store.quotes(cities, 6);
     Object.assign(S.quotes, qs);
 
-    /* ★ 把轮询拿到的实况写回详情页那一份。
-       实况标签（「中国气象局实况 23:30」）和统计格里的 体感·湿度·气压·风速 读的都是
-       `d.now`，而它**只在 loadCity 那一刻取过一次**；列表轮询每轮其实都把同一份更新的
-       实况取回来了，却没人写回去 —— 于是「行情在动、实况时间戳原地不动」：手机上刚
-       打开是 23:30，电脑上开了两小时还写着 22:00（使用者正是拿这两个数对出来的）。
-       只认**更新**的那一份，免得把刚 loadCity 到的新数据覆盖成旧的。
-       （time 有两种格式：气象局 "2026/10/07 23:30"、Open-Meteo "2026-10-07T23:30"，
-        所以两种分隔符都得认。） */
-    const obsStamp = t => {
-      const m = /^(\d{4})[-/](\d{2})[-/](\d{2})[ T](\d{2}):(\d{2})/.exec(String(t || ''));
-      return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() : NaN;
-    };
-    if (S.cur && S.data) {
-      const fresh = qs[S.cur.id];
-      if (fresh && fresh.temp != null) {
-        const tNew = obsStamp(fresh.time), tOld = obsStamp(S.data.now && S.data.now.time);
-        if (isFinite(tNew) ? (tNew > tOld || !isFinite(tOld)) : !isFinite(tOld)) S.data.now = fresh;
-      }
-    }
+    /* ★ 把轮询拿到的实况写回详情页那一份（判据见 applyObs）。 */
+    if (S.cur && qs[S.cur.id]) { applyObs(qs[S.cur.id]); S.obsAt = Date.now(); }
 
     // 昨收 / 迷你走势（Open-Meteo brief）：只有收藏 + 当前所在地。
     //
@@ -1492,24 +1518,59 @@
     renderIndexes();
   }
 
-  function scheduleRefresh() {
-    clearInterval(S.timer);
-    if (!S.refreshMs) { $('#statusNext').textContent = '手动刷新'; return; }
-    S.timer = setInterval(async () => {
-      S.tick++;
-      try {
+  /* ── 刷新调度：**固定 60 秒心跳** + 墙上时钟比对 ────────────────────────
+     老写法 `setInterval(…, S.refreshMs)` 一把梭，有三个洞：
+       ① 频率调成「手动刷新」时**一个定时器都不挂**，实况永远停在最后一次 loadCity；
+       ② 定时器只数"又过了一个周期" —— 标签页被浏览器冻住/节流后恢复，还得再等满一整个
+          周期（默认 15 分钟）才动一下；
+       ③ 实况本该跟气象局走（它 5~10 分钟就更新一次），却被绑在行情刷新频率上。
+     现在：心跳固定 60 秒（后台标签被节流到 ≥1 分钟一次也漏不掉），每次醒来**比墙上时钟**，
+     该补的立刻补；实况另有 3 分 20 秒的节拍，跟 `refreshMs` 完全解耦。
+     （3m20s 是故意的：`Cma.now` 的缓存 TTL 是 180s，60 秒网格上最近的那一次必然越过它，
+       不会白拿一份缓存里的旧实况。） */
+  const HEARTBEAT_MS = 60000;
+  const OBS_MS = 200000;
+
+  async function beat() {
+    if (S.loading) return;
+    try {
+      // ① 实况：自己的节拍，永远跑（「手动刷新」模式下也跑）
+      if (!S.obsAt || Date.now() - S.obsAt >= OBS_MS) await warmObs();
+      // ② 列表报价 / 走势 / 30 分钟全量重载：到点才动；「手动刷新」时永不到点
+      if (S.refreshMs && Date.now() >= (S.refreshDue || 0)) {
+        S.refreshDue = Date.now() + S.refreshMs;
+        S.polls++; S.tick++;
         await warmQuotes();
-        // 每 30 tick 或自选城市实况过期时更新指数
-        if (S.tick % 20 === 1) warmIndexes();
-        // 全量重载：30 分钟一次
+        if (S.polls % 20 === 1) warmIndexes();
         if (S.cur && Date.now() - S.lastFullAt > 1800000 && !S.loading) {
           const id = S.cur.id; S.loading = false; selectCity(id);
         }
-        $('#statusNext').textContent = '下次刷新 ' + fmtGap(S.refreshMs);
-      } catch (e) { /* 静默 */ }
-    }, S.refreshMs);
-    $('#statusNext').textContent = '下次刷新 ' + fmtGap(S.refreshMs);
+      }
+      $('#statusNext').textContent = S.refreshMs
+        ? ('下次刷新 ' + fmtGap(Math.max(0, S.refreshDue - Date.now())))
+        : '手动刷新 · 实况自动';
+    } catch (e) { /* 静默 */ }
   }
+
+  function scheduleRefresh() {
+    clearInterval(S.timer);
+    S.refreshDue = S.refreshMs ? Date.now() + S.refreshMs : 0;
+    $('#statusNext').textContent = S.refreshMs
+      ? ('下次刷新 ' + fmtGap(S.refreshMs)) : '手动刷新 · 实况自动';
+    S.timer = setInterval(beat, HEARTBEAT_MS);
+    beat();
+  }
+
+  /* 切回前台 / 回到这个标签页时若已过期就立刻补一次。
+     浏览器会把后台标签的定时器冻住或压到 1 分钟一次，而使用者此刻正盯着屏幕 ——
+     不能让他再等一个心跳。（「电脑上开着两小时还写着 22:00」就是这个现场。） */
+  function catchUp() {
+    if (document.hidden) return;
+    if (!S.obsAt || Date.now() - S.obsAt >= OBS_MS) warmObs();
+    if (S.refreshMs && Date.now() >= (S.refreshDue || 0)) beat();
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) catchUp(); });
+  window.addEventListener('focus', catchUp);
 
   /** 刷新间隔的人话。默认已经是 15 分钟，不该显示成 "900s"。 */
   function fmtGap(ms) {
