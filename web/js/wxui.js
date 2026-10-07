@@ -273,9 +273,12 @@
         markLine: {
           silent: true, symbol: 'none',
           lineStyle: { color: TH.dim, type: 'dashed', width: 1 },
-          // ⚠ 标签默认画在虚线**右端**，正好压在右轴的刻度上（AQI 的 100 和「良」叠成一坨）。
-          //   挪到左端、并且画在图**内**（insideStartTop），右轴那一列就干净了。
-          label: { color: TH.dim, fontSize: 9, formatter: '良 100', position: 'insideStartTop' },
+          // 「良 100」这句文字**哪儿都放不下**，索性不写：
+          //   默认画在虚线右端 → 压在右轴刻度上（AQI 的 100 和它糊成一坨）；
+          //   挪到图内左端 → 又压在 PM2.5 柱子上（"坐标轴还是跟柱状图叠一起了"）。
+          //   虚线本身已经把 100 这条分界画出来了，具体等级在 tooltip 里
+          //   （`AQI 120（良）`），术语表里也写了这条虚线是什么意思。
+          label: { show: false },
           data: [{ yAxis: 100 }]
         }
       }
