@@ -130,19 +130,25 @@
         }
       }, [
         el('div', {}, [
-          el('div', { class: 'sw-name', text: c.name }),
+          // ⚠ 星**跟着城市名同一行**，而不是单独占一列。
+          // 单独占列会把名字那列挤窄 —— 「香港特别行政区」这种长小字就放不下了（使用者提的）。
+          // 竖屏另有安排：靠 CSS 把这两层包装 display:contents 散开，
+          // 星就变成行的网格项，挪到「名字与价格之间的空档」、跨两行垂直居中（好点，像苹果天气）。
+          el('div', { class: 'sw-name-row' }, [
+            el('div', { class: 'sw-name', text: c.name }),
+            el('span', {
+              // 实心星 = 已收藏，点它 = 取消收藏 —— 跟热门列表那颗空心星是同一套语义，
+              // 也跟搜索结果行 / 行情头 / 全部城市抽屉里的星一致（全站就这一个符号）。
+              // 以前这里是 ✕，而且桌面端只在 hover 才显形，等于看不见。
+              class: 'sw-star on', text: '★', title: '取消收藏',
+              onclick: (e) => { e.stopPropagation(); removeWatch(id); }
+            })
+          ]),
           el('div', { class: 'sw-sub', text: c.id + ' · ' + (c.prov || '') })
         ]),
         el('div', { class: 'sw-price', style: { color: col }, text: q.temp == null ? '--' : fx(q.temp, 1) }),
         el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
       ]);
-      row.appendChild(el('span', {
-        // 实心星 = 已收藏，点它 = 取消收藏 —— 跟热门列表那颗空心星是同一套语义，
-        // 也跟搜索结果行 / 行情头 / 全部城市抽屉里的星一致（全站就这一个符号）。
-        // 以前这里是 ✕，而且桌面端只在 hover 才显形，等于看不见（使用者提的）。
-        class: 'sw-star on', text: '★', title: '取消收藏',
-        onclick: (e) => { e.stopPropagation(); removeWatch(id); }
-      }));
       box.appendChild(row);
     });
   }
@@ -285,24 +291,26 @@
         }
       }, [
         el('div', {}, [
-          el('div', { class: 'sw-name', text: c.name }),
+          el('div', { class: 'sw-name-row' }, [
+            el('div', { class: 'sw-name', text: c.name }),
+            // 热门列表原来【没有】收藏的入口，导致除了搜索框 Ctrl+Enter 之外
+            // 用户根本没办法把城市加进收藏。这里补一颗星：空心 = 没收藏，实心 = 收藏了。
+            el('span', {
+              class: 'sw-star' + (starred ? ' on' : ''),
+              text: starred ? '★' : '☆',
+              title: starred ? '取消收藏' : '收藏这座城市',
+              onclick: (e) => {
+                e.stopPropagation();
+                if (starred) removeWatch(c.id); else addWatch(c.id);
+                renderHotlist(); buildDrawer();
+              }
+            })
+          ]),
           el('div', { class: 'sw-sub', text: c.id + ' · ' + (c.prov || '') })
         ]),
         el('div', { class: 'sw-price', style: { color: col }, text: q.temp == null ? '--' : fx(q.temp, 1) }),
         el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
       ]);
-      // 热门列表原来【没有】收藏的入口，导致除了搜索框 Ctrl+Enter 之外
-      // 用户根本没办法把城市加进收藏。这里补一颗星：空心 = 没收藏，实心 = 收藏了。
-      row.appendChild(el('span', {
-        class: 'sw-star' + (starred ? ' on' : ''),
-        text: starred ? '★' : '☆',
-        title: starred ? '取消收藏' : '收藏这座城市',
-        onclick: (e) => {
-          e.stopPropagation();
-          if (starred) removeWatch(c.id); else addWatch(c.id);
-          renderHotlist(); buildDrawer();
-        }
-      }));
       box.appendChild(row);
     });
   }
@@ -508,6 +516,9 @@
 
     const g = S.geo, q = quoteOf(LOC_ID);
     const col = U.trendColor(q.chg);
+    // ⚠ starred 必须在 row **之前**算：星现在是在 row 的字面量里造的，
+    // 放到后面去会撞 const 的 TDZ（Cannot access 'starred' before initialization）。
+    const starred = S.watch.indexOf(LOC_ID) >= 0;
     const sub = [
       (g.city && g.city !== g.district) ? g.city : '',
       g.prov || '',
@@ -524,23 +535,24 @@
       }
     }, [
       el('div', {}, [
-        el('div', { class: 'sw-name', text: '📍 ' + (g.district || g.city || '当前所在地') }),
+        el('div', { class: 'sw-name-row' }, [
+          el('div', { class: 'sw-name', text: '📍 ' + (g.district || g.city || '当前所在地') }),
+          el('span', {
+            class: 'sw-star' + (starred ? ' on' : ''),
+            text: starred ? '★' : '☆',
+            title: starred ? '取消收藏' : '收藏当前所在地',
+            onclick: (e) => {
+              e.stopPropagation();
+              if (starred) removeWatch(LOC_ID); else addWatch(LOC_ID);
+              renderGeo();
+            }
+          })
+        ]),
         el('div', { class: 'sw-sub', text: sub })
       ]),
       el('div', { class: 'sw-price', style: { color: col }, text: q.temp == null ? '--' : fx(q.temp, 1) }),
       el('div', { class: 'sw-pct ' + (q.chg == null ? 'p-flat' : (q.chg > 0 ? 'p-up' : q.chg < 0 ? 'p-down' : 'p-flat')), text: q.pct == null ? '--' : sgn(q.pct, 2) + '%' })
     ]);
-    const starred = S.watch.indexOf(LOC_ID) >= 0;
-    row.appendChild(el('span', {
-      class: 'sw-star' + (starred ? ' on' : ''),
-      text: starred ? '★' : '☆',
-      title: starred ? '取消收藏' : '收藏当前所在地',
-      onclick: (e) => {
-        e.stopPropagation();
-        if (starred) removeWatch(LOC_ID); else addWatch(LOC_ID);
-        renderGeo();
-      }
-    }));
     box.appendChild(row);
   }
 
