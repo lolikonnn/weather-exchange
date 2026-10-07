@@ -35,24 +35,49 @@
     };
   }
 
-  /* ── 月亮（Meeus 第 47 章的简化式，精度约 0.3°） ── */
-  function moonRaDec(ms) {
+  /* ── 月亮（Meeus 第 47 章的简化式，精度约 0.3°） ──
+   * 把五个辐角单独拆出来：月亮的**位置**和**距离**用的是同一组量，
+   * 拆开就不用算两遍，也免得两个函数各写一份级数。 */
+  function moonArgs(ms) {
     const T = (jdOf(ms) - 2451545.0) / 36525;
-    const Lp = norm360(218.316 + 481267.881 * T);             // 平黄经
-    const M = norm360(134.963 + 477198.867 * T);              // 平近点角
-    const F = norm360(93.272 + 483202.017 * T);               // 升交点角距
-    const D = norm360(297.850 + 445267.112 * T);              // 日月平距角
-    const Ms = norm360(357.528 + 35999.050 * T);              // 太阳平近点角
-    const lam = Lp
-      + 6.289 * sind(M) - 1.274 * sind(2 * D - M) + 0.658 * sind(2 * D)
-      + 0.214 * sind(2 * M) - 0.186 * sind(Ms) - 0.114 * sind(2 * F);
-    const bet = 5.128 * sind(F) + 0.281 * sind(M + F)
-      - 0.278 * sind(F - M) - 0.173 * sind(F - 2 * D);
+    return {
+      T: T,
+      Lp: norm360(218.316 + 481267.881 * T),             // 平黄经
+      M: norm360(134.963 + 477198.867 * T),              // 平近点角
+      F: norm360(93.272 + 483202.017 * T),               // 升交点角距
+      D: norm360(297.850 + 445267.112 * T),              // 日月平距角
+      Ms: norm360(357.528 + 35999.050 * T)               // 太阳平近点角
+    };
+  }
+
+  function moonRaDec(ms) {
+    const a = moonArgs(ms);
+    const lam = a.Lp
+      + 6.289 * sind(a.M) - 1.274 * sind(2 * a.D - a.M) + 0.658 * sind(2 * a.D)
+      + 0.214 * sind(2 * a.M) - 0.186 * sind(a.Ms) - 0.114 * sind(2 * a.F);
+    const bet = 5.128 * sind(a.F) + 0.281 * sind(a.M + a.F)
+      - 0.278 * sind(a.F - a.M) - 0.173 * sind(a.F - 2 * a.D);
     const eps = 23.439 - 0.0000004 * (jdOf(ms) - 2451545.0);
     return {
       ra: norm360(Math.atan2(sind(lam) * cosd(eps) - Math.tan(bet * D2R) * sind(eps), cosd(lam)) * R2D),
       dec: Math.asin(sind(bet) * cosd(eps) + cosd(bet) * sind(eps) * sind(lam)) * R2D
     };
+  }
+
+  /** 地心距离（公里）。前 5 项，误差约 ±0.3%（±1200 km）——
+   *  判"超级月亮/微月"够用了（近地点 356500、远地点 406700，两者差 14%）。 */
+  function moonDistance(ms) {
+    const a = moonArgs(ms);
+    return 385000.56
+      - 20905.355 * cosd(a.M)
+      - 3699.111 * cosd(2 * a.D - a.M)
+      - 2955.968 * cosd(2 * a.D)
+      - 569.925 * cosd(2 * a.M);
+  }
+
+  /** 视直径（度）。月亮半径 1737.4 km；典型值 0.49°（远）～0.56°（近）。 */
+  function moonSizeDeg(ms) {
+    return 2 * Math.atan(1737.4 / moonDistance(ms)) * R2D;
   }
 
   /** 格林尼治平恒星时（度） */
@@ -181,37 +206,69 @@
   }
 
   /* ── 观星评分 ──
-   * 只吃"手上已有的逐小时字段"，不额外请求任何接口：
-   *   云量 55 分（唯一的大头，云是观星的头号敌人）
-   *   降水 20 分（有雨雪直接扣满）
-   *   湿度 10 分（>90% 会起雾结露，镜面废掉）
-   *   风   10 分（>8 m/s 抖得没法看，视宁度也差）
-   *   月光  5 分（满月能把背景亮度抬高 2~3 等，深空目标全糊） */
+   * 满分 100，七项：
+   *   低云   40 —— 云是头号敌人，而且**低云是硬伤**：它就在你头顶，直接挡星
+   *   中高云 25 —— 软伤：高层薄云肉眼看着还是"晴"，但它把背景亮度抬起来，
+   *              暗目标（银河、深空）先糊。这也是为什么非要分层云量不可
+   *   降水   12 —— 有雨雪直接扣
+   *   湿度    6 —— >90% 会起雾结露，镜面废掉
+   *   风      6 —— >8 m/s 抖得没法看，视宁度也差
+   *   月光    6 —— 满月能把背景亮度抬高 2~3 等
+   *   通透度  5 —— AOD（气溶胶光学厚度）与能见度里**更差的那个**，共用同一格，不重复扣
+   * 另有三条**封顶**：低云 ≥90% 封 20、≥70% 封 45、中高云 ≥85% 且低云少封 55。
+   * 加封顶是因为纯线性扣分曾经算出"低云 80% → 67 分 不错"这种明显不诚实的结论 ——
+   * 云是观星唯一的天敌，别的项再好也救不回来。
+   *
+   * 分层云量（cloudLow/cloudMid/cloudHigh）来自 Open-Meteo，和主站天气**同一次请求**，
+   * 所以这一页永远不可能跟上面的天气数据互相打脸。
+   * 没有分层数据时退化成"总云量同时扣前两项"，跟老口径等价，不会凭空多给分。 */
   function starScore(o) {
     o = o || {};
-    const cloud = o.cloud == null ? 50 : o.cloud;
+    const why = [];
+    const hasLayers = (o.cloudLow != null || o.cloudMid != null || o.cloudHigh != null);
+    const total = o.cloud == null ? 50 : o.cloud;
+    const low = hasLayers ? (o.cloudLow || 0) : total;
+    const high = hasLayers ? Math.max(o.cloudMid || 0, o.cloudHigh || 0) : total;
     const precip = o.precip == null ? 0 : o.precip;
     const hum = o.humidity == null ? 60 : o.humidity;
     const wind = o.wind == null ? 2 : o.wind;
-    const why = [];
 
-    let s = 100 - cloud * 0.55;
-    if (cloud <= 20) why.push('云量 ' + Math.round(cloud) + '%，通透');
-    else if (cloud >= 70) why.push('云量 ' + Math.round(cloud) + '%，基本没戏');
+    let s = 100 - low * 0.40 - high * 0.25;
+    if (low >= 60) why.push('低云 ' + Math.round(low) + '%，挡得严实');
+    else if (low <= 15 && high <= 25) why.push(hasLayers ? '低云少、中高云也薄，通透' : '云量 ' + Math.round(total) + '%，通透');
+    if (high >= 50 && low < 60) why.push('中高云 ' + Math.round(high) + '%，薄云会糊掉暗目标');
 
-    if (precip > 0) { s -= 20; why.push('有降水 ' + precip.toFixed(1) + ' mm'); }
-    if (hum > 90) { s -= 10; why.push('湿度 ' + Math.round(hum) + '%，易起雾结露'); }
-    else if (hum > 80) s -= 5;
-    if (wind > 8) { s -= 10; why.push('风 ' + wind.toFixed(1) + ' m/s，视宁度差'); }
-    else if (wind > 5) s -= 5;
+    if (precip > 0) { s -= 12; why.push('有降水 ' + precip.toFixed(1) + ' mm'); }
+    if (hum > 90) { s -= 6; why.push('湿度 ' + Math.round(hum) + '%，易起雾结露'); }
+    else if (hum > 80) s -= 3;
+    if (wind > 8) { s -= 6; why.push('风 ' + wind.toFixed(1) + ' m/s，视宁度差'); }
+    else if (wind > 5) s -= 3;
     if (o.moonUp) {
-      s -= (o.moonIllum || 0) * 5;
+      s -= (o.moonIllum || 0) * 6;
       if ((o.moonIllum || 0) > 0.6) why.push('月光亮（' + Math.round(o.moonIllum * 100) + '%）');
     }
+    // 通透度：AOD 与能见度各算一个 0～5 的扣分，取更差的那个（两者高度相关，不能重复扣）
+    let tr = 2.5;                                   // 两个都没有时给中间值，别变成隐藏加分
+    if (o.aod != null) {
+      tr = Math.min(5, Math.max(0, o.aod * 12.5));
+      if (o.aod >= 0.4) why.push('气溶胶偏多（AOD ' + o.aod.toFixed(2) + '）');
+    }
+    if (o.vis != null && o.vis < 12000) {
+      const vt = Math.min(5, Math.max(0, (12000 - o.vis) / 12000 * 5));
+      if (vt > tr) { tr = vt; why.push('能见度只有 ' + (o.vis / 1000).toFixed(1) + ' km'); }
+    }
+    s -= tr;
+
+    // 云量封顶（见上面那段注释：线性扣分给出过"低云 80% = 67 分"这种不诚实的结论）
+    let cap = 100;
+    if (low >= 90) cap = 20;
+    else if (low >= 70) cap = 45;
+    else if (high >= 85 && low < 30) cap = 55;
+    if (s > cap) s = cap;
 
     s = Math.max(0, Math.min(100, Math.round(s)));
     return {
-      score: s, why: why,
+      score: s, why: why, capped: cap,
       label: s >= 80 ? '极佳' : s >= 60 ? '不错' : s >= 40 ? '一般' : s >= 20 ? '较差' : '不宜',
       color: s >= 80 ? '#2ecc71' : s >= 60 ? '#7ed957' : s >= 40 ? '#f0c419' : s >= 20 ? '#e67e22' : '#e74c3c'
     };
@@ -322,15 +379,240 @@
     return out.slice(0, n || 4);
   }
 
+  /* ── 方位角 ──
+   * altOf 只给高度。要回答"往哪边看"就得有方位角：从正北起、顺时针 0→360
+   * （90=正东、180=正南、270=正西）。用 Meeus 13.5 的自南向西方位角再加 180 度。 */
+  function azOf(ra, dec, ms, lat, lon) {
+    const H = gmstDeg(ms) + lon - ra;
+    const alt = altOf(ra, dec, ms, lat, lon);
+    const A = Math.atan2(sind(H), cosd(H) * sind(lat) - Math.tan(dec * D2R) * cosd(lat)) * R2D;
+    return { alt: alt, az: norm360(A + 180) };
+  }
+
+  const DIR16 = ['正北', '北偏东', '东北', '东偏北', '正东', '东偏南', '东南', '南偏东',
+    '正南', '南偏西', '西南', '西偏南', '正西', '西偏北', '西北', '北偏西'];
+  function dirName(az) { return DIR16[Math.round(norm360(az) / 22.5) % 16]; }
+
+  /* ── 亮星表（J2000 赤经赤纬，取自耶鲁亮星星表） ──
+   * 只列**肉眼最容易认出来的那些**（全部亮于 2.1 等），中英双名都给：
+   * 中文名给习惯叫法，英文名用来消歧（同一个中文名在不同书里可能指不同的星）。
+   * 这张表是死的，不会过期，也不会跟任何天气数据打架。
+   * ⚠ 用途是"抬头往哪看"，不是精密天体测量 —— 差个零点几度肉眼根本看不出来。 */
+  const STARS = [
+    { n: '天狼星', en: 'Sirius', ra: 101.287, dec: -16.716, m: -1.46, con: '大犬座' },
+    { n: '老人星', en: 'Canopus', ra: 95.988, dec: -52.696, m: -0.74, con: '船底座' },
+    { n: '南门二', en: 'Rigil Kentaurus', ra: 219.902, dec: -60.834, m: -0.27, con: '半人马座' },
+    { n: '大角星', en: 'Arcturus', ra: 213.915, dec: 19.182, m: -0.05, con: '牧夫座' },
+    { n: '织女一', en: 'Vega', ra: 279.235, dec: 38.784, m: 0.03, con: '天琴座' },
+    { n: '五车二', en: 'Capella', ra: 79.172, dec: 45.998, m: 0.08, con: '御夫座' },
+    { n: '参宿七', en: 'Rigel', ra: 78.634, dec: -8.202, m: 0.13, con: '猎户座' },
+    { n: '南河三', en: 'Procyon', ra: 114.825, dec: 5.225, m: 0.34, con: '小犬座' },
+    { n: '水委一', en: 'Achernar', ra: 24.428, dec: -57.237, m: 0.46, con: '波江座' },
+    { n: '参宿四', en: 'Betelgeuse', ra: 88.793, dec: 7.407, m: 0.50, con: '猎户座' },
+    { n: '马腹一', en: 'Hadar', ra: 210.956, dec: -60.373, m: 0.61, con: '半人马座' },
+    { n: '河鼓二', en: 'Altair', ra: 297.696, dec: 8.868, m: 0.77, con: '天鹰座' },
+    { n: '十字架二', en: 'Acrux', ra: 186.650, dec: -63.099, m: 0.77, con: '南十字座' },
+    { n: '毕宿五', en: 'Aldebaran', ra: 68.980, dec: 16.509, m: 0.85, con: '金牛座' },
+    { n: '角宿一', en: 'Spica', ra: 201.298, dec: -11.161, m: 1.04, con: '室女座' },
+    { n: '心宿二', en: 'Antares', ra: 247.352, dec: -26.432, m: 1.09, con: '天蝎座' },
+    { n: '北河三', en: 'Pollux', ra: 116.329, dec: 28.026, m: 1.14, con: '双子座' },
+    { n: '北落师门', en: 'Fomalhaut', ra: 344.413, dec: -29.622, m: 1.16, con: '南鱼座' },
+    { n: '天津四', en: 'Deneb', ra: 310.358, dec: 45.280, m: 1.25, con: '天鹅座' },
+    { n: '十字架三', en: 'Mimosa', ra: 191.930, dec: -59.689, m: 1.25, con: '南十字座' },
+    { n: '轩辕十四', en: 'Regulus', ra: 152.093, dec: 11.967, m: 1.35, con: '狮子座' },
+    { n: '弧矢七', en: 'Adhara', ra: 104.656, dec: -28.972, m: 1.50, con: '大犬座' },
+    { n: '北河二', en: 'Castor', ra: 113.650, dec: 31.888, m: 1.58, con: '双子座' },
+    { n: '尾宿八', en: 'Shaula', ra: 263.402, dec: -37.104, m: 1.62, con: '天蝎座' },
+    { n: '十字架一', en: 'Gacrux', ra: 187.791, dec: -57.113, m: 1.63, con: '南十字座' },
+    { n: '参宿五', en: 'Bellatrix', ra: 81.283, dec: 6.350, m: 1.64, con: '猎户座' },
+    { n: '五车五', en: 'Elnath', ra: 81.573, dec: 28.608, m: 1.65, con: '金牛座' },
+    { n: '南船五', en: 'Miaplacidus', ra: 138.300, dec: -69.717, m: 1.67, con: '船底座' },
+    { n: '参宿二', en: 'Alnilam', ra: 84.053, dec: -1.202, m: 1.69, con: '猎户座' },
+    { n: '鹤一', en: 'Alnair', ra: 332.058, dec: -46.961, m: 1.74, con: '天鹤座' },
+    { n: '玉衡', en: 'Alioth', ra: 193.507, dec: 55.960, m: 1.77, con: '大熊座' },
+    { n: '天枢', en: 'Dubhe', ra: 165.932, dec: 61.751, m: 1.79, con: '大熊座' },
+    { n: '天船三', en: 'Mirfak', ra: 51.081, dec: 49.861, m: 1.79, con: '英仙座' },
+    { n: '弧矢一', en: 'Wezen', ra: 107.098, dec: -26.393, m: 1.83, con: '大犬座' },
+    { n: '箕宿三', en: 'Kaus Australis', ra: 276.043, dec: -34.385, m: 1.85, con: '人马座' },
+    { n: '摇光', en: 'Alkaid', ra: 206.885, dec: 49.313, m: 1.86, con: '大熊座' },
+    { n: '尾宿五', en: 'Sargas', ra: 264.330, dec: -42.998, m: 1.86, con: '天蝎座' },
+    { n: '海石一', en: 'Avior', ra: 125.628, dec: -59.510, m: 1.86, con: '船底座' },
+    { n: '五车三', en: 'Menkalinan', ra: 89.882, dec: 44.947, m: 1.90, con: '御夫座' },
+    { n: '三角形三', en: 'Atria', ra: 252.166, dec: -69.028, m: 1.91, con: '南三角座' },
+    { n: '井宿三', en: 'Alhena', ra: 99.428, dec: 16.399, m: 1.93, con: '双子座' },
+    { n: '孔雀十一', en: 'Peacock', ra: 306.412, dec: -56.735, m: 1.94, con: '孔雀座' },
+    { n: '勾陈一', en: 'Polaris', ra: 37.955, dec: 89.264, m: 1.98, con: '小熊座', note: '北极星' },
+    { n: '军市一', en: 'Mirzam', ra: 95.675, dec: -17.956, m: 1.98, con: '大犬座' },
+    { n: '星宿一', en: 'Alphard', ra: 141.897, dec: -8.659, m: 1.98, con: '长蛇座' },
+    { n: '娄宿三', en: 'Hamal', ra: 31.793, dec: 23.463, m: 2.00, con: '白羊座' },
+    { n: '土司空', en: 'Deneb Kaitos', ra: 10.897, dec: -17.987, m: 2.04, con: '鲸鱼座' },
+    { n: '斗宿四', en: 'Nunki', ra: 283.816, dec: -26.297, m: 2.05, con: '人马座' },
+    { n: '库楼三', en: 'Menkent', ra: 211.672, dec: -36.370, m: 2.06, con: '半人马座' },
+    { n: '壁宿二', en: 'Alpheratz', ra: 2.097, dec: 29.090, m: 2.06, con: '仙女座' },
+    // 不是恒星，但观星的人最想知道的"往哪看"就是它 —— 银河系中心（人马座 A*）
+    { n: '银河中心', en: 'Sgr A*', ra: 266.417, dec: -29.008, m: 99, con: '人马座', note: '银心' }
+  ];
+
+  /** 此刻地平线以上的亮星（按亮度排）。minAlt 默认 8° —— 太贴地平的星星
+   *  被大气消光和地面遮挡得厉害，报出来也没用。 */
+  function brightStars(ms, lat, lon, minAlt) {
+    const lim = (minAlt == null ? 8 : minAlt);
+    const out = [];
+    STARS.forEach(s => {
+      const p = azOf(s.ra, s.dec, ms, lat, lon);
+      if (p.alt < lim) return;
+      out.push({
+        name: s.n, en: s.en, con: s.con, mag: s.m, note: s.note || '',
+        alt: p.alt, az: p.az, dir: dirName(p.az)
+      });
+    });
+    out.sort((a, b) => a.mag - b.mag);
+    return out;
+  }
+
+  /* ── 行星（JPL 简化开普勒元素，1800–2050 有效） ──
+   * 表来自 JPL "Approximate Positions of the Major Planets"：
+   * 六个元素 a / e / I / 平黄经 L / 近日点黄经 / 升交点黄经，外加每儒略世纪变率。
+   * 精度：内行星角分级、木星土星十几角分 —— 回答"天上那颗亮的往哪看"绰绰有余。 */
+  const EARTH_EL = [1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0.0];
+  const EARTH_RT = [0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0.0];
+  const PLANET_TAB = [
+    { n: '水星', en: 'Mercury', el: [0.38709927, 0.20563593, 7.00497902, 252.25032350, 77.45779628, 48.33076593],
+      rt: [0.00000037, 0.00001906, -0.00594749, 149472.67411175, 0.16047689, -0.12534081] },
+    { n: '金星', en: 'Venus', el: [0.72333566, 0.00677672, 3.39467605, 181.97909950, 131.60246718, 76.67984255],
+      rt: [0.00000390, -0.00004107, -0.00078890, 58517.81538729, 0.00268329, -0.27769418] },
+    { n: '火星', en: 'Mars', el: [1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891],
+      rt: [0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343] },
+    { n: '木星', en: 'Jupiter', el: [5.20288700, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909],
+      rt: [-0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106] },
+    { n: '土星', en: 'Saturn', el: [9.53667594, 0.05386179, 2.48599187, 49.95424423, 92.59887831, 113.66242448],
+      rt: [-0.00125060, -0.00050991, 0.00193609, 1222.49362201, -0.41897216, -0.28867794] }
+  ];
+
+  /** 解开普勒方程 M = E − e·sinE（弧度）。牛顿迭代 12 次封顶，正常 3～4 次就收敛。 */
+  function kepler(M, e) {
+    let E = M;
+    for (let i = 0; i < 12; i++) {
+      const d = (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+      E -= d;
+      if (Math.abs(d) < 1e-10) break;
+    }
+    return E;
+  }
+
+  /** 日心黄道直角坐标（J2000 黄道面），单位 AU */
+  function helio(el, rt, T) {
+    const a = el[0] + rt[0] * T, e = el[1] + rt[1] * T, I = el[2] + rt[2] * T;
+    const L = el[3] + rt[3] * T, w = el[4] + rt[4] * T, O = el[5] + rt[5] * T;
+    let M = norm360(L - w); if (M > 180) M -= 360;
+    const E = kepler(M * D2R, e);
+    const xp = a * (Math.cos(E) - e);
+    const yp = a * Math.sqrt(1 - e * e) * Math.sin(E);
+    const wp = (w - O) * D2R, om = O * D2R, inc = I * D2R;
+    return {
+      x: (Math.cos(wp) * Math.cos(om) - Math.sin(wp) * Math.sin(om) * Math.cos(inc)) * xp -
+        (Math.sin(wp) * Math.cos(om) + Math.cos(wp) * Math.sin(om) * Math.cos(inc)) * yp,
+      y: (Math.cos(wp) * Math.sin(om) + Math.sin(wp) * Math.cos(om) * Math.cos(inc)) * xp -
+        (Math.sin(wp) * Math.sin(om) - Math.cos(wp) * Math.cos(om) * Math.cos(inc)) * yp,
+      z: (Math.sin(wp) * Math.sin(inc)) * xp + (Math.cos(wp) * Math.sin(inc)) * yp
+    };
+  }
+
+  /** 视星等的经验式（Mallama 那一套的简化版，土星环忽略不计） */
+  function magOf(N, r, d, i) {
+    const base = 5 * Math.log10(r * d);
+    const f = {
+      '水星': () => -0.42 + base + 0.0380 * i - 0.000273 * i * i + 0.000002 * i * i * i,
+      '金星': () => -4.40 + base + 0.0009 * i + 0.000239 * i * i - 0.00000065 * i * i * i,
+      '火星': () => -1.52 + base + 0.016 * i,
+      '木星': () => -9.40 + base + 0.005 * i,
+      '土星': () => -8.88 + base + 0.044 * i
+    }[N];
+    const v = f ? f() : -2 + base;
+    return isFinite(v) ? v : null;
+  }
+
+  /** 此刻五颗肉眼行星的高度/方位/亮度。返回按亮度排好的一列。 */
+  function planets(ms, lat, lon) {
+    const T = (jdOf(ms) - 2451545.0) / 36525;
+    const E = helio(EARTH_EL, EARTH_RT, T);
+    const eR = Math.sqrt(E.x * E.x + E.y * E.y + E.z * E.z);
+    const eps = (23.43928 - 0.0000004 * (jdOf(ms) - 2451545.0)) * D2R;
+    const sun = sunRaDec(ms);
+    const out = [];
+    PLANET_TAB.forEach(p => {
+      const h = helio(p.el, p.rt, T);
+      const x = h.x - E.x, y = h.y - E.y, z = h.z - E.z;
+      const d = Math.sqrt(x * x + y * y + z * z);
+      const elonLon = norm360(Math.atan2(y, x) * R2D), elat = Math.asin(z / d) * R2D;
+      const ra = norm360(Math.atan2(sind(elonLon) * Math.cos(eps) - Math.tan(elat * D2R) * Math.sin(eps), cosd(elonLon)) * R2D);
+      const dec = Math.asin(sind(elat) * Math.cos(eps) + cosd(elat) * Math.sin(eps) * sind(elonLon)) * R2D;
+      const r = Math.sqrt(h.x * h.x + h.y * h.y + h.z * h.z);
+      const cosi = (r * r + d * d - eR * eR) / (2 * r * d);
+      const phase = Math.acos(Math.max(-1, Math.min(1, cosi))) * R2D;
+      const elong = Math.acos(Math.max(-1, Math.min(1,
+        sind(dec) * sind(sun.dec) + cosd(dec) * cosd(sun.dec) * cosd(ra - sun.ra)))) * R2D;
+      const av = azOf(ra, dec, ms, lat, lon);
+      out.push({
+        name: p.n, en: p.en, mag: magOf(p.n, r, d, phase), dist: d,
+        alt: av.alt, az: av.az, dir: dirName(av.az), up: av.alt > 3, elong: elong
+      });
+    });
+    out.sort((a, b) => (a.mag == null ? 99 : a.mag) - (b.mag == null ? 99 : b.mag));
+    return out;
+  }
+
+  /** X 射线耀斑等级的配色与说法。A/B 是背景级，C 小耀斑，M 中等，X 最强 ——
+   *  每一级之间差 10 倍（M1 = 10×C1，X1 = 10×M1）。 */
+  function flareScale(txt) {
+    const c = String(txt || '').charAt(0).toUpperCase();
+    if (c === 'X') return { level: '大耀斑', note: '几天后可能有一场极光', color: '#c0392b' };
+    if (c === 'M') return { level: '中等耀斑', note: '可能引发地磁扰动', color: '#e74c3c' };
+    if (c === 'C') return { level: '小耀斑', note: '常见，通常无影响', color: '#e67e22' };
+    if (c === 'B') return { level: '背景偏亮', note: '安静', color: '#f0c419' };
+    return { level: '平静背景', note: '没有活动', color: '#3498db' };
+  }
+
+  /** 太阳风 Bz 的人话。Bz 是**朝南还是朝北**决定能量灌不灌得进来：
+   *  朝南（负值）＝行星际磁场和地球磁场反接，太阳风能量直接灌进磁层 → 利于极光；
+   *  朝北（正值）就算速度再快，也大多被磁层挡回去 —— 所以只看 Kp 看不出"接下来会不会爆"。 */
+  function bzMood(bz) {
+    if (bz == null || !isFinite(bz)) return { text: '--', good: false, color: '#7f8c9a' };
+    if (bz <= -10) return { text: '强烈朝南，很有利于极光', good: true, color: '#2ecc71' };
+    if (bz <= -5) return { text: '朝南，有利于极光', good: true, color: '#7ed957' };
+    if (bz < 0) return { text: '略朝南', good: true, color: '#f0c419' };
+    if (bz < 5) return { text: '接近零，作用不大', good: false, color: '#7f8c9a' };
+    return { text: '朝北，把能量挡了回去', good: false, color: '#e67e22' };
+  }
+
+  /** 月亮此刻的位置与视大小（方位角 + 距离 + 视直径）。
+   *  距离与视直径是"超级月亮"那一类说法的根据：近地点 356500 km、远地点 406700 km，
+   *  视直径 0.49°～0.56°，差 14% —— 肉眼其实看不出来，但拍照党关心。 */
+  function moonPos(ms, lat, lon) {
+    const m = moonRaDec(ms);
+    const p = azOf(m.ra, m.dec, ms, lat, lon);
+    const d = moonDistance(ms);
+    return {
+      alt: p.alt, az: p.az, dir: dirName(p.az),
+      dist: d, size: moonSizeDeg(ms),
+      big: d < 365000, small: d > 404000
+    };
+  }
+
   global.ASTRO = {
     // 基础几何
     sunAlt: sunAlt, moonAlt: moonAlt, sunRaDec: sunRaDec, moonRaDec: moonRaDec,
-    // 月相
+    azOf: azOf, dirName: dirName,
+    // 月相与月亮
     moonPhase: moonPhase, moonPhaseTxt: moonPhaseTxt,
+    moonDistance: moonDistance, moonSizeDeg: moonSizeDeg, moonPos: moonPos,
     // 事件
     sunEvents: sunEvents, moonEvents: moonEvents, nextNight: nextNight,
     // 评分与判据
     starScore: starScore, kpScale: kpScale, auroraNeedKp: auroraNeedKp,
+    flareScale: flareScale, bzMood: bzMood,
+    // 此刻的天空（全部本地算，不联网）
+    stars: STARS, brightStars: brightStars, planets: planets,
     // 流星雨
     showers: SHOWERS, nextShowers: nextShowers,
     // 常量给外面用（比如"今晚"取 18:00 起算）

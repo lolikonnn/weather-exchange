@@ -356,6 +356,12 @@
     async forecast(lat, lon, pastDays, fcstDays) {
       const q = '?latitude=' + lat + '&longitude=' + lon +
         '&hourly=temperature_2m,precipitation,relative_humidity_2m,wind_speed_10m,weather_code,cloud_cover,uv_index' +
+        // 后面四个是给「🔭 天文」的观星指数用的，**加在同一次请求里** ——
+        // 不新增请求、不引入第二个模型，所以天文页的云量永远跟主站天气一致。
+        //   cloud_cover_low/mid/high：分层云量。低云直接挡星（硬伤），
+        //     高层薄云肉眼看着还是"晴"，但它抬高背景亮度、先把银河糊掉。
+        //   visibility：能见度（米），和气溶胶互补。
+        ',cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility' +
         '&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,sunrise,sunset,uv_index_max,daylight_duration' +
         // Open-Meteo 的风速默认单位是 km/h，而中国气象局给的是 m/s。
         // 不显式指定的话，"平均风速"会显示成 17.6 m/s（其实是 17.6 km/h ≈ 4.9 m/s），
@@ -371,6 +377,11 @@
       h.wcode = (d.hourly && d.hourly.weather_code) || [];
       h.cloud = (d.hourly && d.hourly.cloud_cover) || [];
       h.uv = (d.hourly && d.hourly.uv_index) || [];
+      // 天文用的三项（跟上面同一份响应，没有第二个数据源）
+      h.cloudLow = (d.hourly && d.hourly.cloud_cover_low) || [];
+      h.cloudMid = (d.hourly && d.hourly.cloud_cover_mid) || [];
+      h.cloudHigh = (d.hourly && d.hourly.cloud_cover_high) || [];
+      h.vis = (d.hourly && d.hourly.visibility) || [];
       h.daily = d.daily || null;
       h.utcOffset = d.utc_offset_seconds;
       return h;
@@ -519,6 +530,20 @@
         { ttl: 3600000, key: 'airh|' + lat + ',' + lon });
       const h = (d && d.hourly) || {};
       return { time: h.time || [], pm25: h.pm2_5 || [] };
+    },
+
+    /** 逐小时气溶胶光学厚度（AOD）—— 天文上"通透度"的专业指标。
+     *  为什么另开一次请求：AOD 只在 **air-quality-api** 上，跟 weather 的 forecast 不同主机。
+     *  但只要 2 天、只要一个字段，实测响应 **870 B**，比一张雷达图便宜得多。
+     *  参考口径：<0.1 极品透明 · 0.1~0.2 很好 · 0.2~0.4 一般 · >0.4 明显发灰。
+     *  这一项让观星指数不必只看云 —— 天上没云但一层霾，星星一样是糊的。 */
+    async astroAir(lat, lon) {
+      const q = '?latitude=' + lat + '&longitude=' + lon +
+        '&hourly=aerosol_optical_depth&forecast_days=2&timezone=' + encodeURIComponent(TZ);
+      const d = await getJSON('https://air-quality-api.open-meteo.com/v1/air-quality' + q,
+        { ttl: 1800000, key: 'aod|' + lat + ',' + lon });
+      const h = (d && d.hourly) || {};
+      return { time: h.time || [], aod: h.aerosol_optical_depth || [] };
     },
 
     /** ④ 预报偏离：**当时发出来的预报** vs 事后实况。
@@ -899,6 +924,11 @@
       };
       const humids = padTo(recent.humidity), winds = padTo(recent.wind), wcodes = padTo(recent.wcode);
       const clouds = padTo(recent.cloud), uvs = padTo(recent.uv);
+      // 天文用的三项（分层云量 / 能见度）跟其它近期字段一样：只有近 92 天有，
+      // 前段（历史归档那段）补齐 null。**忘了往这儿加**的话，观星页会一直显示「云 --/--」——
+      // forecast() 里取回来了、却在这一步被丢掉，是这次差点漏掉的一环。
+      const cloudLows = padTo(recent.cloudLow), cloudMids = padTo(recent.cloudMid);
+      const cloudHighs = padTo(recent.cloudHigh), viss = padTo(recent.vis);
       const daily = toDailyBars(times, temps, precs, { humidity: humids, wind: winds, wcode: wcodes });
 
       // 用 Open-Meteo daily 补/覆盖更可靠的最高最低温
@@ -954,7 +984,8 @@
 
       const out = {
         city, now, fcst, official, cnFcst, calDaily,
-        hourly: { time: times, temp: temps, precip: precs, humidity: humids, wind: winds, wcode: wcodes, cloud: clouds, uv: uvs },
+        hourly: { time: times, temp: temps, precip: precs, humidity: humids, wind: winds, wcode: wcodes, cloud: clouds, uv: uvs,
+          cloudLow: cloudLows, cloudMid: cloudMids, cloudHigh: cloudHighs, vis: viss },
         daily, week, month, intraday, seven,
         omDaily, lastDay, todayIndex: ti, today,
         base: ti > 0 ? daily[ti - 1].c : (ti === 0 ? daily[0].o : null)
@@ -1040,8 +1071,14 @@
    * Kp 是**三小时一档**的地磁活动指数（0~9），5 以上就算地磁暴，对应 NOAA 的 G1~G5。
    * SWPC 的 time_tag 是**不带时区的 UTC**（"2026-10-07T03:00:00"），补个 Z 再解析。 */
   const SWPC_HOST = 'https://services.swpc.noaa.gov';
+  // OVATION 极光网格是自己 fetch 的（不走 getJSON 的缓存，见 auroraProb 的注释），
+  // 这个模块级变量就是它的缓存：只留"离你最近那一格的概率"，不留整张网格。
+  const AUR = { t: 0, v: null, key: '' };
   const swpcTime = s => {
-    const t = Date.parse(String(s).replace(' ', 'T') + 'Z');
+    // ⚠ 两种写法都有：Kp / 太阳黑子那几份是**不带时区**的 UTC（"2026-10-07T03:00:00"），
+    // 而 summary/*（太阳风）**自带 Z**（"2026-10-07T08:27:00Z"）。一律先摘掉尾部的 Z 再补，
+    // 否则会拼成 "...ZZ" → Date.parse 返回 NaN → 时间显示成 null。
+    const t = Date.parse(String(s).replace(' ', 'T').replace(/Z$/i, '') + 'Z');
     return isFinite(t) ? new Date(t) : null;
   };
   const SWPC = {
@@ -1070,6 +1107,84 @@
       const last = j[j.length - 1];
       // ⚠ smoothed_ssn 在当月还没算出来时是 **-1**（不是 null），别把 -1 当数据用。
       return { month: last['time-tag'] || '', ssn: last.ssn == null ? null : +last.ssn };
+    },
+
+    /** **你头顶**此刻的极光概率（%）。OVATION 模型的 1° 全球网格。
+     *
+     *  这是极光这一页最值钱的一件东西：在这之前只能用"你这个纬度大约需要 Kp ≥ N"
+     *  这种经验口径去猜，现在直接给一个百分比。
+     *
+     *  ⚠ 原始 JSON **919 KB**（gzip 后 142 KB），是全站最贵的一次请求，所以：
+     *    ① TTL 半小时（模型本身也是这个刷新节奏）；
+     *    ② **故意不走 getJSON 的通用缓存** —— 那会把解析后那张 65160 个点的
+     *       对象图一直留在内存里，老安卓 WebView 吃不消。这里自己 fetch，
+     *       就近取一格，只把那个百分点存下来，解析出来的大对象让它被回收掉。
+     *  网格格式：`coordinates: [[经度, 纬度, 概率], …]`，经度 0~359、纬度 -90~90。 */
+    async auroraProb(lat, lon) {
+      const key = (+lat).toFixed(1) + ',' + (+lon).toFixed(1);
+      if (AUR.v != null && AUR.key === key && Date.now() - AUR.t < 1800000) return AUR.v;
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 25000);
+      try {
+        const res = await fetch(SWPC_HOST + '/json/ovation_aurora_latest.json',
+          { signal: ctl.signal, mode: 'cors' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const j = await res.json();
+        const arr = j && j.coordinates;
+        if (!arr || !arr.length) throw new Error('OVATION 结构不对');
+        const wantLon = Math.round(((+lon % 360) + 360) % 360), wantLat = Math.round(+lat);
+        let best = null, bd = Infinity;
+        for (let i = 0; i < arr.length; i++) {
+          const c = arr[i];
+          let dl = Math.abs(c[0] - wantLon); if (dl > 180) dl = 360 - dl;
+          const db = Math.abs(c[1] - wantLat);
+          const d = dl * dl + db * db;
+          if (d < bd) { bd = d; best = c; }
+        }
+        if (!best) return null;
+        const v = {
+          prob: +best[2], gridLon: best[0], gridLat: best[1],
+          obs: j['Observation Time'] || '', fcast: j['Forecast Time'] || ''
+        };
+        AUR.v = v; AUR.t = Date.now(); AUR.key = key;
+        return v;
+      } finally { clearTimeout(timer); }
+    },
+
+    /** 太阳风速度 + 磁场 Bz。两个接口分别只有 **59 / 60 字节**，便宜得离谱。
+     *  Bz 是极光预报里最灵的一个量：**朝南（负值）＝和地球磁场反着接，能量灌得进来**；
+     *  朝北（正值）就算速度再快也大多被挡回去。所以只看 Kp 是看不出"接下来会不会爆"的。 */
+    async solarWind() {
+      const [sp, mg] = await Promise.all([
+        getJSON(SWPC_HOST + '/products/summary/solar-wind-speed.json',
+          { ttl: 300000, key: 'swpc:swsp', timeout: 10000 }),
+        getJSON(SWPC_HOST + '/products/summary/solar-wind-mag-field.json',
+          { ttl: 300000, key: 'swpc:swmg', timeout: 10000 })
+      ]);
+      const a = sp && sp[0], b = mg && mg[0];
+      if (!a && !b) return null;
+      return {
+        speed: (a && a.proton_speed != null) ? +a.proton_speed : null,
+        bt: (b && b.bt != null) ? +b.bt : null,
+        bz: (b && b.bz_gsm != null) ? +b.bz_gsm : null,
+        t: swpcTime((a && a.time_tag) || (b && b.time_tag))
+      };
+    },
+
+    /** 当前太阳耀斑等级（GOES X 射线）。`current_class` 形如 "A0.0" / "C3.2" / "M1.5" / "X2.0"。
+     *  耀斑是地磁暴的源头 —— M 级以上通常意味着两三天后可能有一场极光。 */
+    async flareNow() {
+      const j = await getJSON(SWPC_HOST + '/json/goes/primary/xray-flares-latest.json',
+        { ttl: 300000, key: 'swpc:flare', timeout: 12000 });
+      const r = j && j[0];
+      if (!r) return null;
+      const cur = String(r.current_class || '').trim();
+      return {
+        text: cur,
+        cls: cur ? cur.charAt(0).toUpperCase() : '',
+        num: parseFloat(cur.slice(1)) || 0,
+        max: r.max_class || '', maxT: swpcTime(r.max_time)
+      };
     }
   };
 

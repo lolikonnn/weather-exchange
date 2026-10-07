@@ -910,7 +910,8 @@
       const c = (app && app.S && app.S.cur) || null;
       const d = (app && app.S && app.S.data) || null;
       const me = this;
-      const PAGES = [['star', '✨ 观星'], ['aurora', '🌌 极光'], ['moon', '🌗 日月'], ['meteor', '☄️ 流星雨']];
+      const PAGES = [['star', '✨ 观星'], ['sky', '🌟 此刻'], ['aurora', '🌌 极光'],
+        ['moon', '🌗 日月'], ['meteor', '☄️ 流星雨']];
       body.innerHTML =
         '<div class="wx-seg">' + PAGES.map(p =>
           '<button class="wx-segbtn' + (p[0] === this._as.page ? ' on' : '') +
@@ -925,6 +926,7 @@
       }
       const now = Date.now();
       if (this._as.page === 'aurora') { asAurora(pane, sub, c, now); return; }
+      if (this._as.page === 'sky') { asSky(pane, sub, c, now); return; }
       if (this._as.page === 'moon') { asMoon(pane, sub, c, now); return; }
       if (this._as.page === 'meteor') { asMeteor(pane, sub, c, now); return; }
       asStar(pane, sub, c, d, now);
@@ -1065,6 +1067,11 @@
     const d = (t instanceof Date) ? t : new Date(t);
     return isNaN(d.getTime()) ? '--' : pad2(d.getHours()) + ':' + pad2(d.getMinutes());
   }
+  /** 毫秒 → HH:MMZ。空间天气是全球量，报 UTC 比报本地时间更没有歧义。 */
+  function asUTC(t) {
+    const d = (t instanceof Date) ? t : new Date(t);
+    return isNaN(d.getTime()) ? '--' : pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()) + 'Z';
+  }
   /** 时长 → "3 小时 20 分" */
   function asDur(ms) {
     const m = Math.max(0, Math.round(ms / 60000));
@@ -1088,29 +1095,73 @@
       Math.max(2, Math.min(100, Math.round(pct))) + '%;background:' + color + '"></b></i>';
   }
 
-  /* ── ① 观星指数 ── */
+  /* 异步渲染的守门员：**切页之后，上一个页面迟到的 Promise 不许再往面板里写东西**。
+     踩过的坑：观星页要等 AOD（在 air-quality 另一台主机上），结果切到「🌟 此刻」页之后
+     它才回来，把「此刻」页的头部和正文整个盖成了观星页的 —— 探针里看到的正是这个：
+     sky 页的头部显示"天文夜 18:14→05:49 · 残月 17%"（那是观星页的文案）。 */
+  function asStale(pane, page) {
+    return !(document.getElementById('wxAsPane') === pane &&
+      WXUI && WXUI._as && WXUI._as.page === page);
+  }
+
+  /* AOD（气溶胶）是按小时给的，跟逐小时气象数据同一套本地时间字符串（`YYYY-MM-DDTHH:MM`）。
+     先把时间前缀做成一张表，评分时按小时取 —— 用下标对齐会错位（两张表起点不一定一样）。 */
+  function aodMap(air) {
+    const m = {};
+    if (!air || !air.time) return m;
+    for (let i = 0; i < air.time.length; i++) {
+      m[String(air.time[i]).replace(' ', 'T').slice(0, 13)] = air.aod ? air.aod[i] : null;
+    }
+    return m;
+  }
+  function aodKey(t) {
+    const d = new Date(t);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+      'T' + pad2(d.getHours());
+  }
+
+  /* ── ① 观星指数 ──
+     这一页是**同步画**的，但 AOD 在另一台主机上（air-quality），所以先拉它再画。
+     八百来字节，不值得为它把整页做成异步。 */
   function asStar(pane, sub, c, d, now) {
     const A = global.ASTRO;
     if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
+    if (!(global.API && API.OpenMeteo && API.OpenMeteo.astroAir)) {
+      drawStar(pane, sub, c, d, now, null); return;
+    }
+    pane.innerHTML = '<div class="wx-load">正在取气溶胶（通透度）…</div>';
+    API.OpenMeteo.astroAir(c.lat, c.lon)
+      .then(air => { if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, air); })
+      .catch(() => { if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, null); });
+  }
+
+  function drawStar(pane, sub, c, d, now, air) {
+    const A = global.ASTRO;
     const mp = A.moonPhase(now);
     const night = A.nextNight(now, c.lat, c.lon);
     const from = night ? Math.max(night.from, now - 3600000) : now;
     const to = night ? night.to : now + 6 * 3600000;
     const h = d && d.hourly;
     const hrs = asHours(h, from, to, 14);
+    const am = aodMap(air);
 
-    const rows = hrs.map(x => ({
-      t: x.t,
-      cloud: (h && h.cloud) ? h.cloud[x.i] : null,
-      sc: A.starScore({
-        cloud: (h && h.cloud) ? h.cloud[x.i] : null,
-        precip: (h && h.precip) ? h.precip[x.i] : null,
-        humidity: (h && h.humidity) ? h.humidity[x.i] : null,
-        wind: (h && h.wind) ? h.wind[x.i] : null,
-        moonUp: A.moonAlt(x.t, c.lat, c.lon) > 0,
-        moonIllum: mp.illum
-      })
-    }));
+    const rows = hrs.map(x => {
+      const g = k => (h && h[k]) ? h[k][x.i] : null;
+      const low = g('cloudLow'), mid = g('cloudMid'), hi = g('cloudHigh');
+      return {
+        t: x.t,
+        total: g('cloud'),
+        low: low, high: (mid == null && hi == null) ? null : Math.max(mid || 0, hi || 0),
+        aod: am[aodKey(x.t)],
+        sc: A.starScore({
+          cloud: g('cloud'), cloudLow: low, cloudMid: mid, cloudHigh: hi,
+          precip: g('precip'), humidity: g('humidity'), wind: g('wind'),
+          vis: g('vis'), aod: am[aodKey(x.t)],
+          moonUp: A.moonAlt(x.t, c.lat, c.lon) > 0,
+          moonIllum: mp.illum
+        })
+      };
+    });
     const best = rows.slice().sort((p, q) => q.sc.score - p.sc.score)[0] || null;
 
     if (sub) {
@@ -1125,7 +1176,8 @@
         '<span class="wx-as-leadlab"><b>' + best.sc.label + '</b><br>' + asHM(best.t) + ' 前后最合适</span></div>';
       if (best.sc.why.length) html += '<div class="wx-as-note">' + esc(best.sc.why.join(' · ')) + '</div>';
     }
-    html += '<div class="wx-as-h2">' + (night ? '今晚逐小时' : '接下来几小时') + '</div>';
+    html += '<div class="wx-as-h2">' + (night ? '今晚逐小时' : '接下来几小时') +
+      '（云那一列是「低云/中高云」）</div>';
     if (!rows.length) {
       html += '<div class="wx-load">逐小时数据还没到 —— 它跟副图一起异步加载，' +
         '过一会儿再点开这一页就有逐小时评分了。</div>';
@@ -1133,39 +1185,162 @@
       html += '<div class="wx-as-list">' + rows.map(r =>
         '<div class="wx-as-row">' + '<b>' + asHM(r.t) + '</b>' + asBar(r.sc.score, r.sc.color) +
         '<span style="color:' + r.sc.color + '">' + r.sc.score + ' ' + r.sc.label + '</span>' +
-        '<em>云 ' + (r.cloud == null ? '--' : Math.round(r.cloud) + '%') + '</em></div>').join('') + '</div>';
+        // 有分层就给「低/中高」，没有就退回总云量 —— 别显示 --/--，那等于什么都没说
+        '<em title="' + (r.low == null ? '总云量' : '低云 / 中高云') + '">云 ' +
+        (r.low == null
+          ? (r.total == null ? '--' : Math.round(r.total) + '%')
+          : Math.round(r.low) + '/' + (r.high == null ? '--' : Math.round(r.high))) +
+        '</em></div>').join('') + '</div>';
     }
-    html += '<div class="wx-as-foot">评分口径：云量 55 分 · 降水 20 · 湿度 10 · 风 10 · 月光 5。' +
-      '「天文夜」是太阳低于 -6°、天真正黑透的那一段。逐小时气象数据来自 Open-Meteo，' +
-      '月相与月光遮挡在本地推算。</div>';
+    html += '<div class="wx-as-foot">评分口径：低云 40 分 · 中高云 25 · 降水 12 · 湿度 6 · 风 6 · 月光 6 · ' +
+      '通透度 5（AOD 与能见度取更差的一个）。低云 ≥70% 封 45 分、≥90% 封 20 分 —— ' +
+      '云是观星唯一的天敌，别的项再好也救不回来。<br>' +
+      '「天文夜」是太阳低于 -6°、天真正黑透的那一段。逐小时气象（含分层云量与能见度）来自 Open-Meteo，' +
+      '气溶胶来自同一家的 air-quality 接口，月相与月光遮挡在本地推算 —— ' +
+      '全部跟主站天气同一套模型，不会互相打脸。</div>';
     pane.innerHTML = html;
   }
 
-  /* ── ② 极光 / 地磁 ── */
+  /* ── ①b 此刻天空 ──
+     这一页**一个网络请求都不发**：亮星表、行星轨道根数、月球距离全在 astro.js 里，
+     拿经纬度和当前时间就能算。所以它永远不会因为接口挂了而空着，
+     也不会跟天气数据有任何冲突（它压根不是天气）。 */
+  function asSky(pane, sub, c, now) {
+    const A = global.ASTRO;
+    if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
+    const sunA = A.sunAlt(now, c.lat, c.lon);
+    const dark = sunA < -6, dusk = sunA < 0 && sunA >= -6;
+    const stars = A.brightStars(now, c.lat, c.lon, 8);
+    const pls = A.planets(now, c.lat, c.lon);
+    const upPl = pls.filter(p => p.up);
+    const mpos = A.moonPos(now, c.lat, c.lon);
+    const mp = A.moonPhase(now);
+
+    if (sub) {
+      sub.textContent = (dark ? '天已黑透' : dusk ? '天还没黑透' : '现在是白天') +
+        ' · 可见亮星 ' + stars.length + ' 颗' +
+        (upPl.length ? ' · 行星 ' + upPl.map(p => p.name).join('、') : '');
+    }
+
+    let html = '<div class="wx-as-lead">' +
+      '<span class="wx-as-big">' + stars.length + '</span>' +
+      '<span class="wx-as-leadlab"><b>颗亮星在地平线上</b><br>' +
+      (stars.length ? '此刻最亮：' + esc(stars[0].name) + '（' + esc(stars[0].dir) + ' ' +
+        Math.round(stars[0].alt) + '°）' : '这个时刻头上没有亮星') + '<br>' +
+      '太阳高度 ' + sunA.toFixed(1) + '° —— ' +
+      (dark ? '天已黑透' : dusk ? '还在天文暮光里' : '白天，星星看不见') + '</span></div>';
+
+    html += '<div class="wx-as-h2">亮星（按亮度，高度都在 8° 以上）</div>';
+    if (!stars.length) {
+      html += '<div class="wx-load">此刻地平线上没有亮于 2.1 等的星 —— 换个时间再看。</div>';
+    } else {
+      html += '<div class="wx-as-list">' + stars.slice(0, 10).map(s =>
+        '<div class="wx-as-row2"><b>' + esc(s.name) + (s.note ? '<span style="color:var(--accent)"> ✦</span>' : '') + '</b>' +
+        '<span>' + Math.round(s.alt) + '° ' + esc(s.dir) + '　·　' + s.mag.toFixed(2) + ' 等　·　' +
+        esc(s.con) + '</span></div>').join('') + '</div>';
+    }
+
+    html += '<div class="wx-as-h2">行星</div><div class="wx-as-list">' + pls.map(p => {
+      const vis = p.up ? '' : '（在地平线下）';
+      return '<div class="wx-as-row2"><b>' + esc(p.name) + '</b><span style="' +
+        (p.up ? '' : 'opacity:.55') + '">' +
+        (p.mag == null ? '--' : p.mag.toFixed(2) + ' 等') + '　·　' +
+        (p.up ? Math.round(p.alt) + '° ' + esc(p.dir) : '方位 ' + esc(p.dir)) + '　·　距角 ' +
+        Math.round(p.elong) + '°' + vis + '</span></div>';
+    }).join('') + '</div>';
+
+    html += '<div class="wx-as-h2">月亮与银心</div><div class="wx-as-list">' +
+      '<div class="wx-as-row2"><b>月亮</b><span>' +
+      (mpos.alt > 0 ? Math.round(mpos.alt) + '° ' + esc(mpos.dir) : '已落下（' + esc(mpos.dir) + '）') +
+      '　·　' + mp.emoji + mp.name + '　·　距离 ' + Math.round(mpos.dist).toLocaleString('en-US') + ' km' +
+      '　·　视直径 ' + mpos.size.toFixed(3) + '°' + (mpos.big ? '（偏大，超级月亮档）' : mpos.small ? '（偏小）' : '') +
+      '</span></div>' +
+      '<div class="wx-as-row2"><b>银河中心</b><span id="wxAsGc">—</span></div></div>';
+
+    html += '<div class="wx-as-foot">这一页<b>不联网</b>：亮星用耶鲁亮星表的 J2000 坐标、' +
+      '行星用 JPL 的简化开普勒根数、月亮距离用 Meeus 的简化级数，全部在本地算。' +
+      '用途是"抬头往哪看"，不是精密天体测量 —— 高度方位差个零点几度，肉眼分不出来。<br>' +
+      '方位角从正北起顺时针数（90°=正东、180°=正南、270°=正西）。银河中心在中纬度抬不高，' +
+      '北纬 40° 最高也就 21°，它最高的时候就是拍银拱的窗口。</div>';
+
+    pane.innerHTML = html;
+    // 银河中心单独填（它不在亮星表里按亮度排进去，永远排不进前十）
+    const gc = A.stars.filter(s => s.en === 'Sgr A*')[0];
+    const el = pane.querySelector('#wxAsGc');
+    if (gc && el) {
+      const p = A.azOf(gc.ra, gc.dec, now, c.lat, c.lon);
+      el.textContent = (p.alt > 0 ? Math.round(p.alt) + '° ' + A.dirName(p.az) : '在地平线下') +
+        '　·　这一纬度最高 ' + Math.round(90 - Math.abs(c.lat) - 29) + '°';
+    }
+  }
+
+  /* ── ② 极光 / 地磁 ──
+     六份数据一起取。其中 OVATION 那张概率网格最贵（919 KB，gzip 142 KB），
+     所以 api.js 那边专门给它做了半小时的只剩一个数的缓存。 */
   function asAurora(pane, sub, c, now) {
     const A = global.ASTRO;
     const SW = global.API && global.API.SWPC;
     if (sub) sub.textContent = 'NOAA 空间天气';
     if (!A || !SW) { pane.innerHTML = '<div class="wx-load">数据层没就绪（ASTRO / API.SWPC）</div>'; return; }
-    pane.innerHTML = '<div class="wx-load">正在取 NOAA 的 Kp 指数…</div>';
+    pane.innerHTML = '<div class="wx-load">正在取 NOAA 的空间天气（含一整张极光概率网格）…</div>';
     Promise.all([
       SW.kpNow().catch(() => null),
       SW.kpSeries().catch(() => []),
-      SW.sunspots().catch(() => null)
+      SW.sunspots().catch(() => null),
+      SW.auroraProb(c.lat, c.lon).catch(() => null),
+      SW.solarWind().catch(() => null),
+      SW.flareNow().catch(() => null)
     ]).then(res => {
+      if (asStale(pane, 'aurora')) return;      // 切页了就丢，别盖住当前页
       const cur = res[0], series = res[1], ssn = res[2];
+      const ov = res[3], sw = res[4], fl = res[5];
       const need = A.auroraNeedKp(c.lat);
       const sc = A.kpScale(cur ? cur.kp : null);
       const fut = series.filter(x => x.t.getTime() > now);
       const peak = fut.reduce((m, x) => (x.kp > m.kp ? x : m), { kp: -1, t: null });
       const pk = A.kpScale(peak.kp >= 0 ? peak.kp : null);
       const latTxt = Math.abs(c.lat).toFixed(1) + '°' + (c.lat >= 0 ? 'N' : 'S');
+      const prob = ov ? ov.prob : null;
+      const pc = prob == null ? '#7f8c9a' : prob >= 50 ? '#2ecc71' : prob >= 20 ? '#7ed957'
+        : prob >= 5 ? '#f0c419' : prob > 0 ? '#e67e22' : '#7f8c9a';
 
+      // 头条给的是"你头顶的概率"，不是 Kp —— Kp 是全球量，概率才是这个地方的答案
       let html = '<div class="wx-as-lead">' +
-        '<span class="wx-as-big" style="color:' + sc.color + '">' +
-        (cur && cur.kp != null ? cur.kp.toFixed(1) : '--') + '</span>' +
-        '<span class="wx-as-leadlab"><b>Kp ' + (sc.g ? sc.g + ' · ' : '') + sc.text + '</b><br>' +
-        (cur ? asHM(cur.t) + ' 实测' : '取不到实时值') + '</span></div>';
+        '<span class="wx-as-big" style="color:' + pc + '">' +
+        (prob == null ? '--' : prob + '%') + '</span>' +
+        '<span class="wx-as-leadlab"><b>你头顶此刻的极光概率</b><br>' +
+        'Kp ' + (cur && cur.kp != null ? cur.kp.toFixed(1) : '--') +
+        (sc.g ? '（' + sc.g + ' ' + sc.text + '）' : '（' + sc.text + '）') +
+        (ov && ov.obs ? '　·　模型 ' + esc(ov.obs.slice(11, 16)) + 'Z' : '') +
+        '</span></div>';
+
+      // 太阳风：解释"为什么现在是这样、接下来会不会变"
+      html += '<div class="wx-as-h2">太阳风（地磁暴的燃料）</div>';
+      if (sw) {
+        const mood = A.bzMood(sw.bz);
+        html += '<div class="wx-as-list">' +
+          '<div class="wx-as-row2"><b>速度</b><span>' +
+          (sw.speed == null ? '--' : Math.round(sw.speed) + ' km/s') +
+          '　·　总磁场 Bt ' + (sw.bt == null ? '--' : sw.bt.toFixed(1) + ' nT') + '</span></div>' +
+          '<div class="wx-as-row2"><b>Bz</b><span style="color:' + mood.color + '">' +
+          (sw.bz == null ? '--' : (sw.bz > 0 ? '+' : '') + sw.bz.toFixed(1) + ' nT') +
+          '　·　' + esc(mood.text) + '</span></div></div>';
+        html += '<div class="wx-as-note">Bz 是<b>朝南还是朝北</b>：朝南（负）＝行星际磁场和地球磁场反接，' +
+          '太阳风能量直接灌进磁层；朝北就算速度再快也大多被挡回去。所以只看 Kp 看不出"接下来会不会爆"。</div>';
+      } else {
+        html += '<div class="wx-load">太阳风没取到</div>';
+      }
+
+      // 耀斑
+      if (fl && fl.text) {
+        const fs = A.flareScale(fl.text);
+        html += '<div class="wx-as-h2">太阳耀斑</div>' +
+          '<div class="wx-as-list"><div class="wx-as-row2"><b>当前</b><span style="color:' + fs.color + '">' +
+          esc(fl.text) + ' 级　·　' + esc(fs.level) + '　·　' + esc(fs.note) + '</span></div>' +
+          (fl.max && fl.max !== fl.text
+            ? '<div class="wx-as-row2"><b>本轮峰值</b><span>' + esc(fl.max) + ' 级</span></div>' : '') +
+          '</div>';
+      }
 
       if (fut.length) {
         html += '<div class="wx-as-h2">未来 3 天（每 3 小时一档）</div><div class="wx-as-kp">' +
@@ -1181,26 +1356,27 @@
       }
 
       html += '<div class="wx-as-h2">在你这个纬度看得到吗</div>';
-      if (need > 9) {
-        html += '<div class="wx-as-note">你现在看的是 <b>' + esc(c.name) + '（' + latTxt + '）</b>，' +
-          '按经验口径<b>即使 Kp 满格（9）也基本看不到极光</b>。要看得往北：' +
-          '漠河（53°N）约需 Kp ≥ 7、新疆北部（48°N）≥ 8、华北（44°N）≥ 9。</div>';
-      } else {
-        const ok = (peak.kp >= need) || !!(cur && cur.kp >= need);
-        html += '<div class="wx-as-note">你现在看的是 <b>' + esc(c.name) + '（' + latTxt + '）</b>，' +
-          '这一纬度大约需要 <b>Kp ≥ ' + need + '</b>。当前 ' + (cur && cur.kp != null ? cur.kp.toFixed(1) : '--') +
-          '、未来三天峰值 ' + (peak.kp >= 0 ? peak.kp.toFixed(1) : '--') + ' → <b>' +
-          (ok ? '有机会，往北走、避开城市灯光' : '暂时没戏') + '</b>。</div>';
-      }
+      const chance = prob != null ? prob : 0;
+      html += '<div class="wx-as-note">你现在看的是 <b>' + esc(c.name) + '（' + latTxt + '）</b>，' +
+        'NOAA 的 OVATION 模型给这一格的概率是 <b>' + (prob == null ? '--' : prob + '%') + '</b>。' +
+        (chance >= 20 ? '今晚值得出去看一眼，往北、避开城市灯光。'
+          : chance > 0 ? '有一点点可能，值得留意；真要拍还是得往北走。'
+            : '按模型现在看不到。') +
+        '<br>参考阈值（经验口径）：漠河（53°N）约需 Kp ≥ 7、新疆北部（48°N）≥ 8、华北（44°N）≥ 9 —— ' +
+        '你现在这个纬度是 <b>' + (need > 9 ? 'Kp 满格也基本没戏' : 'Kp ≥ ' + need) + '</b>。' +
+        '华中华南基本只能靠 Kp 8～9 的强磁暴碰运气。</div>';
+
       html += '<div class="wx-as-foot">' +
         (ssn && ssn.ssn != null
           ? '太阳黑子数（' + esc(ssn.month) + ' 月均）<b>' + ssn.ssn.toFixed(1) + '</b> —— ' +
             '黑子多说明太阳活动强，地磁暴和极光也更容易出现。<br>'
           : '') +
         '数据来源：NOAA SWPC（免 key、CORS 全开）。Kp 是三小时一档的地磁活动指数，' +
-        '5 以上算地磁暴，也就是 NOAA 的 G1～G5。</div>';
+        '5 以上算地磁暴，也就是 G1～G5；极光概率来自 OVATION 模型的 1° 全球网格，' +
+        '<b>是"这一个经纬度格"的概率，不是全国的</b>。</div>';
       pane.innerHTML = html;
     }).catch(e => {
+      if (asStale(pane, 'aurora')) return;
       pane.innerHTML = '<div class="wx-load">NOAA 没取到：' + esc(String((e && e.message) || e)) + '</div>';
     });
   }
@@ -1232,6 +1408,25 @@
       '<span class="wx-as-big">' + mp.emoji + '</span>' +
       '<span class="wx-as-leadlab"><b>' + mp.name + ' · 照亮 ' + Math.round(mp.illum * 100) + '%</b><br>' +
       '月龄 ' + mp.age.toFixed(1) + ' 天（朔望月 ' + A.SYNODIC.toFixed(2) + ' 天）</span></div>';
+
+    // 月亮此刻 + 朔望倒计时：全部本地算（距离用 Meeus 前 5 项，误差 ±0.3%）
+    const mpos = A.moonPos(now, c.lat, c.lon);
+    const dFull = ((0.5 - mp.p + 1) % 1) * A.SYNODIC;
+    const dNew = ((1 - mp.p) % 1) * A.SYNODIC;
+    const dTxt = d => d < 0.05 ? '就是今天' : '还有 ' + d.toFixed(1) + ' 天';
+    html += '<div class="wx-as-h2">月亮此刻</div><div class="wx-as-list">' +
+      '<div class="wx-as-row2"><b>位置</b><span>' +
+      (mpos.alt > 0 ? Math.round(mpos.alt) + '° ' + esc(mpos.dir) : '已落下（' + esc(mpos.dir) + '）') +
+      '　·　高度按月亮中心算</span></div>' +
+      '<div class="wx-as-row2"><b>距离</b><span>' +
+      Math.round(mpos.dist).toLocaleString('en-US') + ' km' +
+      (mpos.big ? '　·　偏近，超级月亮档' : mpos.small ? '　·　偏远（微月）' : '　·　常距') + '</span></div>' +
+      '<div class="wx-as-row2"><b>视直径</b><span>' + mpos.size.toFixed(3) + '°' +
+      '（满月平均 0.518°，差值肉眼看不出来，拍照党才在意）</span></div>' +
+      '<div class="wx-as-row2"><b>下次满月</b><span>' + dTxt(dFull) + '</span></div>' +
+      '<div class="wx-as-row2"><b>下次新月</b><span>' + dTxt(dNew) +
+      '（新月前后几天的夜最黑，观星最佳）</span></div></div>';
+
     html += '<div class="wx-as-h2">' + esc(c.name) + ' · 今天</div><div class="wx-as-list">' +
       WIN.map(w => {
         // ⚠「天黑 → 天亮」是**跨午夜**的，w[2] < w[1]，直接相减会得到负数被夹成 0 分。
@@ -1241,9 +1436,11 @@
           (dur != null ? '　<i>' + asDur(dur) + '</i>' : '') + '</span></div>';
       }).join('') + '</div>';
     html += '<div class="wx-as-foot">全部在本地推算（astro.js，Meeus 简化式）：' +
-      '日出日落 ±1 分钟、月出月落 ±10 分钟。' +
+      '日出日落 ±1 分钟、月出月落 ±10 分钟、月球距离 ±0.3%。' +
       '黄金时刻＝太阳高度 +6°～-4°；蓝调时刻＝-4°～-6°；天文夜＝低于 -6°。' +
       (mp.illum > 0.7 ? '<br>⚠ 今晚月光很亮，深空天体基本被压住 —— 适合看月面和行星。' : '') +
+      '<br>日月食<b>没有做</b>：找过 NASA/USNO 那几个免费源，本机要么域名解析不了、要么没有可直连的接口；' +
+      '硬编码一张表又没法当场核验，宁可先不写（宁可没有，也不要写错的日子）。' +
       '</div>';
     pane.innerHTML = html;
   }
