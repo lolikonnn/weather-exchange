@@ -771,6 +771,14 @@ body{
    转横向的处理器。 */
 .wx-segs{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto}
 .wx-seg{display:flex;gap:4px;min-width:0;overflow-x:auto;overflow-y:hidden;padding-bottom:2px}
+
+/* ⚠ 天文抽屉里那排「✨观星 / 🌟此刻 / 🌌极光 / 🌗日月 / ☄️流星雨」**不许被压缩**。
+   根因：.wx-body 是 flex 列，内容一长（此刻/流星雨那两页特别长），
+   浏览器就按 flex-shrink 把这一排挤扁 —— 实测 观星/日月 24px、而 此刻/流星雨 只剩 **20px**，
+   而按钮本身固定 22px 高，于是底部 2px 溢出、被下面的内容盖住。
+   使用者报的就是这个：「点开此刻/极光/流星雨，上面的板块选择按钮会被遮挡」。
+   这里只锁 .wx-body > .wx-seg（天文那排），雷达页的 .wx-segs > .wx-seg 不受影响。 */
+.wx-body > .wx-seg{flex:0 0 auto}
 .wx-seg::-webkit-scrollbar{height:6px}
 .wx-seg::-webkit-scrollbar-track{background:transparent}
 .wx-seg::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px}
