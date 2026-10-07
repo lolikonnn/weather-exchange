@@ -273,7 +273,9 @@
         markLine: {
           silent: true, symbol: 'none',
           lineStyle: { color: TH.dim, type: 'dashed', width: 1 },
-          label: { color: TH.dim, fontSize: 9, formatter: '良 100' },
+          // ⚠ 标签默认画在虚线**右端**，正好压在右轴的刻度上（AQI 的 100 和「良」叠成一坨）。
+          //   挪到左端、并且画在图**内**（insideStartTop），右轴那一列就干净了。
+          label: { color: TH.dim, fontSize: 9, formatter: '良 100', position: 'insideStartTop' },
           data: [{ yAxis: 100 }]
         }
       }
@@ -282,9 +284,13 @@
     // 要么把 UV 压成一条贴地的直线，要么把 AQI 顶出画面。固定 0~12 好读。
     if (uvOk) {
       o.yAxis.push({
-        type: 'value', name: 'UV', min: 0, max: 12, position: 'right', offset: 38,
-        nameTextStyle: { color: TH.dim, fontSize: 10 },
-        axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10 }, splitLine: { show: false }
+        // ⚠ UV 这根轴原来用 offset:38 推到 AQI 外面，但右侧留白一共只有 56px ——
+        //   AQI 三位数 + 38 + UV 两位数是装不下的，最右边那列被容器切掉（"右侧的数字被遮住"）。
+        //   改成刻度画在**图内**（inside），留白一个字不动：跟主图那根叠加线是同一个做法。
+        type: 'value', name: 'UV', min: 0, max: 12, position: 'right',
+        nameTextStyle: { color: TH.dim, fontSize: 10, align: 'right' },
+        axisLine: { show: false }, splitLine: { show: false },
+        axisLabel: { color: TH.dim, fontSize: 10, inside: true, margin: 2 }
       });
       o.series.push({
         name: '紫外线', type: 'line', yAxisIndex: 2, smooth: true, showSymbol: false, z: 4,
