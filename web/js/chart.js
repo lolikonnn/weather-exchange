@@ -37,15 +37,17 @@
     dev: { label: '较当日均温', unit: '℃', get: b => b.dev }
   };
 
-  /** 简单均线：窗口内**非空值**的平均，前 n−1 个是 null。
-      副图的 MA5/MA10 用它**现算** —— 见 optSub 里那段注释：
-      以前直接拿 indicators.js 的 volMa5/volMa10，那是"降水量(b.v)"的均线，
-      跟画出来的口径（温差/降水/风速/湿度）不是一回事。 */
+  /** 简单均线：窗口内**非空值**的平均。
+      ⚠ 窗口不满时（前 n−1 格）**用现有的几根平均，不返回 null**。
+      为什么不能留 null：`echarts.connect('tjs')` 的悬停联动是**按 seriesIndex 映射**的 ——
+      主图第 1 系列是「气温」、副图第 1 系列是「MA5」。MA5 如果在前几格是 null，
+      主图悬停到那几格时映射过来落不到数据上，**副图的信息窗格就弹不出来**
+      （用户报的"7日+温差，MA5 从 04:00 才开始有，之前悬停副图不弹窗"）。
+      K 线那几档之所以一直没事：主图第 0 系列是蜡烛、副图第 0 系列是柱子，两边都有数。 */
   function MA(arr, n) {
     return arr.map((_, i) => {
-      if (i < n - 1) return null;
       let s = 0, c = 0;
-      for (let k = i - n + 1; k <= i; k++) {
+      for (let k = Math.max(0, i - n + 1); k <= i; k++) {
         const v = arr[k];
         if (v != null && isFinite(v)) { s += v; c++; }
       }
@@ -664,8 +666,14 @@
         { name: 'MA5', type: 'line', data: ind.volMa5, showSymbol: false, lineStyle: { width: 1, color: C.ma[1] }, itemStyle: { color: C.ma[1] } },
         { name: 'MA10', type: 'line', data: ind.volMa10, showSymbol: false, lineStyle: { width: 1, color: C.ma[2] }, itemStyle: { color: C.ma[2] } }
       ];
-      // 「较当日均温」是围绕 0 上下摆的，没有一条 0 基线就看不出"偏暖还是偏冷"
-      if (S.metric === 'dev') baseOpt.series.push(refLine([0]));
+      // 「较当日均温」是围绕 0 上下摆的，没有一条 0 基线就看不出"偏暖还是偏冷"。
+      // ⚠ 用**有数据的**零线，不要用 refLine（它的 data 是空数组）：
+      //   connect 按 seriesIndex 映射，主图第 3 系列（叠加线）会落到副图第 3 系列 ——
+      //   如果那是个空系列，悬停又落不到数据上，副图窗格同样弹不出来。
+      if (S.metric === 'dev') baseOpt.series.push({
+        name: '零线', type: 'line', data: bars.map(() => 0), showSymbol: false, silent: true, z: 1,
+        lineStyle: { width: 1, color: '#3f4756', type: 'dashed' }, itemStyle: { color: '#3f4756' }
+      });
     } else if (S.indName === 'macd') {
       baseOpt.series = [
         {
