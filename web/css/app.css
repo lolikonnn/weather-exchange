@@ -159,6 +159,17 @@ body{
 .stock-row:hover{background:#212734}
 .stock-row.on{background:#2a3140}
 .stock-row.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
+/* 长按拖动排序：被拿起来的那一行。
+   加个阴影和描边让它"离地"，别的行照旧 —— 松手就落回原位。
+   cursor 换 grabbing，鼠标用户也知道自己在拖东西。 */
+.stock-row.dragging{
+  background:var(--panel3);box-shadow:0 8px 20px rgba(0,0,0,.5);
+  outline:1px solid var(--accent);border-radius:var(--r);
+  cursor:grabbing;opacity:.96;
+}
+/* 自选列表本身：允许纵向滚动（touch-action:pan-y），但长按不许弹系统菜单、
+   不许选中文字 —— 否则手机上按住 350ms 先弹出来的是"拷贝/搜索"。 */
+#watchlist{touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .stock-row .sw-name{color:var(--txt-hi);font-weight:600;font-size:12.5px;line-height:1.25}
 .stock-row .sw-sub{font-size:10px;color:var(--dim2);font-family:var(--mono);line-height:1.3}
 .stock-row .sw-price{font-family:var(--mono);font-size:13.5px;font-weight:600;text-align:right}

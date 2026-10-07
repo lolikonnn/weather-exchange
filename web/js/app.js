@@ -120,7 +120,14 @@
       const col = U.trendColor(q.chg);
       const row = el('div', {
         class: 'stock-row' + (S.cur && S.cur.id === id ? ' on' : ''),
-        onclick: (e) => { if (e.target.classList.contains('sw-del')) return; selectCity(id); }
+        // data-id 是给"长按拖动排序"用的：松手后直接读 DOM 里行的顺序就是新顺序，
+        // 比自己去算"插到第几个下标"稳得多（自选行没有 id 时也不至于写坏）。
+        'data-id': id,
+        onclick: (e) => {
+          if (e.target.classList.contains('sw-del')) return;
+          if (wlSuppressClick) return;        // 刚拖完的那一下别顺手切城市
+          selectCity(id);
+        }
       }, [
         el('div', {}, [
           el('div', { class: 'sw-name', text: c.name }),
@@ -131,6 +138,126 @@
       ]);
       row.appendChild(el('span', { class: 'sw-del', text: '✕', title: '从自选移除', onclick: (e) => { e.stopPropagation(); removeWatch(id); } }));
       box.appendChild(row);
+    });
+  }
+
+  /* ───────── 自选列表：长按拖动排序 ─────────
+   * 为什么用 pointer 事件：鼠标和触摸同一条路，不用写两套。
+   * 为什么**必须长按**才拖：
+   *   · 自选行的单击是"切到这座城"，按下就拖会跟点击直接打架；
+   *   · 这个列表本身要能上下滚 —— 一碰就拖的话手指根本滚不动。
+   * 所以：按住 350ms（期间没怎么动）才进入拖拽；这 350ms 内移动超过 8px 就当成滚动、取消长按。
+   * 拖拽期间用**非 passive** 的 touchmove 拦下默认行为，否则手机上会一边拖一边滚页面 ——
+   * 注意只在真的进入拖拽之后才拦，否则整个列表就滚不动了。
+   * 落点判定交给 **DOM 顺序**：把拖着的行插到该去的位置，松手直接读 DOM 顺序写回 S.watch ——
+   * 比自己去算"插到第几个下标"稳得多。 */
+  const WL_HOLD = 350, WL_SLOP = 8;
+  let wlDrag = null, wlSuppressClick = false;
+
+  function wlOrder() {
+    return Array.prototype.slice.call(document.querySelectorAll('#watchlist .stock-row'))
+      .map(r => r.dataset.id).filter(Boolean);
+  }
+
+  /** 拖拽期间挡住页面滚动。**只在真的拖起来之后**才挡 —— 提前挡会让列表滚不动。 */
+  function wlBlockScroll(e) {
+    if (wlDrag && wlDrag.on && e.cancelable) e.preventDefault();
+  }
+
+  function wlDetach() {
+    document.removeEventListener('pointermove', wlMove, true);
+    document.removeEventListener('pointerup', wlUp, true);
+    document.removeEventListener('pointercancel', wlUp, true);
+    document.removeEventListener('touchmove', wlBlockScroll, { passive: false });
+  }
+
+  function wlCancel() {
+    if (!wlDrag) return;
+    clearTimeout(wlDrag.timer);
+    wlDetach();
+    if (wlDrag.row) wlDrag.row.classList.remove('dragging');
+    wlDrag = null;
+  }
+
+  function wlMove(e) {
+    if (!wlDrag) return;
+    if (!wlDrag.on) {
+      // 还没到长按时间就动了这么多 → 用户其实是在滚列表，取消
+      if (Math.abs(e.clientY - wlDrag.y) > WL_SLOP || Math.abs(e.clientX - wlDrag.x) > WL_SLOP) wlCancel();
+      return;
+    }
+    if (e.cancelable) e.preventDefault();
+    const box = $('#watchlist');
+    if (!box) return;
+    const y = e.clientY;
+    const rows = Array.prototype.slice.call(box.querySelectorAll('.stock-row'))
+      .filter(r => r !== wlDrag.row);
+    let before = null;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i].getBoundingClientRect();
+      if (y < r.top + r.height / 2) { before = rows[i]; break; }
+    }
+    if (before) box.insertBefore(wlDrag.row, before);
+    else box.appendChild(wlDrag.row);
+    // 拖到列表上下边缘时自动滚 —— 自选长了以后不这么做根本拖不到头
+    const br = box.getBoundingClientRect();
+    if (y < br.top + 26) box.scrollTop -= 9;
+    else if (y > br.bottom - 26) box.scrollTop += 9;
+  }
+
+  function wlUp() {
+    if (wlDrag && wlDrag.on) wlCommit(); else wlCancel();
+  }
+
+  function wlCommit() {
+    const row = wlDrag.row;
+    const box = $('#watchlist');
+    clearTimeout(wlDrag.timer);
+    wlDetach();
+    row.classList.remove('dragging');
+    wlDrag = null;
+    // 刚拖完的那一下 click 要吃掉，否则会顺手切到某个城市。
+    // 用超时而不是"下一次 pointerdown 清"：click 是 pointerup 之后另起一个任务，
+    // 清早了就白设了。
+    wlSuppressClick = true;
+    setTimeout(() => { wlSuppressClick = false; }, 400);
+
+    const ids = wlOrder();
+    // 数量对不上说明 DOM 跟 S.watch 不同步（比如这期间列表被重画过）→ 只重画，不写坏数据
+    if (ids.length !== S.watch.length) { renderWatchlist(); return; }
+    if (ids.every((x, i) => x === S.watch[i])) { renderWatchlist(); return; }   // 没动，白拖
+    S.watch = ids;
+    storeSet('watch', S.watch);
+    // 手动排过序之后"默认排序"才有意义 —— 顺手切回默认档。
+    // 否则用户拖完看到的还是按涨幅/名称排的，会以为拖了没用。
+    if (S.sortMode !== 0) S.sortMode = 0;
+    renderWatchlist();
+    toast('自选顺序已保存');
+  }
+
+  function bindWatchDrag() {
+    const box = $('#watchlist');
+    if (!box) return;
+    box.addEventListener('pointerdown', (e) => {
+      if (e.button != null && e.button !== 0) return;              // 只认左键 / 触摸
+      const t = e.target;
+      if (!t || !t.closest) return;
+      const row = t.closest('.stock-row');
+      if (!row || !row.dataset.id) return;
+      if (t.closest('.sw-del') || t.closest('.sw-add')) return;    // 删除 / 加星不算拖拽
+      wlCancel();
+      wlDrag = { row: row, y: e.clientY, x: e.clientX, on: false, timer: 0 };
+      wlDrag.timer = setTimeout(() => {
+        if (!wlDrag) return;
+        wlDrag.on = true;
+        row.classList.add('dragging');
+        // 手机上来一下短触感，知道"已经拿起来了"
+        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) { } }
+      }, WL_HOLD);
+      document.addEventListener('pointermove', wlMove, true);
+      document.addEventListener('pointerup', wlUp, true);
+      document.addEventListener('pointercancel', wlUp, true);
+      document.addEventListener('touchmove', wlBlockScroll, { passive: false });
     });
   }
 
@@ -1348,6 +1475,8 @@
       toast('量能指标：' + Chart.METRICS[S.metric].label);
     });
     $('#btnManual').addEventListener('click', async () => { await warmQuotes(); await warmIndexes(); if (S.cur) { S.lastFullAt = 0; } toast('已刷新'); });
+    // 自选列表长按拖动排序（事件委托挂一次就够，列表反复重画也不用重挂）
+    bindWatchDrag();
     $('#btnSortWatch').addEventListener('click', () => {
       S.sortMode = (S.sortMode + 1) % 3; renderWatchlist();
       toast(['默认排序', '按涨幅排序', '按名称排序'][S.sortMode]);
