@@ -243,8 +243,19 @@
   }
 
   /* ── 流星雨 ──
-   * 静态表（IMO 的主要流星雨）。peak 用 [月, 日]，ZHR 是理想条件下每小时的理论数量。
-   * 不写"极大时刻的小时"是因为 IMO 每年都会修订，写到日已经够用。 */
+   * 静态表（IMO 的 9 场主要流星雨）。**peak 是 [月, 日]，没有年份** ——
+   * 年份在 nextShowers 里按"当前年份"现推，所以这张表不会过完今年就失效。
+   *
+   * ⚠ 准到什么程度 —— 别把它当成 IMO 的年度预报：
+   *   · 活动期 from/to、辐射点、母体：常年不变，可信；
+   *   · **极大日期是传统的日历日，不等于天文上的"极大时刻"**。IMO 是用**太阳黄经 λ☉**
+   *     定义极大的，同一个 λ☉ 落到日历年上会漂 ±1 天；
+   *   · **ZHR 是"常年参考值"，不是今年的预测** —— 象限仪座在 60～200 之间年际起伏，
+   *     双子座这些年持续增强，天龙座还爆过（2011 年 ZHR 一度到 600+）。
+   *   · 这一页真正"算出来的"只有**月光干扰**（用真实月相算）与最佳时段，那部分可信。
+   * 要更准就把 peak 换成 λ☉、运行时反解那次穿越的瞬时（astro.js 里本来就有太阳黄经，
+   * 顺手能暴露出来）。现在没做是因为**没有可信的 λ☉ 表**：www.imo.net 正在迁站，
+   * 历年日历 PDF 现在全部 302 到"正在重建"页，Wikipedia 在这台机器上又连不通。 */
   const SHOWERS = [
     { name: '象限仪座流星雨', code: 'QUA', from: [12, 28], peak: [1, 3], to: [1, 12], zhr: 110, radiant: '牧夫座', parent: '小行星 2003 EH1' },
     { name: '天琴座流星雨', code: 'LYR', from: [4, 16], peak: [4, 22], to: [4, 25], zhr: 18, radiant: '天琴座', parent: '彗星 C/1861 G1' },
@@ -257,35 +268,58 @@
     { name: '小熊座流星雨', code: 'URS', from: [12, 17], peak: [12, 22], to: [12, 26], zhr: 10, radiant: '小熊座', parent: '彗星 8P/Tuttle' }
   ];
 
-  /** 接下来 n 场流星雨的极大。峰值时刻取当地 02:00 —— 后半夜辐射点最高、
-   *  也是所有流星雨的传统最佳观测时段。跨年的象限仪座会自动跳到明年。 */
-  function nextShowers(ms, n) {
-    const d = new Date(ms), y = d.getFullYear();
-    const out = [];
-    SHOWERS.forEach(s => {
-      for (let yy = y; yy <= y + 1; yy++) {
-        const peak = new Date(yy, s.peak[0] - 1, s.peak[1], 2, 0, 0);
-        if (peak.getTime() >= ms) {
-          out.push({
-            s: s, peak: peak.getTime(),
-            days: (peak.getTime() - ms) / 86400000,
-            active: inSpan(ms, y, s)
-          });
-          break;
-        }
-      }
-    });
-    out.sort((a, b) => a.peak - b.peak);
-    return out.slice(0, n || 4);
+  /** 一场流星雨"当前这一轮"的活动窗口，ms 不在窗口里就返回 null。
+   *  ⚠ 跨年那场（象限仪座 12/28 → 1/12）以前**算错了**：窗口只按"ms 所在年份"推一次
+   *  （`from = mk(y-1, 12/28)`、`to = mk(y, 1/12)`），于是
+   *   ① 12/28～12/31 被算成"不在活动期"（其实正处在活动期）；
+   *   ② 收尾那天也被判掉 —— `to` 取的是当天 00:00，1/12 晚上当然大于它。
+   *  现在两个候选窗口都试，并且 `to` 取**那一天的最后一毫秒**。 */
+  function activeWindow(ms, s) {
+    const mk = (yy, md) => new Date(yy, md[0] - 1, md[1], 0, 0, 0).getTime();
+    const endOf = (yy, md) => mk(yy, md) + 86399999;
+    const y = new Date(ms).getFullYear();
+    const wrap = s.from[0] > s.to[0];
+    const cands = wrap
+      ? [[mk(y, s.from), endOf(y + 1, s.to)], [mk(y - 1, s.from), endOf(y, s.to)]]
+      : [[mk(y, s.from), endOf(y, s.to)]];
+    for (let i = 0; i < cands.length; i++) {
+      if (ms >= cands[i][0] && ms <= cands[i][1]) return { from: cands[i][0], to: cands[i][1] };
+    }
+    return null;
   }
 
-  /** 现在是不是正处在某场流星雨的活动期内（跨年的象限仪座要特殊处理） */
-  function inSpan(ms, y, s) {
-    const mk = (yy, md) => new Date(yy, md[0] - 1, md[1], 0, 0, 0).getTime();
-    const wrap = s.from[0] > s.to[0];
-    const from = mk(wrap ? y - 1 : y, s.from);
-    const to = mk(y, s.to);
-    return ms >= from && ms <= to;
+  /** 接下来 n 场流星雨的极大。峰值一律取当地 02:00 —— 后半夜辐射点最高、
+   *  也是所有流星雨的传统最佳观测时段。**这是显示约定，不是天文上的极大时刻。**
+   *
+   *  ★ 年份是运行时现推的，所以这张表**不会"过完今年就失效"**：
+   *    2026/12/31 查会给出 2027/1/3 的象限仪座，2030/12/31 会给出 2031/1/3 的。
+   *
+   *  ★ 正在活动期的那场排最前，而且给的是**这一轮**的极大（哪怕刚过去一两天），
+   *    不是"明年那一轮"。以前会把明年的极大贴上"正在活动期"的标签，很误导。 */
+  function nextShowers(ms, n) {
+    const y = new Date(ms).getFullYear();
+    const out = [];
+    SHOWERS.forEach(s => {
+      const win = activeWindow(ms, s);
+      const mk2 = yy => new Date(yy, s.peak[0] - 1, s.peak[1], 2, 0, 0).getTime();
+      let peak = null;
+      if (win) {                                  // 在活动期：取落在这一轮窗口里的那个极大
+        for (let yy = y - 1; yy <= y + 1; yy++) {
+          const p = mk2(yy);
+          if (p >= win.from && p <= win.to) { peak = p; break }
+        }
+      }
+      if (peak == null) {                         // 否则取下一个还没到的极大
+        for (let yy = y; yy <= y + 1; yy++) {
+          const p = mk2(yy);
+          if (p >= ms) { peak = p; break }
+        }
+      }
+      if (peak == null) return;
+      out.push({ s: s, peak: peak, days: (peak - ms) / 86400000, active: !!win });
+    });
+    out.sort((a, b) => (a.active !== b.active) ? (a.active ? -1 : 1) : (a.peak - b.peak));
+    return out.slice(0, n || 4);
   }
 
   global.ASTRO = {

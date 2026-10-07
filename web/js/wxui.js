@@ -1256,7 +1256,11 @@
     const mpNow = A.moonPhase(now);
     const first = list[0];
     if (sub) {
-      sub.textContent = first ? ('下一场 ' + Math.round(first.days) + ' 天后 · ' + first.s.name) : '';
+      // 正在活动期时 first.days 可能是负的（极大刚过去一两天）—— 那也要说人话，
+      // 不能显示"下一场 -2 天后"。
+      sub.textContent = !first ? ''
+        : (first.days < 0 ? ('正在活动期 · ' + first.s.name + '（极大刚过）')
+          : ('下一场 ' + Math.round(first.days) + ' 天后 · ' + first.s.name));
     }
     if (!list.length) { pane.innerHTML = '<div class="wx-load">没有算出来</div>'; return; }
     let html = '<div class="wx-list">' + list.map(x => {
@@ -1265,21 +1269,28 @@
         : mp.illum > 0.4 ? '月光中等（' + Math.round(mp.illum * 100) + '%）'
           : '月光弱（' + Math.round(mp.illum * 100) + '%），条件不错';
       const d = new Date(x.peak);
+      const when = x.days < 0 ? ('极大刚过 ' + Math.abs(Math.round(x.days)) + ' 天')
+        : x.days < 1 ? '就在今天' : ('还有 ' + Math.round(x.days) + ' 天');
       return '<div class="wx-as-card' + (x.active ? ' on' : '') + '">' +
         '<div class="wx-as-cardhead"><b>' + esc(s.name) + '</b>' +
         (x.active ? '<span class="wx-as-badge">正在活动期</span>' : '') + '</div>' +
         '<div class="wx-as-meta">极大 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日' +
-        '　·　' + (x.days < 1 ? '就在今天' : '还有 ' + Math.round(x.days) + ' 天') + '</div>' +
-        '<div class="wx-as-meta">ZHR ' + s.zhr + ' 颗/时　·　辐射点 ' + esc(s.radiant) +
+        '　·　' + when + '</div>' +
+        '<div class="wx-as-meta">ZHR ' + s.zhr + ' 颗/时（常年参考值）　·　辐射点 ' + esc(s.radiant) +
         '　·　母体 ' + esc(s.parent) + '</div>' +
         '<div class="wx-as-meta">活动期 ' + s.from[0] + '/' + s.from[1] + ' ～ ' + s.to[0] + '/' + s.to[1] +
         '　·　极大夜月相 ' + mp.emoji + mp.name + '：' + moonPen + '</div>' +
         '</div>';
     }).join('') + '</div>';
-    html += '<div class="wx-as-foot">ZHR 是"理想条件下（辐射点在正头顶、天空全黑）每小时的理论流星数"，' +
-      '实际能看到的通常只有它的三分之一到一半。看流星挑后半夜（辐射点最高），' +
-      '避开月光和城市灯光。当前月相 ' + mpNow.emoji + mpNow.name +
-      '（照亮 ' + Math.round(mpNow.illum * 100) + '%），会直接影响今晚能看到几颗。</div>';
+    html += '<div class="wx-as-foot">' +
+      '<b>准到什么程度</b>：这张表是<b>离线</b>的 9 场主要流星雨，只有「活动期 / 辐射点 / 母体」是常年不变的；' +
+      '「极大」写的是传统的日历日，而 IMO 是用<b>太阳黄经</b>定义极大的，同一个黄经落到日历上会漂 ±1 天；' +
+      '「ZHR」是<b>常年参考值而不是今年的预测</b>（象限仪座在 60～200 之间年际起伏，天龙座 2011 年爆到 600+）。' +
+      '这一页真正算出来的是<b>极大夜的月光</b>和最佳时段。<br>' +
+      '年份是运行时现推的，所以<b>不存在"过完今年就失效"</b>——12/31 打开会直接给出明年 1 月 3 日的象限仪座。' +
+      '<br>ZHR 的含义是"辐射点在正头顶、天空全黑"时每小时的理论流星数，' +
+      '实际能看到的通常只有它的三分之一到一半。看流星挑后半夜（辐射点最高），避开月光和城市灯光。' +
+      '当前月相 ' + mpNow.emoji + mpNow.name + '（照亮 ' + Math.round(mpNow.illum * 100) + '%）。</div>';
     pane.innerHTML = html;
   }
 
