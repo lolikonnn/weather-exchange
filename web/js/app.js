@@ -1284,7 +1284,13 @@
     const on = !document.body.classList.contains('fullchart');
     document.body.classList.toggle('fullchart', on);
     const b = $('#btnFull');
-    if (b) { b.classList.toggle('active', on); b.title = on ? '退出全屏（Esc）' : '全屏看主图'; }
+    // 图标跟着状态换：进全屏后按钮是**触摸端唯一**的退出方式（Esc 在手机上没有），
+    // 而 title 提示在触摸端也看不到，所以必须靠图标本身表态。
+    if (b) {
+      b.classList.toggle('active', on);
+      b.textContent = on ? '🔙' : '🖥️';
+      b.title = on ? '退出全屏（Esc）' : '全屏看主图';
+    }
     setTimeout(() => { try { Chart.resize(); } catch (e) {} }, 60);
     toast(on ? '已全屏，再点一次或按 Esc 退出' : '已退出全屏');
   }

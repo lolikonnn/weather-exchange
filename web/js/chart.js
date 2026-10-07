@@ -539,8 +539,13 @@
         }
       ],
       series: series,
+      // 「日K · 26 根」这个角标。
+      // ⚠ left 必须**避开左侧刻度那一栏**：左轴刻度是右对齐、右边界落在 `PAD_L - 8` 上
+      //   （加 ℃ 之后 `36.0℃` 更宽，左边界能到 x≈30），而原来这里写死 `left: 58`——
+      //   正好压在最上面那个刻度（轴最大值）上，看着就是"角标和带单位的天气文字叠在一起"。
+      //   放到 `PAD_L + 8` 之后，角标在刻度栏右侧 16px，且 y 仍在绘图区上方（grid.top = 16）。
       graphic: S.title ? [{
-        type: 'text', left: 58, top: 3,
+        type: 'text', left: PAD_L + 8, top: 3,
         style: { text: S.title, fill: '#8b919e', fontSize: 11, fontFamily: 'Consolas,monospace' }
       }] : undefined
     };
