@@ -251,7 +251,7 @@
     // 以前这里直接 return 一个只有 title 的 option，于是空状态下副图连 xAxis 都没有，
     // 上下两块图的对齐契约当场失效（探针里表现为 reading '0' 的报错）。
     if (!s || !xs.length || !(s.aqi || []).some(v => v != null)) {
-      const o0 = base(TH, keys, 'AQI', period, view);
+      const o0 = base(TH, keys, 'μg/m³', period, view);
       o0.title = { text: '空气质量数据暂不可用', left: 'center', top: 'middle', textStyle: { color: TH.dim, fontSize: 12 } };
       return o0;
     }
@@ -259,7 +259,10 @@
     // 紫外线：数据来自 Open-Meteo 的 uv_index，和 PM2.5 一个来源、一条时间轴，
     // 所以直接当第三条线挂在这张图上（"今天该不该防晒"和"今天空气行不行"是同一类问题）。
     const uv = s.uv || [], uvOk = uv.some(v => v != null);
-    const o = base(TH, keys, 'AQI', period, view);
+    // ── 轴位统一规则：**左边＝柱子的量程，右边＝折线的量程**（跟「降水」一档一致，
+    //    也是炒股软件的惯例）。所以这里：左轴 = PM2.5（柱子，μg/m³）、右轴 = AQI（折线+紫外线）。
+    //    以前是反的（AQI 在左、PM2.5 在右），使用者提出来统一。
+    const o = base(TH, keys, 'μg/m³', period, view);
     o.tooltip.formatter = ps => {
       const i = ps[0].dataIndex;
       const lv = W.aqiLevel(aq[i]);
@@ -267,25 +270,26 @@
         '<br/>PM2.5 ' + fx1(pm[i]) + ' μg/m³' +
         (uvOk ? '<br/>紫外线 ' + fx1(uv[i]) + (uv[i] == null ? '' : '（' + uvWord(uv[i]) + '）') : '');
     };
-    // 同上：不写 position 就默认留在左边，跟 AQI 那根叠在一起
+    // 右轴：AQI（折线那一套）。不写 position 就默认留在左边、跟 PM2.5 那根叠在一起，
+    // 而且左边距只有 72px，塞不下两列数字。
     o.yAxis = [o.yAxis, {
-      type: 'value', name: 'μg/m³', position: 'right',
+      type: 'value', name: 'AQI', position: 'right',
       nameTextStyle: { color: TH.dim, fontSize: 10 },
       axisLine: { show: false }, axisLabel: { color: TH.dim, fontSize: 10 }, splitLine: { show: false }
     }];
     o.series = [
       {
-        name: 'PM2.5', type: 'bar', yAxisIndex: 1, barWidth: '55%', clip: true,
+        name: 'PM2.5', type: 'bar', yAxisIndex: 0, barWidth: '55%', clip: true,
         data: (pm || []).map(v => ({ value: v == null ? 0 : v, itemStyle: { color: 'rgba(169,123,255,.55)' } }))
       },
       {
-        name: 'AQI', type: 'line', yAxisIndex: 0, smooth: true, showSymbol: false,
+        name: 'AQI', type: 'line', yAxisIndex: 1, smooth: true, showSymbol: false,
         lineStyle: { width: 1.6, color: TH.accent }, itemStyle: { color: TH.accent },
         data: (aq || []).map(v => (v == null ? null : v))
       }
     ];
     // ── 紫外线并到 AQI 那根轴上（**不再单开第三根轴**）──
-    // 这张图已经有两套刻度：右侧 AQI（0~500）、左侧 PM2.5（μg/m³）。
+    // 这张图已经有两套刻度：左侧 PM2.5（μg/m³）、右侧 AQI（0~500）。
     // 右留白一共只有 56px，塞不下第三列，试过的两条路都不行：
     //   · `offset:38` 推出 AQI 外面 → 被容器切掉（"右侧数字被遮住"）；
     //   · 刻度画进图内 → 正好压在高高的 PM2.5 柱子上（"跟柱状图叠一起"），
@@ -295,9 +299,9 @@
     if (uvOk) {
       const aVals = aq.filter(v => v != null && isFinite(v));
       const aMax = Math.max(100, Math.ceil(Math.max.apply(null, aVals.concat([0])) / 50) * 50);
-      o.yAxis[0].max = aMax;
+      o.yAxis[1].max = aMax;
       o.series.push({
-        name: '紫外线', type: 'line', yAxisIndex: 0, smooth: true, showSymbol: false, z: 4,
+        name: '紫外线', type: 'line', yAxisIndex: 1, smooth: true, showSymbol: false, z: 4,
         // 逐点着色让"今天什么时候晒"一眼看出来
         data: uv.map(v => ({ value: v == null ? null : +(v / 12 * aMax).toFixed(1), itemStyle: { color: uvColor(v) } })),
         lineStyle: { width: 1.5, color: '#ffb74d' }, itemStyle: { color: '#ffb74d' }

@@ -329,7 +329,10 @@
         {
           type: 'value', min: +lo.toFixed(1), max: +hi.toFixed(1), scale: true,
           axisLine: { show: false }, axisTick: { show: false },
-          axisLabel: Object.assign({}, axisCommon.axisLabel, { formatter: v => v.toFixed(1), color: C.labelHi }),
+          // 左轴＝气温，**带上 ℃**（使用者要求：带单位才准确）。
+          // 右轴（涨跌幅）本来就是每个刻度都带 %，左轴不带单位是不一致的。
+          // 左边距 PAD_L=72 放得下 `18.7℃`（≈30px）。
+          axisLabel: Object.assign({}, axisCommon.axisLabel, { formatter: v => v.toFixed(1) + '℃', color: C.labelHi }),
           splitLine: { lineStyle: { color: C.split, type: 'dashed' } }
         },
         {
@@ -510,7 +513,8 @@
         {
           type: 'value', scale: true, position: 'left',
           axisLine: { show: false }, axisTick: { show: false },
-          axisLabel: Object.assign({}, axisCommon.axisLabel, { formatter: v => v.toFixed(1), color: C.labelHi }),
+          // 同上：K 线的左轴也是气温，带 ℃。
+          axisLabel: Object.assign({}, axisCommon.axisLabel, { formatter: v => v.toFixed(1) + '℃', color: C.labelHi }),
           splitLine: { lineStyle: { color: C.split, type: 'dashed' } }
         },
         {
