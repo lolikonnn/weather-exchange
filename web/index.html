@@ -171,6 +171,13 @@
       <div id="mainChart" class="chart"></div>
     </div>
 
+    <!-- 手机上那条「曲线是气象局发布值的连线示意 + 台站 + 发布时间」。
+         ⚠ 为什么另起一行：桌面端这份说明写在 #chartHint 里，而它在窄屏那档是 `display:none`
+         （图表头那一行本来就挤不下），于是**安卓上等于没有** —— 可这是《气象预报发布与传播管理办法》
+         第九条要求注明的东西（台站名称 + 发布时间），不能只在桌面端有。
+         所以窄屏用这一行、允许换行；桌面端它 `display:none`，由 #chartHint 承担，两边各显示一次、不重复。 -->
+    <div class="src-line" id="srcLine" hidden></div>
+
     <div class="tabbar sub">
       <button data-ind="vol"    class="tab active" title="温差柱。日K／周K／月K：柱子高度＝当天温差（最高气温减最低气温）。分时／7日：温差是每天一个数，摊到小时上是一条平线，所以改成「较当日均温」——这一小时比当天平均冷暖多少，围绕 0 上下，红=比上一小时暖">温差</button>
       <button data-ind="precip" class="tab" title="降水量（柱子，毫米）和降水概率（黄线，百分比）。跟着上面的周期走：分时＝每小时、日K＝每天总雨量、周K＝当周总雨量">降水</button>

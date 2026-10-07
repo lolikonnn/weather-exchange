@@ -1129,7 +1129,23 @@
         (d.cmaCurveOnly
           ? '　⚠ 曲线＝中国气象局逐 3 小时发布值的平滑连线示意，非官方逐时预报' + stn + pub
           : '');
+      /* 手机专用那一行（#srcLine）：桌面端 #chartHint 已经说了同一件事，
+         而它在窄屏是 display:none —— 所以窄屏另起一行，**安卓上也看得见**这些字。
+         两边各显示一次、不重复；没有保底曲线时这行不占高度。 */
+      const sl = $('#srcLine');
+      if (sl) {
+        if (d.cmaCurveOnly) {
+          sl.textContent = '⚠ 曲线＝中国气象局逐 3 小时发布值的平滑连线示意（非官方逐时预报）' + stn + pub;
+          sl.hidden = false;
+        } else {
+          sl.hidden = true; sl.textContent = '';
+        }
+      }
     } else {
+      // 切到 K 线视图就把手机那行归属说明收起来：那几张图上没有插值曲线，
+      // 挂着这句话等于说"这条线是插值的"，而屏上根本没有线（甚至可能是空的）。
+      const slK = $('#srcLine');
+      if (slK) { slK.hidden = true; slK.textContent = ''; }
       const s = seriesFor(p);
       if (!s) {
         // K 线视图（日/周/月/预报K）**必须**有历史，而气象局只给未来 ——

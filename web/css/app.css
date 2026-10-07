@@ -26,7 +26,16 @@
 body.us{ --up:#00b578; --down:#ff4d4f; }
 
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
+/* ⚠ overflow-x:hidden 加在 **html** 上，不是只加在 body 上。
+   起因：安卓尺寸（390×844）下 documentElement.scrollWidth = 762、并且 scrollLeft 真能滑到 120，
+   也就是**整页能横向滑出 ~372px**（手指一横滑，整个界面就跑偏）。
+   有意思的是逐个量下来，body 的每个直接子元素都正好 390 宽、排除"可滚动容器内部"之后
+   没有任何元素的右边缘超界 —— 那 762 是 html 的 overflow 还是 visible 时，
+   把某个 overflow 容器内部内容算进文档滚动区的那类边界情况。
+   与其继续追它，不如在设计层面把话说明白：**这个站不允许横向滚动整页**，
+   所有需要横滑的东西（指数条、标签栏、盘口……）都在**自己的容器里**滚。
+   overflow-x:hidden 会让另一轴的 visible 变成 auto，所以竖向滚动照旧。 */
+html,body{height:100%;overflow-x:hidden}
 body{
   background:var(--bg);color:var(--txt);
   font:13px/1.4 "Microsoft YaHei UI","PingFang SC","Hiragino Sans GB",system-ui,sans-serif;
@@ -1072,6 +1081,21 @@ body.fullchart .mtabs{visibility:hidden}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .disclaimer:hover{color:var(--dim);background:#161a22}
+
+/* ── 手机上那条「曲线＝气象局发布值连线示意 · 台站 · 发布时间」 ──
+   桌面端这份说明在 #chartHint 里，但它在窄屏那档是 display:none（图表头挤不下），
+   于是安卓上**等于没有** —— 而这是《气象预报发布与传播管理办法》第九条要求注明的。
+   所以窄屏单独起一行、允许换行；桌面端这行不显示，两边各显示一次、不重复。 */
+.src-line{display:none}
+@media (max-width:860px){
+  .src-line{
+    display:block;font-size:10px;line-height:1.5;color:var(--dim2);
+    padding:4px 8px 0;white-space:normal;
+  }
+  /* ⚠ 必须保留：.src-line 的 display:block 会盖掉 hidden 属性自带的 display:none，
+     不写这条的话"没有保底曲线"时它会空占一行高度。 */
+  .src-line[hidden]{display:none}
+}
 @media (max-width:860px){
   /* 免责声明在手机上**必须只有一行**。
      ⚠ 这里翻过两次车，都记下来：
