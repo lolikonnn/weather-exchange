@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#12141a">
 <title>天气战士 · 老实看天气很枯燥吧？</title>
 <meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、降水/风/云量/空气，还有雷达回波、卫星云图、降水预报、台风路径、预警信号。老实看天气很枯燥吧？">
-<link rel="stylesheet" href="css/app.css?v=aba994ec">
+<link rel="stylesheet" href="css/app.css?v=53fd1bc5">
 <link rel="stylesheet" href="css/game.css?v=e6133eb6">
 <link rel="icon" type="image/png" href="img/logo-32.png?v=189dcbb4">
 </head>
@@ -463,6 +463,10 @@
         <li><b>朝霞 / 晚霞 / 火烧云是本站自拟的启发式</b>，<b>不是权威预报</b>，也没有对应的公开接口。
           它只看三件事：中高云够不够当"画布"、低云会不会把地平线挡死、气溶胶够不够浓。
           现实里它看不见远处的地形、云的具体形状和飞机拉线，<b>当参考可以，别当承诺</b> ✧</li>
+        <li><b>观星页那张「全年气候」是近似值</b>：取 Open-Meteo 归档接口近 10 个完整年的
+          <b>逐日全天平均云量</b>（一次约 59 KB，本地缓存 30 天），把"全天平均 &lt; 30%"记作一个少云夜。
+          它<b>看不见夜里那一段</b>，因此会<b>低估</b>真正的晴夜数 —— 白天云多、夜里放晴的日子会被算掉。
+          拿它比"哪个月更值得来"够用，<b>别当成精确的晴夜统计</b> ✧</li>
         <li><b>界面可能显示的是缓存</b>：为了打开快，会先把上次看到的那份直接摆出来，
           再去拉最新的；底部状态栏会写清是哪时候的数据，别把旧的当刚出炉的 ✧</li>
         <li><b>定位只在你点的时候才请求</b>：坐标只存在你自己的浏览器里，本站不收集、不上传 ✧</li>
@@ -524,7 +528,7 @@
         <dt>🌧 降水预报</dt><dd>中央气象台画的全国降水量预报图，未来 24 小时雨会下在哪、下多大，每 12 小时出一张。看色块：绿＝小雨、蓝＝中到大雨、紫红＝暴雨以上。</dd>
         <dt>🌀 台风路径</dt><dd>今年每个台风／热带气旋走过的路线（实线）和中央气象台预报的后续路线（虚线）。点左边列表切换台风，地图可以拖动缩放。</dd>
         <dt>⚠ 预警信号</dt><dd>全国正在生效的气象预警，按红／橙／黄／蓝排序显示原文。</dd>
-        <dt>🔭 天文</dt><dd>六页：<b>✨ 观星</b>（拿云量／降水／湿度／风／月光／气溶胶打分，并按<b>本站光污染等级</b>封顶）、<b>🌟 此刻</b>（此刻的亮星与行星方位，外加<b>今夜各天体的可见时段</b>）、<b>🌇 霞</b>（朝霞／晚霞／火烧云，本站启发式）、<b>🌌 极光</b>（NOAA 的 Kp 指数与 Bz）、<b>🌗 日月</b>、<b>☄️ 流星雨</b>。除了 Kp／太阳黑子来自 NOAA、逐小时云量与气溶胶来自 Open-Meteo、光污染来自 David Lorenz 的地图集，其余全部在本地推算。</dd>
+        <dt>🔭 天文</dt><dd>六页：<b>✨ 观星</b>（拿云量／降水／湿度／风／月光／气溶胶打分，并按<b>本站光污染等级</b>封顶，底下还有<b>近十年逐月少云夜率</b>与全年评级）、<b>🌟 此刻</b>（此刻的亮星与行星方位，外加<b>今夜各天体的可见时段</b>）、<b>🌇 霞</b>（朝霞／晚霞／火烧云，本站启发式）、<b>🌌 极光</b>（NOAA 的 Kp 指数与 Bz）、<b>🌗 日月</b>、<b>☄️ 流星雨</b>。除了 Kp／太阳黑子来自 NOAA、逐小时云量与气溶胶来自 Open-Meteo、逐月气候来自 Open-Meteo 归档接口、光污染来自 David Lorenz 的地图集，其余全部在本地推算。</dd>
       </dl>
 
       <h4>右侧和顶部的词</h4>
@@ -700,11 +704,11 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(loca
 <script src="vendor/echarts.min.js"></script>
 <script src="js/util.js?v=40b630a5"></script>
 <script src="js/indicators.js?v=1677e654"></script>
-<script src="js/api.js?v=bab9fd6f"></script>
+<script src="js/api.js?v=fe78ddf5"></script>
 <script src="js/chart.js?v=a022e87e"></script>
 <script src="js/weather.js?v=efe47d62"></script>
 <script src="js/astro.js?v=ff43d548"></script>
-<script src="js/wxui.js?v=407f95b4"></script>
+<script src="js/wxui.js?v=712dec1e"></script>
 <script src="js/app.js?v=89285bca"></script>
 <script src="js/game.js?v=3f1686fa"></script>
 </body>

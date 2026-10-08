@@ -333,11 +333,14 @@ body{
 /* ───────────────── 盘口 ───────────────── */
 .orderbook{padding:3px 0;flex:none}
 .ob-row{
-  display:grid;grid-template-columns:42px 1fr 30px 1fr;align-items:center;gap:6px;
+  /* ⚠ 第一列 42px 装不下「10-11 最高」：实测这行字要 **56px**，42px 的结果是
+     「10-11」/「最高」被拆成两行。放宽到 58px 就一行放下了 ——
+     两个 1fr 各让出 8px，价格那一列照旧放得下（实测最宽的「29.3」也才 30px 上下）。 */
+  display:grid;grid-template-columns:58px 1fr 30px 1fr;align-items:center;gap:6px;
   padding:3px 9px;font-size:12px;position:relative;cursor:default;
 }
 .ob-row:hover{background:#212734}
-.ob-label{color:var(--dim);font-size:11px}
+.ob-label{color:var(--dim);font-size:11px;white-space:nowrap}
 .ob-price{font-family:var(--mono);font-size:13px;font-weight:600;text-align:right}
 .ob-val{font-family:var(--mono);font-size:11.5px;color:var(--dim);text-align:right}
 .ob-bar{height:3px;border-radius:2px;background:var(--line2);overflow:hidden}
@@ -348,6 +351,10 @@ body{
   font-size:11.5px;color:var(--dim);
 }
 .ob-mid b{font-family:var(--mono);font-size:14px}
+/* ⚠ 这三段（`现在 22.2℃` / `比昨天 +1.65%` / `5 天落差 17.0℃`）单行只比可用宽
+   多出 3~4px 就被折成了两行。它们本来就一句话一个意思，不该断 —— 定死不断行。
+   实测三段加起来 232px，而这一行可用 282px，放得下。 */
+.ob-mid>*{white-space:nowrap}
 .ob-src{font-size:10.5px;color:var(--dim);padding:2px 9px 4px;border-bottom:1px dashed var(--line)}
 
 /* ───────────────── 成交明细 ───────────────── */
@@ -454,11 +461,14 @@ body{
 .help-body h4:first-child{margin-top:6px}
 .help-body dl{margin:0}
 .help-body dt{font-size:12.5px;font-weight:600;color:var(--txt-hi);margin-top:10px}
-.help-body dd{margin:2px 0 0;font-size:12px;color:var(--txt)}
+/* 术语表的解释文字很长，末行常常只剩一两个字吊着 —— `pretty` 是专门治这个的：
+   它不改前面怎么排，只在收尾时避免把最后一个词（中文里是一两个字）甩到下一行。 */
+.help-body dd{margin:2px 0 0;font-size:12px;color:var(--txt);text-wrap:pretty}
 .help-body dd b{color:var(--txt-hi);font-weight:600}
 .help-foot{
   margin:18px 0 0;padding:10px 12px;font-size:12.5px;color:var(--txt);
   background:rgba(240,185,11,.08);border:1px solid rgba(240,185,11,.28);border-radius:var(--r);
+  text-wrap:pretty;
 }
 .help-foot b{color:var(--accent)}
 
@@ -896,7 +906,7 @@ body{
    定宽 56px：4 个 11px 粗体中文字约 44px，加左右各 6px 内边距正好；短的就居中留白。 */
 .wx-warn-tag{flex:none;width:56px;box-sizing:border-box;text-align:center;padding:1px 0;border-radius:2px;color:#1a1400;font-size:11px;font-weight:700}
 .wx-warn-time{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono)}
-.wx-warn-x{margin-top:6px;color:var(--txt);font-size:12px;line-height:1.6;white-space:pre-wrap}
+.wx-warn-x{margin-top:6px;color:var(--txt);font-size:12px;line-height:1.6;white-space:pre-wrap;text-wrap:pretty}
 /* 「离你多远」那一小段，跟时间同行右对齐 */
 .wx-warn-d{float:right;color:var(--accent);font-family:var(--mono)}
 
@@ -981,18 +991,20 @@ body{
   background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:10px 12px;
 }
 .wx-as-big{flex:none;font-family:var(--mono);font-size:34px;line-height:1;color:var(--accent)}
-.wx-as-leadlab{font-size:11.5px;color:var(--dim);line-height:1.7;min-width:0}
+.wx-as-leadlab{font-size:11.5px;color:var(--dim);line-height:1.7;min-width:0;text-wrap:pretty}
 .wx-as-leadlab b{color:var(--txt-hi);font-size:13.5px}
 .wx-as-h2{
   flex:none;font-size:11.5px;color:var(--dim);letter-spacing:.4px;
   border-top:1px solid var(--line);padding-top:7px;margin-top:1px;
+  /* 小标题只有一行半行，`balance` 会把两行劈得一样长，不会留下一个孤零零的字 */
+  text-wrap:balance;
 }
 .wx-as-h2:first-child{border-top:0;padding-top:0;margin-top:0}
-.wx-as-note{flex:none;font-size:12px;color:var(--txt);line-height:1.75}
+.wx-as-note{flex:none;font-size:12px;color:var(--txt);line-height:1.75;text-wrap:pretty}
 .wx-as-note b{color:var(--accent2)}
 .wx-as-foot{
   flex:none;font-size:11px;color:var(--dim2);line-height:1.75;
-  border-top:1px solid var(--line);padding-top:8px;
+  border-top:1px solid var(--line);padding-top:8px;text-wrap:pretty;
 }
 .wx-as-foot b{color:var(--dim)}
 
@@ -1001,7 +1013,11 @@ body{
 .wx-as-list{flex:none;display:flex;flex-direction:column;gap:4px}
 .wx-as-row{display:flex;align-items:center;gap:9px;font-size:11.5px;font-family:var(--mono)}
 .wx-as-row>b{flex:none;width:42px;color:var(--dim);font-weight:400}
-.wx-as-row>span{flex:none;width:76px;text-align:right}
+/* ⚠ 三个窄格（时间 / 条形 / 分数）定宽，但**分数那一格不能定死 76px**：
+   霞页那句话是「78 很可能烧起来」，比 76px 宽，定死就断成「78 很可能烧」/「起来」。
+   改成 `min-width` —— 窄的时候仍然占满 76px（表格照样对齐），
+   内容比它宽时自己长出去，条形图那边跟着缩。 */
+.wx-as-row>span{flex:none;min-width:76px;text-align:right;white-space:nowrap}
 .wx-as-row>em{flex:none;width:52px;text-align:right;color:var(--dim2);font-style:normal}
 .wx-as-bar{flex:1 1 auto;display:block;height:9px;background:var(--panel3);border-radius:2px;overflow:hidden}
 .wx-as-bar>b{display:block;height:100%;border-radius:2px}
@@ -1025,7 +1041,13 @@ body{
    ⚠ 但**光有 wrap 还不够**：换行位置必须只由定宽列决定，绝不能由某一格自己的文字长短决定，
      否则同一张表里会长短两行各歪各的（`.wc-w` 就踩过这个坑，见下面的注释）。 */
 .wx-as-cols{display:flex;align-items:baseline;flex-wrap:wrap;min-width:0}
-.wx-as-cols>i{flex:none;font-style:normal}
+/* ⚠ **每一格内部永不断行**。定宽只是把格子的宽度钉住，内容比它宽时浏览器照样
+   会在格子**里面**折行 —— 实测：竖屏 `.wc-e` 只有 58px，而「距角 175°」要 58.8px，
+   于是「距角」留在第一行、`175°` 掉到第二行；两位数（`55°`/`24°`）就没事。
+   土星/天王星/海王星恰好都是三位数，看起来就像"加了这两颗星才歪的"。
+   现在格内不断行：真放不下时宁可溢出几像素到 8px 的格间空隙里（看不出来），
+   也绝不折行。换行只允许发生在**格子与格子之间**。 */
+.wx-as-cols>i{flex:none;font-style:normal;white-space:nowrap}
 .wx-as-cols>i+i{margin-left:8px}
 .wx-as-cols .wc-m{width:62px;text-align:right}   /* 星等  -0.05 等 */
 .wx-as-cols .wc-a{width:30px;text-align:right}   /* 高度  17°（地平线以下是 —） */
@@ -1047,7 +1069,14 @@ body{
    整列歪 60px。**实测确认**：`.wc-x` 七行都在 x=126/w52，`.wc-w` 却分成 186 与 126 两档。
    定宽之后，换行位置只由前面那几个定宽列决定，跟这一格自己的文字长短彻底无关。
    `max-width:100%` 是防极窄屏横向溢出（定宽 340 > 值列宽时会顶出去）。 */
-.wx-as-cols .wc-w{flex:none;width:340px;max-width:100%;color:var(--dim)}
+/* ⚠ 这一格是**例外**：它自己就长，必须允许换行 —— 但只许在**短语之间**换。
+   原来把「今夜 18:47→05:17（最高 69°） · 共 10 小时 30 分」串成一整段文字，
+   浏览器会在任意两个汉字之间断，实测断出了「… · 共 10 小」/「时 30 分」这种。
+   现在由 `winSeg()` 拆成若干个 `span.nb`（短语原子），每个 nb 自己不断行，
+   换行只发生在 nb 与 nb 之间。 */
+.wx-as-cols .wc-w{flex:none;width:340px;max-width:100%;color:var(--dim);white-space:normal}
+.wx-as-cols .wc-w .nb{white-space:nowrap}
+.wx-as-cols .wc-w .nb+.nb{margin-left:5px}
 .wx-as-cols .wc-dim{color:var(--dim2)}
 
 /* Kp 柱状图：柱子按 Kp/9 的高度撑，颜色直接用 kpScale 的分级色 */
@@ -1068,7 +1097,19 @@ body{
 .wx-as-cardhead{display:flex;align-items:center;gap:8px}
 .wx-as-cardhead>b{font-size:13px;color:var(--txt-hi)}
 .wx-as-badge{flex:none;font-size:10px;padding:1px 5px;border-radius:2px;background:var(--accent);color:#1a1400}
-.wx-as-meta{font-size:11.5px;color:var(--dim);font-family:var(--mono);line-height:1.6}
+.wx-as-meta{font-size:11.5px;color:var(--dim);font-family:var(--mono);line-height:1.6;text-wrap:pretty}
+
+/* 全年气候那一排柱子（观星页）。12 个月等宽分栏，柱高＝当月少云夜率相对**全年最高月**
+   的比例 —— 用相对值是为了让"哪个月最好"一眼看出来；绝对值放在下面那句话里
+   （全年 %、折算夜数、最适合的三个月）。 */
+.wx-as-clim{flex:none;display:flex;align-items:flex-end;gap:3px;height:84px;padding:0 2px}
+.wx-as-clim>span{flex:1 1 0;min-width:0;height:100%;display:flex;align-items:flex-end}
+.wx-as-clim>span>b{display:block;width:100%;border-radius:2px 2px 0 0;min-height:2px}
+.wx-as-climax{flex:none;display:flex;gap:3px;padding:2px 2px 0;border-top:1px solid var(--line2)}
+.wx-as-climax>i{
+  flex:1 1 0;min-width:0;text-align:center;font-style:normal;
+  font-size:9.5px;color:var(--dim2);font-family:var(--mono);
+}
 
 /* ── 光污染卡（观星页）──
    这是**站点常量**，不该跟逐小时的云量评分挤在同一排，所以单独一块。
@@ -1124,6 +1165,9 @@ body{
   .wx-panel .wx-sub{
     display:block;order:3;flex:1 1 100%;max-width:100%;margin-left:0;
     white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;
+    /* 竖屏上这一行经常折成两行、末行只剩一两个字（实测「…行星 2/7 颗在地平线」/「上」）。
+       `balance` 把两行劈匀，就不会留一个孤字。 */
+    text-wrap:balance;
   }
   .wx-pbar{flex-wrap:wrap;row-gap:6px}
   .wx-pt{margin-left:0}
@@ -1248,8 +1292,11 @@ body.fullchart .mtabs{visibility:hidden}
 .wm-head{
   padding:13px 18px;border-bottom:1px solid var(--line);background:var(--bg2);
   border-radius:8px 8px 0 0;color:var(--txt-hi);font-size:14px;font-weight:600;
+  /* 竖屏上这句标题折成两行、末行只剩俩字（实测「…有件事得先说清楚」还差 3px 就一行）。
+     `balance` 把两行劈匀 —— 它管不了"差 3px 就一行"这种，但能把孤字摊平。 */
+  text-wrap:balance;
 }
-.wm-body{padding:16px 18px 4px;font-size:13px;line-height:1.75;color:var(--txt)}
+.wm-body{padding:16px 18px 4px;font-size:13px;line-height:1.75;color:var(--txt);text-wrap:pretty}
 .wm-body p{margin:0 0 12px}
 /* 免责声明里那张「数据来源清单」和「容易误会的事」用列表 —— 以前全挤在段落里，
    加一个数据源就多一行字，读的人根本分不清哪句对应哪个来源。 */
@@ -1293,12 +1340,16 @@ body.fullchart .mtabs{visibility:hidden}
      126 在窄屏上纯属浪费。省下的 30px 留给值那一列 —— 行星行现在多了「今夜时段」，
      不然它会被挤到第三行去。 */
   .wx-as-row2>b{width:96px}
-  /* 值内子列在窄屏也要收一收。不收的话 360px 屏上值列只有 222px，
-     `m+a+d` 已经 174（含间距），再放 `e` 要 246 —— 于是「距角 175°」被挤到自己一行，
-     行星表每行凭空多出一行。收完 56+28+52+58 = 194，加 3 个 8px 间距 = 218 ≤ 222。 */
+  /* 值内子列在窄屏也要收一收 —— 但**不能把 `e` 收过头**。
+     实测：`e` 收到 58px 时「距角 175°」要 58.8px，于是格内折行，
+     「距角」留第一行、`175°` 掉第二行（两位数就没事，所以看起来像"三位数的行星才歪"）。
+     现在按"最长的内容"定宽，而不是按"均分剩下的地方"：
+       m 56（`-4.43 等` 要 54）· a 26（`88°` 要 22）· d 46（`西南偏北` 48→ 实测最长 3 字 36）
+       · e 64（`距角 175°` 要 58.8）
+     合计 192 + 3×8 间距 = 216 ≤ 360 屏值列的 222，四点仍在一行。 */
   .wx-as-cols .wc-m{width:56px}
-  .wx-as-cols .wc-a{width:28px}
-  .wx-as-cols .wc-d{width:52px}
-  .wx-as-cols .wc-e{width:58px}
+  .wx-as-cols .wc-a{width:26px}
+  .wx-as-cols .wc-d{width:46px}
+  .wx-as-cols .wc-e{width:64px}
 }
 

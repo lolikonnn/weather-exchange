@@ -1367,21 +1367,24 @@
   function asStar(pane, sub, c, d, now) {
     const A = global.ASTRO;
     if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
-    // 两件事并发等：AOD 在 air-quality 那台主机上（跨域），光污染是**本地烘焙表**
-    // （`web/data/lp.json`，同源、35 KB）。分开等会让这一页慢一倍。
+    // 三件事并发等：AOD 在 air-quality 那台主机上（跨域）；光污染是**本地烘焙表**
+    // （`web/data/lp.json`，同源、35 KB）；全年气候是一次 archive 请求（约 59 KB、10 年逐日）。
+    // 分开等会让这一页慢三倍。气候那一步自己也带 30 天缓存，第二次进这一页是瞬时的。
     const airP = (global.API && API.OpenMeteo && API.OpenMeteo.astroAir)
       ? API.OpenMeteo.astroAir(c.lat, c.lon).catch(() => null) : Promise.resolve(null);
     const lpP = (global.API && API.LP && c.id != null)
       ? API.LP.of(c.id).catch(() => null) : Promise.resolve(null);
-    pane.innerHTML = '<div class="wx-load">正在取气溶胶与光污染…</div>';
-    Promise.all([airP, lpP]).then(rs => {
-      if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, rs[0], rs[1]);
+    const climP = (global.API && API.Climate)
+      ? API.Climate.of(c.lat, c.lon).catch(() => null) : Promise.resolve(null);
+    pane.innerHTML = '<div class="wx-load">正在取气溶胶、光污染与近十年气候…</div>';
+    Promise.all([airP, lpP, climP]).then(rs => {
+      if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, rs[0], rs[1], rs[2]);
     }).catch(() => {
-      if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, null, null);
+      if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, null, null, null);
     });
   }
 
-  function drawStar(pane, sub, c, d, now, air, lp) {
+  function drawStar(pane, sub, c, d, now, air, lp, clim) {
     const A = global.ASTRO;
     const lpI = A.lpInfo ? A.lpInfo(lp) : null;
     const mp = A.moonPhase(now);
@@ -1449,12 +1452,35 @@
           : Math.round(r.low) + '/' + (r.high == null ? '--' : Math.round(r.high))) +
         '</em></div>').join('') + '</div>';
     }
+    /* ── 全年气候（近 10 年）──
+       这一块回答的不是"今晚"，而是"这个地方一年到头值不值得来"。
+       ⚠ 口径是**近似**：Open-Meteo 的 archive 只给逐日**全天平均**云量，看不见夜里那一段，
+       所以「少云夜」定义成"全天平均云量 < 30%"。它会**低估**真正的晴夜数
+       （白天云多、夜里放晴的日子被算掉了），界面上必须如实写清楚 —— 见下面的页脚。 */
+    if (clim && clim.months && clim.months.length) {
+      const mx = Math.max.apply(null, clim.months.map(m => m.clear)) || 1;
+      const barCol = v => v >= 30 ? '#2bd6a0' : v >= 22 ? '#8bc34a' : v >= 15 ? '#f0c419' : '#e07a5f';
+      html += '<div class="wx-as-h2">全年气候（近 ' + clim.months.length +
+        ' 个月 · ' + clim.y0 + '–' + clim.y1 + '）</div>' +
+        '<div class="wx-as-clim">' + clim.months.map(m =>
+          '<span title="' + m.m + ' 月 · 少云夜 ' + m.clear.toFixed(0) + '%"><b style="height:' +
+          Math.max(3, Math.round(m.clear / mx * 100)) + '%;background:' + barCol(m.clear) +
+          '"></b></span>').join('') + '</div>' +
+        '<div class="wx-as-climax">' + clim.months.map(m => '<i>' + m.m + '</i>').join('') + '</div>' +
+        '<div class="wx-as-note"><b>' + clim.grade + ' 级</b> —— 全年少云夜约 <b>' +
+        clim.clear.toFixed(0) + '%</b>（折算 <b>' + Math.round(clim.perYear) + ' 夜/年</b>）<br>' +
+        '最适合的三个月：<b>' + clim.best.join('、') + ' 月</b>。</div>';
+    }
     html += '<div class="wx-as-foot">评分口径：低云 40 分 · 中高云 25 · 降水 12 · 湿度 6 · 风 6 · 月光 6 · ' +
       '通透度 5（AOD 与能见度取更差的一个）。低云 ≥70% 封 45 分、≥90% 封 20 分 —— ' +
       '云是观星唯一的天敌，别的项再好也救不回来。<br>' +
       '「天文夜」是太阳低于 -6°、天真正黑透的那一段。逐小时气象（含分层云量与能见度）来自 Open-Meteo，' +
       '气溶胶来自同一家的 air-quality 接口，月相与月光遮挡在本地推算 —— ' +
-      '全部跟主站天气同一套模型，不会互相打脸。</div>';
+      '全部跟主站天气同一套模型，不会互相打脸。<br>' +
+      '「全年气候」那一排柱子的口径是**近似**：取近 10 个完整年的逐日**全天平均**云量' +
+      '（一次约 59 KB，缓存 30 天），把「全天平均 < 30%」记作一个少云夜。' +
+      '它**看不见夜里那一段**，也就会**低估**真正的晴夜数（白天云多、夜里放晴的日子被算掉了）—— ' +
+      '拿它比"哪个月更值得来"是够的，别当成精确的晴夜统计。</div>';
     pane.innerHTML = html;
   }
 
@@ -1636,13 +1662,20 @@
       nightTxt = asHM(night.from) + '→' + asHM(night.to);
     }
     // 一个天体的「今夜」小段：够高就给时段，整夜上不来就直说。
+    // ⚠ 每一截都包在 `span.nb` 里（`.nb{white-space:nowrap}`）—— 这一格太长，必须允许
+    //   换行，但只能在**短语之间**换。串成一整段的话浏览器会在任意两个汉字之间断，
+    //   实测断出了「…最高 69°） · 共 10 小」/「时 30 分」。拆成三截之后，
+    //   换行只会发生在「今夜 …」/「（最高 …）」/「· 共 …」之间。
     const winSeg = name => {
       if (!nightTxt) return '';
       const w = winOf[name];
       if (!w || !w.windows.length) return '<i class="wc-w wc-dim">今夜不升到 10°</i>';
-      return '<i class="wc-w">今夜 ' + w.windows.map(x =>
-        asHM(x.from) + '→' + asHM(x.to) + '（最高 ' + Math.round(x.maxAlt) + '°）'
-      ).join('　·　') + ' · 共 ' + asDur(w.total) + '</i>';
+      const seg = w.windows.map(x => asHM(x.from) + '→' + asHM(x.to)).join('　·　');
+      const hi = Math.max.apply(null, w.windows.map(x => x.maxAlt));
+      return '<i class="wc-w">' +
+        '<span class="nb">今夜 ' + seg + '</span>' +
+        (seg.indexOf('　·　') < 0 ? '<span class="nb">（最高 ' + Math.round(hi) + '°）</span>' : '') +
+        '<span class="nb">· 共 ' + asDur(w.total) + '</span></i>';
     };
 
     html += '<div class="wx-as-h2">行星（此刻' +

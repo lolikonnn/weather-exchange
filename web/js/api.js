@@ -719,6 +719,103 @@
     }
   };
 
+  /* ───────── 全年气候（近 10 年逐日云量 → 逐月少云率） ─────────
+     观星页真正该回答的是"这个地方一年到头有多少个能看星星的夜"，
+     而不只是"今晚怎么样"。天文通有这一块，这里用能免费拿到的口径做近似：
+
+       数据源：Open-Meteo 的 archive 主机，`daily=cloud_cover_mean`。
+       实测（广州 2016-2025）：3,653 天、**58,826 B**、4.3 秒，一个空值都没有。
+
+       为什么不取逐小时：10 年的逐小时云量是 87,600 个点，JSON 里光时间轴就 1.5 MB，
+       手机上不可能每次切城市都下一遍。逐日只有 3,653 个点。
+       代价是**逐日给的是全天平均**，夜里那一段它看不见 —— 所以界面上如实写"近似"：
+       全天平均云量 < 30% 记作一个"少云夜"。这个口径会**低估**真正的晴夜数
+       （白天云多、夜里放晴的日子被算掉了），站在偏保守的那一侧。
+
+     ⚠ 缓存存的**不是那 3,653 天原始数据，而是聚合完的 12 个月**（每城约 300 B）——
+       所以可以按城市堆、切回旧城市零请求，也不怕撑爆 localStorage（一共才 5 MB）。
+       原始响应只在这一刻的内存里存在，用完就丢。 */
+  const CLIM_YEARS = 10;             // 取几个完整年
+  const CLIM_KEY = 'clim.v1';        // 聚合结果在 localStorage 里的槽
+  const CLIM_KEEP = 12;              // 最多留几座城市
+  const CLIM_TTL = 30 * 86400000;    // 30 天 —— 这个数一年才动一次
+  const CLIM_CLEAR = 30;             // 全天平均云量低于这个数（%）算一个"少云夜"
+
+  /** 逐日云量 → 逐月统计。**纯函数**：不碰 DOM、不碰网络，所以能在 node 里直接测。 */
+  function reduceClimate(time, cloud, y0, y1) {
+    const acc = [];
+    for (let m = 0; m < 12; m++) acc.push({ m: m + 1, n: 0, sum: 0, clear: 0 });
+    for (let i = 0; i < time.length; i++) {
+      const v = cloud ? cloud[i] : null;
+      if (v == null || !isFinite(v)) continue;
+      const mo = +String(time[i]).slice(5, 7);
+      if (!(mo >= 1 && mo <= 12)) continue;
+      const a = acc[mo - 1];
+      a.n++; a.sum += v; if (v < CLIM_CLEAR) a.clear++;
+    }
+    const months = acc.filter(a => a.n > 0).map(a => ({
+      m: a.m, n: a.n, cloud: a.sum / a.n, clear: 100 * a.clear / a.n
+    }));
+    if (!months.length) return null;
+    // ⚠ 全年值要**按天数加权**，不能把 12 个月的值简单平均 —— 2 月只有 28 天。
+    const nAll = months.reduce((s, a) => s + a.n, 0);
+    const clear = months.reduce((s, a) => s + a.clear * a.n, 0) / nAll;
+    const perYear = clear / 100 * 365.25;
+    return {
+      y0: y0, y1: y1, months: months,
+      clear: clear, perYear: perYear,
+      grade: clear >= 30 ? 'A' : clear >= 22 ? 'B' : clear >= 15 ? 'C' : 'D',
+      best: months.slice().sort((a, b) => b.clear - a.clear).slice(0, 3).map(a => a.m)
+    };
+  }
+
+  const Climate = {
+    _m: null,
+    _all() {
+      if (!this._m) { try { this._m = storeGet(CLIM_KEY, {}) || {}; } catch (e) { this._m = {}; } }
+      return this._m;
+    },
+    /** 某城的全年气候；取不到返回 null（调用方自己决定怎么空着） */
+    async of(lat, lon) {
+      const k = (+lat).toFixed(2) + ',' + (+lon).toFixed(2);
+      const all = this._all();
+      const hit = all[k];
+      if (hit && hit.v && (Date.now() - (hit.t || 0)) < CLIM_TTL) return hit.v;
+      try {
+        const v = await this._fetch(+lat, +lon);
+        if (!v) throw new Error('聚合失败');
+        all[k] = { t: Date.now(), v: v };
+        // 只留最近 CLIM_KEEP 座。这份表是"顺手攒的"，不能无限长。
+        const ks = Object.keys(all).sort((a, b) => (all[b].t || 0) - (all[a].t || 0));
+        for (let i = CLIM_KEEP; i < ks.length; i++) delete all[ks[i]];
+        storeSet(CLIM_KEY, all);
+        return v;
+      } catch (e) {
+        return (hit && hit.v) ? hit.v : null;    // 取不到就认上一次的，哪怕过期
+      }
+    },
+    /** 真去取一次：10 个**完整**年（今年不取 —— 它还没过完，进去会把月份拉偏） */
+    async _fetch(lat, lon) {
+      const y1 = new Date().getFullYear() - 1;
+      const y0 = y1 - CLIM_YEARS + 1;
+      const q = '?latitude=' + lat + '&longitude=' + lon +
+        '&start_date=' + y0 + '-01-01&end_date=' + y1 + '-12-31' +
+        '&daily=cloud_cover_mean&timezone=' + encodeURIComponent(TZ);
+      // 两台主机轮着试（配额分开算），跟 archive 那次一样
+      let d = null, lastErr = null;
+      const hosts = [OM_A, OM_A_ALT];
+      for (let i = 0; i < hosts.length; i++) {
+        try {
+          d = await getJSON(hosts[i] + q,
+            { ttl: CLIM_TTL, key: 'clim|' + lat + ',' + lon + '|' + y0 + '#h' + i });
+          break;
+        } catch (e) { lastErr = e; }
+      }
+      if (!d || !d.daily || !d.daily.time) throw lastErr || new Error('气候历史取不到');
+      return reduceClimate(d.daily.time, d.daily.cloud_cover_mean, y0, y1);
+    }
+  };
+
   const OpenMeteo = {
     /** 历史逐小时；返回 {time:[], temp:[], precip:[]}
      *
@@ -2030,5 +2127,5 @@
   };
 
   global.U = U;
-  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, Quakes, LP, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num, overlayCma };
+  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, Quakes, LP, Climate, reduceClimate, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num, overlayCma };
 })(window);
