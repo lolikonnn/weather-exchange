@@ -1876,20 +1876,24 @@
     const dKm = dAU * AU_KM;
     const sunSize = 2 * Math.asin(R_SUN / dKm) * 180 / Math.PI;
     const noonAlt = 90 - Math.abs(c.lat - sr.dec);
+    /* 天体落在地平线下时，整块文字压暗 —— 跟「🌟 此刻」那张行星表**同一套做法**
+       （那边是给整行的 `span.wx-as-cols` 加 `style="opacity:.55"`，见本文件行星表那段）。
+       一格都不改结构，只加一个 opacity；`sunDim` / `moonDim` 取值就是"这颗在天上吗"。 */
+    const sunDim = sa > 0 ? '' : ' style="opacity:.55"';
     html += '<div class="wx-as-h2">太阳此刻</div><div class="wx-as-list">' +
-      '<div class="wx-as-row2"><b>位置</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>位置</b><span class="wx-as-cols"' + sunDim + '>' +
       '<i>' + (sa > 0 ? Math.round(sa) + '° ' + esc(sdir) : '已落下（' + esc(sdir) + '）') + '</i>' +
       '<i>高度 ' + sa.toFixed(1) + '°</i>' +
       '<i>' + sPhase + '</i>' +
       '</span></div>' +
-      '<div class="wx-as-row2"><b>距离</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>距离</b><span class="wx-as-cols"' + sunDim + '>' +
       '<i>' + Math.round(dKm).toLocaleString('en-US') + ' km</i>' +
       '<i>' + dAU.toFixed(4) + ' AU</i>' +
       '<i>' + (dAU < 0.999 ? '偏近（近日点 1 月初）' : dAU > 1.001 ? '偏远（远日点 7 月初）' : '常距') + '</i>' +
       '</span></div>' +
-      '<div class="wx-as-row2"><b>视直径</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>视直径</b><span class="wx-as-cols"' + sunDim + '>' +
       '<i>' + sunSize.toFixed(3) + '°</i></span></div>' +
-      '<div class="wx-as-row2"><b>正午高度</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>正午高度</b><span class="wx-as-cols"' + sunDim + '>' +
       '<i>' + (noonAlt > 0 ? noonAlt.toFixed(1) + '°' : '—') + '</i>' +
       '<i>' + (noonAlt > 0 ? '一天里太阳最高的时候' : '太阳整天不升起（极夜）') + '</i>' +
       '</span></div></div>';
@@ -1899,26 +1903,28 @@
     const dFull = ((0.5 - mp.p + 1) % 1) * A.SYNODIC;
     const dNew = ((1 - mp.p) % 1) * A.SYNODIC;
     const dTxt = d => d < 0.05 ? '就是今天' : '还有 ' + d.toFixed(1) + ' 天';
+    // 同上：月亮落在地平线下时整块压暗（跟行星表同一套做法）
+    const moonDim = mpos.alt > 0 ? '' : ' style="opacity:.55"';
     html += '<div class="wx-as-h2">月亮此刻</div><div class="wx-as-list">' +
       /* ⚠ 跟「太阳此刻」用**同一套写法**：位置 + 高度各一格。
          原来是 `已落下（西北）　·　高度按月亮中心算` —— 高度干脆没给数，
          而太阳那边给了 -27.8°。同一个抽屉里两种给法，使用者一眼就问出来了。 */
-      '<div class="wx-as-row2"><b>位置</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>位置</b><span class="wx-as-cols"' + moonDim + '>' +
       '<i>' + (mpos.alt > 0 ? Math.round(mpos.alt) + '° ' + esc(mpos.dir) : '已落下（' + esc(mpos.dir) + '）') + '</i>' +
       '<i>高度 ' + mpos.alt.toFixed(1) + '°</i>' +
       '</span></div>' +
       /* ⚠ 这两张表的**每一行都用同一个结构**：`<b>字段名</b><span class="wx-as-cols"><i>值</i>…</span>`。
          原来「距离」是一整句话、「视直径」是裸 span、「下次新月」把说明缀在值后面 ——
          同一张表四种写法。使用者那条"同类要对称"的规矩，第一步就是**结构先一致**。 */
-      '<div class="wx-as-row2"><b>距离</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>距离</b><span class="wx-as-cols"' + moonDim + '>' +
       '<i>' + Math.round(mpos.dist).toLocaleString('en-US') + ' km</i>' +
       '<i>' + (mpos.big ? '偏近，超级月亮档' : mpos.small ? '偏远（微月）' : '常距') + '</i>' +
       '</span></div>' +
-      '<div class="wx-as-row2"><b>视直径</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>视直径</b><span class="wx-as-cols"' + moonDim + '>' +
       '<i>' + mpos.size.toFixed(3) + '°</i></span></div>' +
-      '<div class="wx-as-row2"><b>下次满月</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>下次满月</b><span class="wx-as-cols"' + moonDim + '>' +
       '<i>' + dTxt(dFull) + '</i></span></div>' +
-      '<div class="wx-as-row2"><b>下次新月</b><span class="wx-as-cols">' +
+      '<div class="wx-as-row2"><b>下次新月</b><span class="wx-as-cols"' + moonDim + '>' +
       '<i>' + dTxt(dNew) + '</i>' +
       '<i>新月前后几天的夜最黑，观星最佳</i></span></div></div>';
 
