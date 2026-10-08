@@ -2880,3 +2880,31 @@ elementFromPoint -> pre#o  ->  div#welcome.modal-mask  ->  body
   `.encode("utf-8")` 时抛 `UnicodeEncodeError: surrogates not allowed`；
 * 正文里若含正则量词（如 `{0,14}`），**不要用 `str.format()`**，它会把 `{0,14}` 当占位符
   并抛 `KeyError: '0,14'` —— 用 `%`、拼接，或把花括号写成 `{{0,14}}`。
+
+## 用 git data API 推送**不会触发** GitHub Actions（两次实测）
+
+本机没有 git，所有推送都走 GitHub 的 git data API（`git/blobs` → `git/trees` →
+`git/commits` → `PATCH git/refs/heads/main`）。**这样推上去的提交不会让
+`.github/workflows/deploy.yml` 跑起来。**
+
+实测两次，`GET /actions/runs?head_sha=<sha>` 的 `total_count` 都是 **0**：
+
+| 提交 | 内容 | 自己触发的 run |
+| --- | --- | --- |
+| `9a28e81431` | 日月页压暗 | 0 |
+| `ae73f62930` | 光污染改成 1～9 级 | 0 |
+
+两次都是**手动 `workflow_dispatch` 兜底**之后才部署的：
+
+```
+POST /repos/<repo>/actions/workflows/<id>/dispatches
+     {"ref":"main","inputs":{"skip_fetch":"true"}}
+```
+
+（`skip_fetch=true` 跳过抓取，只重新部署，快且不扰动数据。）
+
+**症状**：仓库里文件是新的、Actions 那边却「最新一次 run 还停在几十分钟前」，
+线上 Pages 一直不变 —— 很容易误判成「Pages 还没刷新 / CDN 缓存」。
+
+**纪律**：推完**立刻**手动 dispatch，然后才去复验线上；不要靠等。
+另外 `git status` 之类都没有，判断"推上去了没"只能靠 `contents` API 逐字节比对。
