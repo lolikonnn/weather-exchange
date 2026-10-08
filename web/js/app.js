@@ -1278,6 +1278,10 @@
     S.loading = true;
     S.cur = c;
     S.data = null;
+    /* 已经开着的那几个天气抽屉是按"上一座城市"算的（天文整页都是按经纬度推的），
+       换了城市必须重画 —— 不重画的话画面上还是上一座城市的星图/震中距，
+       而使用者完全看不出来。目前只处理天文，见 wxui.js 的 onCityChanged。 */
+    if (window.WXUI && WXUI.onCityChanged) WXUI.onCityChanged();
     S.wx = null;
     storeSet('last', id);
     renderWatchlist(); renderIndexes();

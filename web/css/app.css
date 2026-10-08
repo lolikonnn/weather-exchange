@@ -1006,6 +1006,24 @@ body{
 .wx-as-row2>span{color:var(--txt-hi);font-family:var(--mono)}
 .wx-as-row2 i{color:var(--dim2);font-style:normal}
 
+/* 值内部的**子列**：`.wx-as-cols` 里每个 <i> 定宽。
+   原来是拿 `　·　` 把「高度 / 方位 / 星等 / 星座」「星等 / 高度 / 方位 / 距角 / 今夜时段」
+   串成一句话的 —— 各段长短不一（`17°` vs `80°`、`西南北` vs `东南`），
+   于是后半截整排左右跳，看着歪歪扭扭。定宽之后行与行才对得齐。
+   ⚠ `flex-wrap:wrap` 是必须的：竖屏一行放不下时让「今夜 …」整段落到下一行，
+     而那一行的起点**仍在值这一列里**（不会跑回名字列最左边）。
+   ⚠ `.wc-w` 要能收缩，所以它的选择器必须比 `>i{flex:none}` 更具体。 */
+.wx-as-cols{display:flex;align-items:baseline;flex-wrap:wrap;min-width:0}
+.wx-as-cols>i{flex:none;font-style:normal}
+.wx-as-cols>i+i{margin-left:8px}
+.wx-as-cols .wc-m{width:62px;text-align:right}   /* 星等  -0.05 等 */
+.wx-as-cols .wc-a{width:30px;text-align:right}   /* 高度  17°（地平线以下是 —） */
+.wx-as-cols .wc-d{width:58px}                    /* 方位  西南偏北 */
+.wx-as-cols .wc-e{width:64px;text-align:right}   /* 距角  24° */
+.wx-as-cols .wc-x{color:var(--dim2)}             /* 「地平线下」小标签 */
+.wx-as-cols .wc-w{flex:1 1 auto;min-width:0;color:var(--dim)}   /* 今夜时段，放不下就换行 */
+.wx-as-cols .wc-dim{color:var(--dim2)}
+
 /* Kp 柱状图：柱子按 Kp/9 的高度撑，颜色直接用 kpScale 的分级色 */
 .wx-as-kp{
   flex:none;display:flex;align-items:flex-end;gap:2px;height:92px;
@@ -1245,5 +1263,9 @@ body.fullchart .mtabs{visibility:hidden}
    选择器写窄一点（只用 .wx-body > .wx-seg），雷达页 .wx-segs 里那几排不受影响。 */
 @media (max-width:520px){
   .wx-body > .wx-seg .wx-segbtn{padding:0 7px}
+  /* 名字列从 126 收到 96：那一列最长也就「下次满月」「银河中心」四个字（约 48px），
+     126 在窄屏上纯属浪费。省下的 30px 留给值那一列 —— 行星行现在多了「今夜时段」，
+     不然它会被挤到第三行去。 */
+  .wx-as-row2>b{width:96px}
 }
 

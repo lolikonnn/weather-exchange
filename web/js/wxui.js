@@ -1126,13 +1126,54 @@
         pane.innerHTML = '<div class="wx-load">先选一个城市 —— 天文这几样都得知道当地的经纬度。</div>';
         return;
       }
+      /* ── 副标题的包装壳 ──
+         天文整页都是按经纬度在**本地**推算的，用的是**当前所查看城市**（`S.cur`）——
+         不是定位点，也不是什么默认城市。这件事必须写在脸上：抽屉里不写城市名，
+         使用者根本无从确认它算的是哪儿。
+         顺带把「光污染」那一小段也拼进来：它是**站点常量**（云会散、月会落，它不会），
+         完整的那张卡只在观星页，可翻到另外五页时它同样该看得见 ——
+         使用者上一次就是"没找到光污染在哪儿"。
+         ⚠ 这里用一个 { set textContent } 的壳子把城市前缀强加给六个渲染器，
+           省得去改六个函数里各自的 `sub.textContent = ...`（漏一个就有一页没城市名）。 */
+      const tok = (this._as.tok = (this._as.tok || 0) + 1);
+      const st = { page: '', lp: '' };
+      const loc = '📍 ' + c.name + ' ' + Math.abs(c.lat).toFixed(2) + '°' + (c.lat >= 0 ? 'N' : 'S') +
+        ' ' + Math.abs(c.lon).toFixed(2) + '°' + (c.lon >= 0 ? 'E' : 'W');
+      const paint = () => {
+        // 抽屉已经又开过一次（tok 变了）就别再往回写，否则旧城市的字会盖住新城市的。
+        if (!sub || tok !== me._as.tok) return;
+        sub.textContent = loc + (st.page ? ' · ' + st.page : '') + st.lp;
+      };
+      const subW = {
+        set textContent(v) { st.page = v; paint(); },
+        get textContent() { return st.page; }
+      };
+      paint();
+      if (global.API && API.LP && API.LP.of && c.id != null) {
+        API.LP.of(c.id).then(v => {
+          const A = global.ASTRO, info = (A && A.lpInfo) ? A.lpInfo(v) : null;
+          st.lp = info ? (' · 光污染 ' + info.z + ' 级（夜空上限 ' + info.cap + '）')
+            : ' · 光污染 无数据';
+          paint();
+        }).catch(() => {});
+      }
       const now = Date.now();
-      if (this._as.page === 'aurora') { asAurora(pane, sub, c, now); return; }
-      if (this._as.page === 'sky') { asSky(pane, sub, c, now); return; }
-      if (this._as.page === 'glow') { asGlow(pane, sub, c, d, now); return; }
-      if (this._as.page === 'moon') { asMoon(pane, sub, c, now); return; }
-      if (this._as.page === 'meteor') { asMeteor(pane, sub, c, now); return; }
-      asStar(pane, sub, c, d, now);
+      if (this._as.page === 'aurora') { asAurora(pane, subW, c, now); return; }
+      if (this._as.page === 'sky') { asSky(pane, subW, c, now); return; }
+      if (this._as.page === 'glow') { asGlow(pane, subW, c, d, now); return; }
+      if (this._as.page === 'moon') { asMoon(pane, subW, c, now); return; }
+      if (this._as.page === 'meteor') { asMeteor(pane, subW, c, now); return; }
+      asStar(pane, subW, c, d, now);
+    },
+
+    /* 城市一换，已经开着的那几个抽屉都得重画 —— 它们算的全是那座城市的东西。
+       不重画的话画面上还是上一座城市的星图/雷达/震中距，而使用者完全看不出来。
+       目前只处理天文：它是六页里唯一"整页都是按经纬度推的"。
+       ⚠ 别的抽屉（雷达、地震、台风…）同样有这个问题，只是要动的地方更多，
+         留到各自那一轮再收拾。 */
+    onCityChanged() {
+      const el = document.getElementById('wxAstro');
+      if (el && !el.hidden) this.openAstro();
     },
 
     /* 通用开关 */
@@ -1556,71 +1597,79 @@
     } else {
       html += '<div class="wx-as-list">' + stars.slice(0, 10).map(s =>
         '<div class="wx-as-row2"><b>' + esc(s.name) + (s.note ? '<span style="color:var(--accent)"> ✦</span>' : '') + '</b>' +
-        '<span>' + Math.round(s.alt) + '° ' + esc(s.dir) + '　·　' + s.mag.toFixed(2) + ' 等　·　' +
-        esc(s.con) + '</span></div>').join('') + '</div>';
+        // 值本身再分四列（高度 / 方位 / 星等 / 星座）。光用 '　·　' 串起来是不行的：
+        // 「17°」和「80°」、「西南北」和「东南」长短都不一样，后半截会整排左右跳。
+        '<span class="wx-as-cols">' +
+        '<i class="wc-a">' + Math.round(s.alt) + '°</i>' +
+        '<i class="wc-d">' + esc(s.dir) + '</i>' +
+        '<i class="wc-m">' + s.mag.toFixed(2) + ' 等</i>' +
+        '<i>' + esc(s.con) + '</i>' +
+        '</span></div>').join('') + '</div>';
     }
 
-    html += '<div class="wx-as-h2">行星</div><div class="wx-as-list">' + pls.map(p => {
-      const vis = p.up ? '' : '（在地平线下）';
-      return '<div class="wx-as-row2"><b>' + esc(p.name) + '</b><span style="' +
-        (p.up ? '' : 'opacity:.55') + '">' +
-        (p.mag == null ? '--' : p.mag.toFixed(2) + ' 等') + '　·　' +
-        (p.up ? Math.round(p.alt) + '° ' + esc(p.dir) : '方位 ' + esc(p.dir)) + '　·　距角 ' +
-        Math.round(p.elong) + '°' + vis + '</span></div>';
-    }).join('') + '</div>';
-
-    /* ── 今夜各天体的可见时段 ──
-       使用者要的是**文字列表**，不要甘特图，所以这里只出「19:20 → 01:05（最高 63°）」这种一行。
-       门槛 10°：低于 10° 时大气消光已经吃掉一两个星等，而且多半早被楼和树挡住，
-       把它算进"可见"是自欺欺人。
-       ⚠ 高度是**先按 6 分钟步长采样一次**（`planets()` 一次返回全部行星，所以只算一遍），
-       再让 `A.skyWindows()` 从这份采样里查 —— 若让它自己去调 `planets()`，
-       8 颗行星 × 一夜 140 个采样点会把开普勒方程解上千遍。 */
+    /* ── 行星：此刻 + 今夜，**一张表** ──
+       ⚠ 原来是两张表：上面一张「行星」写此刻的高度方位，下面一张「今夜可见时段」
+         把同一批行星（外加月亮）再列一遍 —— 同一颗行星出现两次、两个表头、
+         两套名字列。现在一行就是一颗行星：左边此刻，右边今夜。
+       ⚠ 高度是**先按 6 分钟步长采样一遍**（`planets()` 一次返回全部行星，所以只算一遍），
+         再让 `A.skyWindows()` 从这份采样里查 —— 若让它自己去调 `planets()`，
+         / 实测 `PLANET_TAB` 里是 **5 颗**（水金火木土）再加上月亮 —— 6 个天体 × 一夜
+         约 120 个采样点，若让回调自己去调 `planets()` 就会把开普勒方程解上千遍。 */
+    const step = 6 * 60000;
     const night = A.nextNight(now, c.lat, c.lon);
+    const winOf = {};
+    let nightTxt = '';
     if (night && night.to > night.from) {
-      const step = 6 * 60000;
       const ts = [];
       for (let t = night.from; t <= night.to; t += step) ts.push(t);
-      const moonAlt = ts.map(t => A.moonAlt(t, c.lat, c.lon));
-      const bodies = [{ name: '月亮', emoji: '🌙', arr: moonAlt }];
-      pls.forEach(p => {
-        const arr = ts.map(t => {
-          const q = A.planets(t, c.lat, c.lon).filter(x => x.name === p.name)[0];
-          return q ? q.alt : -90;
-        });
-        bodies.push({ name: p.name, emoji: '🪐', arr: arr });
-      });
       const idx = ms => Math.max(0, Math.min(ts.length - 1, Math.round((ms - night.from) / step)));
-      const win = A.skyWindows(bodies.map(b => ({
+      const bodies = [{ name: '月亮', emoji: '🌙', arr: ts.map(t => A.moonAlt(t, c.lat, c.lon)) }];
+      pls.forEach(p => {
+        bodies.push({
+          name: p.name, emoji: '🪐', arr: ts.map(t => {
+            const q = A.planets(t, c.lat, c.lon).filter(x => x.name === p.name)[0];
+            return q ? q.alt : -90;
+          })
+        });
+      });
+      A.skyWindows(bodies.map(b => ({
         name: b.name, emoji: b.emoji, alt: ms => b.arr[idx(ms)]
-      })), night.from, night.to, 10, 6);
-
-      html += '<div class="wx-as-h2">今夜可见时段（高度 ≥ 10°，' +
-        asHM(night.from) + '→' + asHM(night.to) + '）</div>';
-      const vis = win.filter(w => w.windows.length);
-      if (!vis.length) {
-        html += '<div class="wx-load">今夜没有天体升到 10° 以上 —— 换个日子。</div>';
-      } else {
-        html += '<div class="wx-as-list">' + vis.map(w => {
-          const seg = w.windows.map(x =>
-            asHM(x.from) + '→' + asHM(x.to) +
-            '（最高 ' + Math.round(x.maxAlt) + '° ' + asHM(x.maxAt) + '）').join('　·　');
-          return '<div class="wx-as-row2"><b>' + w.emoji + ' ' + esc(w.name) + '</b>' +
-            '<span>共 ' + asDur(w.total) + '　·　' + esc(seg) + '</span></div>';
-        }).join('') + '</div>';
-      }
-      const noVis = win.filter(w => !w.windows.length).map(w => w.name);
-      if (noVis.length) {
-        html += '<div class="wx-as-note">今夜不会升到 10° 以上：' + esc(noVis.join('、')) +
-          '（多半在地平线以下或一直贴着地平线）。</div>';
-      }
+      })), night.from, night.to, 10, 6).forEach(w => { winOf[w.name] = w; });
+      nightTxt = asHM(night.from) + '→' + asHM(night.to);
     }
+    // 一个天体的「今夜」小段：够高就给时段，整夜上不来就直说。
+    const winSeg = name => {
+      if (!nightTxt) return '';
+      const w = winOf[name];
+      if (!w || !w.windows.length) return '<i class="wc-w wc-dim">今夜不升到 10°</i>';
+      return '<i class="wc-w">今夜 ' + w.windows.map(x =>
+        asHM(x.from) + '→' + asHM(x.to) + '（最高 ' + Math.round(x.maxAlt) + '°）'
+      ).join('　·　') + ' · 共 ' + asDur(w.total) + '</i>';
+    };
 
+    html += '<div class="wx-as-h2">行星（此刻' +
+      (nightTxt ? ' · 今夜 ' + nightTxt : '') + '）</div><div class="wx-as-list">' + pls.map(p => {
+      return '<div class="wx-as-row2"><b>' + esc(p.name) + '</b>' +
+        '<span class="wx-as-cols"' + (p.up ? '' : ' style="opacity:.55"') + '>' +
+        '<i class="wc-m">' + (p.mag == null ? '--' : p.mag.toFixed(2) + ' 等') + '</i>' +
+        // 地平线以下没有高度角，用破折号把这一列占住 —— 整格抽掉的话后面几列会一起左移。
+        '<i class="wc-a">' + (p.up ? Math.round(p.alt) + '°' : '—') + '</i>' +
+        '<i class="wc-d">' + esc(p.dir) + '</i>' +
+        '<i class="wc-e">距角 ' + Math.round(p.elong) + '°</i>' +
+        (p.up ? '' : '<i class="wc-x">地平线下</i>') +
+        winSeg(p.name) +
+        '</span></div>';
+    }).join('') + '</div>';
+
+    // 月亮原本在下面那张「今夜可见时段」表里另占一行，现在那张表并进行星表了，
+    // 它的今夜窗口就跟着这行走（不然全页就没有月亮什么时候能看了）。
     html += '<div class="wx-as-h2">月亮与银心</div><div class="wx-as-list">' +
-      '<div class="wx-as-row2"><b>月亮</b><span>' +
-      (mpos.alt > 0 ? Math.round(mpos.alt) + '° ' + esc(mpos.dir) : '已落下（' + esc(mpos.dir) + '）') +
-      '　·　' + mp.emoji + mp.name + '　·　距离 ' + Math.round(mpos.dist).toLocaleString('en-US') + ' km' +
-      '　·　视直径 ' + mpos.size.toFixed(3) + '°' + (mpos.big ? '（偏大，超级月亮档）' : mpos.small ? '（偏小）' : '') +
+      '<div class="wx-as-row2"><b>月亮</b><span class="wx-as-cols">' +
+      '<i>' + (mpos.alt > 0 ? Math.round(mpos.alt) + '° ' + esc(mpos.dir) : '已落下（' + esc(mpos.dir) + '）') + '</i>' +
+      '<i>' + mp.emoji + mp.name + '</i>' +
+      '<i>距离 ' + Math.round(mpos.dist).toLocaleString('en-US') + ' km</i>' +
+      '<i>视直径 ' + mpos.size.toFixed(3) + '°' + (mpos.big ? '（偏大，超级月亮档）' : mpos.small ? '（偏小）' : '') + '</i>' +
+      winSeg('月亮') +
       '</span></div>' +
       '<div class="wx-as-row2"><b>银河中心</b><span id="wxAsGc">—</span></div></div>';
 
