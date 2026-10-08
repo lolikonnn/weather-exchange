@@ -1130,33 +1130,25 @@
          天文整页都是按经纬度在**本地**推算的，用的是**当前所查看城市**（`S.cur`）——
          不是定位点，也不是什么默认城市。这件事必须写在脸上：抽屉里不写城市名，
          使用者根本无从确认它算的是哪儿。
-         顺带把「光污染」那一小段也拼进来：它是**站点常量**（云会散、月会落，它不会），
-         完整的那张卡只在观星页，可翻到另外五页时它同样该看得见 ——
-         使用者上一次就是"没找到光污染在哪儿"。
          ⚠ 这里用一个 { set textContent } 的壳子把城市前缀强加给六个渲染器，
-           省得去改六个函数里各自的 `sub.textContent = ...`（漏一个就有一页没城市名）。 */
+           省得去改六个函数里各自的 `sub.textContent = ...`（漏一个就有一页没城市名）。
+         ⚠ 抬头**只写城市**，不要往里塞别的东西。曾经把「光污染 X 级」也拼在这里，
+           被使用者一句"多此一举"打回：光污染是观星页的事，抬头每翻一页都重复一遍
+           既啰嗦又跟本页内容无关。该在哪一页就在哪一页。 */
       const tok = (this._as.tok = (this._as.tok || 0) + 1);
-      const st = { page: '', lp: '' };
+      const st = { page: '' };
       const loc = '📍 ' + c.name + ' ' + Math.abs(c.lat).toFixed(2) + '°' + (c.lat >= 0 ? 'N' : 'S') +
         ' ' + Math.abs(c.lon).toFixed(2) + '°' + (c.lon >= 0 ? 'E' : 'W');
       const paint = () => {
         // 抽屉已经又开过一次（tok 变了）就别再往回写，否则旧城市的字会盖住新城市的。
         if (!sub || tok !== me._as.tok) return;
-        sub.textContent = loc + (st.page ? ' · ' + st.page : '') + st.lp;
+        sub.textContent = loc + (st.page ? ' · ' + st.page : '');
       };
       const subW = {
         set textContent(v) { st.page = v; paint(); },
         get textContent() { return st.page; }
       };
       paint();
-      if (global.API && API.LP && API.LP.of && c.id != null) {
-        API.LP.of(c.id).then(v => {
-          const A = global.ASTRO, info = (A && A.lpInfo) ? A.lpInfo(v) : null;
-          st.lp = info ? (' · 光污染 ' + info.z + ' 级（夜空上限 ' + info.cap + '）')
-            : ' · 光污染 无数据';
-          paint();
-        }).catch(() => {});
-      }
       const now = Date.now();
       if (this._as.page === 'aurora') { asAurora(pane, subW, c, now); return; }
       if (this._as.page === 'sky') { asSky(pane, subW, c, now); return; }
