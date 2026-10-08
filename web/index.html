@@ -195,7 +195,13 @@
   <!-- ───────── 右：盘口 + 明细 ───────── -->
   <aside class="pane pane-right">
     <section class="rblock" id="obBlock">
-      <div class="pane-head"><span>未来 5 天高低温 <em class="dim">上面＝每天最高 · 下面＝每天最低</em></span></div>
+      <!-- 标题栏原来还跟着一句「哪一块是最高、哪一块是最低」的说明。
+           使用者（m01204）说那句"有点多此一举了"，删掉 ——
+           上/下两块各自的行首本来就写着最高/最低，每行还都带日期，那句说明是重复的。
+           （完整解释留在帮助面板的「未来 5 天高低温」词条里，见本文件后面的 dt/dd 那段。）
+           注：这里**故意不把那句话原样抄进注释** —— 免得它继续出现在页面 HTML 里被
+           「有没有删干净」这类检查当成残留。 -->
+      <div class="pane-head"><span>未来 5 天高低温</span></div>
       <div class="orderbook" id="orderbook"></div>
     </section>
 
