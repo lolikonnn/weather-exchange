@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#12141a">
 <title>天气战士 · 老实看天气很枯燥吧？</title>
 <meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、降水/风/云量/空气，还有雷达回波、卫星云图、降水预报、台风路径、预警信号。老实看天气很枯燥吧？">
-<link rel="stylesheet" href="css/app.css?v=d6c2ad85">
+<link rel="stylesheet" href="css/app.css?v=4601cc9f">
 <link rel="stylesheet" href="css/game.css?v=e6133eb6">
 <link rel="icon" type="image/png" href="img/logo-32.png?v=189dcbb4">
 </head>
@@ -446,8 +446,10 @@
           对个表可以，别拿它定日子 ✧</li>
         <li><b>观星页那个评分是本站自定的口径</b>（云多少、月亮多亮、通透度如何，各占几分），
           不是任何机构的标准。</li>
-        <li><b>光污染那个等级</b>来自第三方地图集，算的是"天顶有多亮"的模拟值 ——
-          它<b>不是波特尔（Bortle）等级</b>，原作者明确要求两者不要混为一谈 ✧</li>
+        <li><b>光污染那个等级是 1～9 级，数值越小越暗</b>（1 级是最黑的荒野，9 级是市中心）。
+          它来自第三方地图集，算的是"天顶有多亮"的模拟值 ——
+          它<b>不是波特尔（Bortle）等级</b>，原作者明确要求两者不要混为一谈。
+          观星页会顺手告诉你这个级别够不够看银河（一般要 <b>5 级以下</b>）✧</li>
         <li><b>朝霞 / 晚霞 / 火烧云是本站自拟的启发式</b>，<b>不是权威预报</b>，
           也没有哪个机构在公开做这件事。它只看中高云够不够当"画布"、低云会不会把地平线挡死、
           气溶胶够不够浓；远处的地形、云的具体形状、飞机拉线它都看不见 ——
@@ -720,8 +722,8 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(loca
 <script src="js/api.js?v=297014f0"></script>
 <script src="js/chart.js?v=a022e87e"></script>
 <script src="js/weather.js?v=efe47d62"></script>
-<script src="js/astro.js?v=65a1206f"></script>
-<script src="js/wxui.js?v=1ec7cbe5"></script>
+<script src="js/astro.js?v=cb2e6291"></script>
+<script src="js/wxui.js?v=8778a06f"></script>
 <script src="js/app.js?v=5cb2b71b"></script>
 <script src="js/game.js?v=3f1686fa"></script>
 </body>

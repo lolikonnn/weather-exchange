@@ -1431,10 +1431,23 @@
     if (lpI) {
       html += '<div class="wx-as-h2">本站光污染（决定天花板）</div>' +
         '<div class="wx-as-lp">' +
-          '<span class="wx-as-lpz" style="background:' + lpI.color + '">' + esc(lpI.z) + '</span>' +
+          '<span class="wx-as-lpz" style="background:' + lpI.color + '">' +
+          (lpI.grade == null ? esc(lpI.z) : lpI.grade) + '</span>' +
           '<span class="wx-as-lpt">' + esc(lpI.brief) + '<br><em>' + esc(lpI.desc) + '</em></span>' +
           '<span class="wx-as-lpcap"><i>夜空上限</i><b>' + lpI.cap + '</b></span>' +
-        '</div>';
+        '</div>' +
+        /* 「银不银河」照天文通的说法：只给**门槛**和一句判定，不给我算出来的方位。
+           （它官方教程原话：「通常 5 级以下的光污染能看到银河」「哪怕光污染 5 级
+             的地方，也有机会看到淡淡的银河」；它的配图用的是 4 级。） */
+        '<div class="wx-as-go">' +
+          '<i>看银河要 ' + lpI.mwGrade + ' 级以下</i>' +
+          '<em>你现在 ' + esc(lpI.label) + '，' + (lpI.mwOk ? '能看到' : '看不到') + '</em>' +
+        '</div>' +
+        /* 想找够暗的地方 —— 天文通的做法是"地图上点任意地点"，所以这儿也给地图入口。 */
+        '<div class="wx-as-goa">想找够暗的地方：' +
+        '<a href="https://darkmap.cn" target="_blank" rel="noopener noreferrer">darkmap.cn</a> · ' +
+        '<a href="https://www.lightpollutionmap.info/" target="_blank" rel="noopener noreferrer">' +
+        'lightpollutionmap.info</a>（第三方站点，会离开本站）</div>';
     }
     html += '<div class="wx-as-h2">' + (night ? '今晚逐小时' : '接下来几小时') +
       '（云那一列是「低云/中高云」）</div>';

@@ -1144,6 +1144,20 @@ body{
 .wx-as-lpcap i{display:block;font-style:normal;color:var(--dim2)}
 .wx-as-lpcap b{font-family:var(--mono);font-size:19px;color:var(--accent)}
 
+/* 「银不银河」与地图入口（观星页）──
+   跟随天文通的写法：只给**门槛**（看银河要 5 级以下）和一句判定，再给地图入口。
+   原来这条写的是"往西偏北 54 公里"——那是我自己造的直线距离口径，不看路网、
+   也不是这个领域的惯例，已撤掉（数据仍在 `web/data/lp.json` 里）。 */
+.wx-as-go{
+  flex:none;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+  margin-top:6px;padding:7px 10px;border-radius:3px;
+  background:var(--panel2);border:1px solid var(--line);
+}
+.wx-as-go i{flex:none;font-style:normal;font-size:10.5px;color:var(--dim2)}
+.wx-as-go em{flex:1 1 auto;min-width:0;font-style:normal;font-size:11.5px;color:var(--txt-hi)}
+.wx-as-goa{flex:none;margin-top:4px;font-size:10.5px;color:var(--dim2)}
+.wx-as-goa a{color:var(--dim);text-decoration:underline;text-underline-offset:2px}
+
 /* 火烧云徽标（霞页）。它是"有没有"的判定，不是分数，所以做成一枚小标签。 */
 .wx-as-fire{
   flex:none;font-size:10.5px;padding:1px 6px;border-radius:2px;

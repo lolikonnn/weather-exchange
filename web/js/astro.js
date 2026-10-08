@@ -644,6 +644,27 @@
   const LP_ORDER = ['0', '1a', '1b', '2a', '2b', '3a', '3b', '4a', '4b',
     '5a', '5b', '6a', '6b', '7a', '7b'];
 
+  /* 15 个 Zone 档 → **1～9 级**的「光污染等级」。
+     为什么要有这一层：zone 名（`7a`/`4b`）是 lightpollutionmap.info 那套专业刻度，
+     普通人看不懂。使用者原话：「天文通里怎么做的你就怎么做好吧，不要加一些别人看不懂
+     的东西」—— 天文通给的就是**一个数字、越小越暗**（「红框处便是光污染等级，数值越小，
+     光污染越小」），这里就照这个来。
+     ⚠ 对应关系是**按天顶亮度（mag/arcsec²）归到那 9 个亮度带上**算出来的，
+       不是作者给的分级：David Lorenz 明确要求过（"I ask that you do not conflate the
+       Bortle Scale with my maps."）不要把这张图跟波特尔混为一谈 ⇒
+       **界面上只写「光污染 N 级」，一辈子不出现"波特尔"三个字。**
+       映射依据（各 zone 的 magLo 区间 → 通行的 9 级亮度带）：
+         0/1a(22.0~21.99)→1  1b(21.93)→2  2a(21.89)→2  2b(21.81)→3  3a(21.69)→3
+         3b(21.51)→4  4a(21.25)→4  4b(20.91)→5  5a(20.49)→5  5b(20.02)→6
+         6a(19.50)→6  6b(18.95)→7  7a(18.38)→8  7b(<17.80)→9 */
+  const ZONE2GRADE = {
+    '0': 1, '1a': 1, '1b': 2, '2a': 2, '2b': 3, '3a': 3, '3b': 4, '4a': 4,
+    '4b': 5, '5a': 5, '5b': 6, '6a': 6, '6b': 7, '7a': 8, '7b': 9
+  };
+  /** 天文通的口径（其官方教程原话）：「通常 **5 级以下**的光污染能看到银河」
+   *  「哪怕光污染 5 级的地方，也有机会看到淡淡的银河」。 */
+  const MW_GRADE = 5;
+
   /** 档位 → 人话。
    *  `cap` 是**这个站点理论上限**：光污染是站点属性，天空再晴也冲不破它。
    *  用天顶亮度线性映射到 0～100（17.5 等 = 谷底、22.0 等 = 满分），
@@ -666,13 +687,34 @@
     const color =
       magLo >= 21.4 ? '#2e9be6' : magLo >= 20.4 ? '#2ecc71' :
         magLo >= 19.4 ? '#f0c419' : magLo >= 18.4 ? '#e67e22' : '#e74c3c';
+    /* 对外**只说 1～9 级**（数值越小越暗），不露 `7a` 这种专业档名 ——
+       天文通就是这么做的，普通人一眼能懂。表里查不到时退回原档名，
+       免得数据出问题时整块消失。 */
+    const grade = ZONE2GRADE[v.z] == null ? null : ZONE2GRADE[v.z];
+    const gname = grade == null ? v.z : String(grade);
     return {
-      z: v.z, cap: cap, color: color, magLo: magLo, magHi: magHi, lpiTxt: lpiTxt,
-      label: v.z + ' 级',
-      /** 「3a · 天顶 21.7 等/平方角秒 · 人工光约 0.4 倍自然光」 */
-      brief: v.z + ' 级 · 天顶 ' + magLo.toFixed(2) + ' 等/平方角秒' +
+      z: v.z, grade: grade, cap: cap, color: color, magLo: magLo, magHi: magHi, lpiTxt: lpiTxt,
+      label: gname + ' 级',
+      /** 「光污染 8 级 · 人工光约为自然光的 35 倍」 */
+      brief: '光污染 ' + gname + ' 级' +
         (lpi >= 1 ? ' · 人工光约为自然光的 ' + lpiTxt + ' 倍' : ' · 人工光还少于自然光'),
-      desc: desc
+      desc: desc,
+      /** 银河看不看得见 —— 天文通官方教程的口径：「通常 5 级以下的光污染能看到银河」 */
+      mwGrade: MW_GRADE,
+      mwOk: grade != null && grade <= MW_GRADE,
+      /* ── 往哪走能看见银河（烘焙时就算好的，运行时零请求）──────────────
+       *  **数据留着，界面上不再当结论摆**：那是直线距离、不看路网，而且"往哪走"
+       *  不是这个领域的惯例（天文通的做法是"你几级 + 去地图上自己找"）。
+       *  `mw*`   = 200 km 内**最近的**一处人工光降到 4b 档的方位与直线距离
+       *  `dark*` = 200 km 内**陆地上**能到的最暗一档
+       *  只在陆地上取点：海面没有人工灯光，不设限沿海城市会被告知"出海看银河"。 */
+      mwZ: v.mwZ || null,
+      mwDir: v.mwDir || null,
+      mwKm: v.mwKm == null ? null : v.mwKm,
+      darkZ: v.darkZ || null,
+      darkDir: v.darkDir || null,
+      darkKm: v.darkKm == null ? null : v.darkKm,
+      darkGain: v.darkGain == null ? 0 : v.darkGain
     };
   }
 
@@ -684,7 +726,8 @@
     if (sc.score > info.cap) {
       sc.score = info.cap;
       sc.capped = Math.min(sc.capped == null ? 100 : sc.capped, info.cap);
-      sc.why = (sc.why || []).concat(['本站光污染 ' + info.z + ' 级，夜空上限就到这里']);
+      sc.why = (sc.why || []).concat(['本站光污染 ' +
+        (info.grade == null ? info.z : info.grade) + ' 级，夜空上限就到这里']);
       sc.label = sc.score >= 80 ? '极佳' : sc.score >= 60 ? '不错' : sc.score >= 40 ? '一般' : sc.score >= 20 ? '较差' : '不宜';
       sc.color = sc.score >= 80 ? '#2ecc71' : sc.score >= 60 ? '#7ed957' : sc.score >= 40 ? '#f0c419' : sc.score >= 20 ? '#e67e22' : '#e74c3c';
     }
