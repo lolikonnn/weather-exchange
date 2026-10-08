@@ -1862,6 +1862,26 @@
       '<span class="wx-as-leadlab"><b>' + mp.name + ' · 照亮 ' + Math.round(mp.illum * 100) + '%</b><br>' +
       '月龄 ' + mp.age.toFixed(1) + ' 天（朔望月 ' + A.SYNODIC.toFixed(2) + ' 天）</span></div>';
 
+    /* 太阳此刻 —— 原来这一页**只有**「月亮此刻」，太阳只出现在下面「今天」表的日出日落里。
+       使用者问："只有月亮此刻没有太阳此刻，是特意没做的吗？可月亮落下了也会显示'已落下'欸。"
+       不特意，就是漏了 —— 顺过来补一行。给的是**此刻的高度方位**（别处没有），
+       而不是日出日落（那张表里已经有了，重复没意义）。 */
+    const sr = A.sunRaDec(now);
+    const spos = A.azOf(sr.ra, sr.dec, now, c.lat, c.lon);
+    // ⚠ `azOf()` 只给 `{alt, az}`，**没有 dir** —— 月亮那行能直接写 `mpos.dir` 是因为
+    //    `moonPos()` 自己多算了一个。这里必须自己过一遍 `dirName()`，
+    //    否则会渲染出「已落下（）」这种空括号（探针就是这么抓到的）。
+    const sdir = A.dirName(spos.az);
+    const sa = spos.alt;
+    const sPhase = sa > 0 ? '白天' : sa > -0.833 ? '太阳刚过地平线' : sa > -4 ? '黄金时刻'
+      : sa > -6 ? '蓝调时刻' : sa > -18 ? '天文暮光' : '天已黑透';
+    html += '<div class="wx-as-h2">太阳此刻</div><div class="wx-as-list">' +
+      '<div class="wx-as-row2"><b>位置</b><span class="wx-as-cols">' +
+      '<i>' + (sa > 0 ? Math.round(sa) + '° ' + esc(sdir) : '已落下（' + esc(sdir) + '）') + '</i>' +
+      '<i>高度 ' + sa.toFixed(1) + '°</i>' +
+      '<i>' + sPhase + '</i>' +
+      '</span></div></div>';
+
     // 月亮此刻 + 朔望倒计时：全部本地算（距离用 Meeus 前 5 项，误差 ±0.3%）
     const mpos = A.moonPos(now, c.lat, c.lon);
     const dFull = ((0.5 - mp.p + 1) % 1) * A.SYNODIC;
@@ -1874,8 +1894,10 @@
       '<div class="wx-as-row2"><b>距离</b><span>' +
       Math.round(mpos.dist).toLocaleString('en-US') + ' km' +
       (mpos.big ? '　·　偏近，超级月亮档' : mpos.small ? '　·　偏远（微月）' : '　·　常距') + '</span></div>' +
-      '<div class="wx-as-row2"><b>视直径</b><span>' + mpos.size.toFixed(3) + '°' +
-      '（满月平均 0.518°，差值肉眼看不出来，拍照党才在意）</span></div>' +
+      /* 视直径**不再挂括号说明**：那两个数字的变化本来就是上一行"距离"造成的，
+         而"偏近/偏远"已经写在距离那一行了 —— 同一件事说两遍，还把这一格撑成两行。
+         想看口径的话，页脚里有完整的一句。 */
+      '<div class="wx-as-row2"><b>视直径</b><span>' + mpos.size.toFixed(3) + '°</span></div>' +
       '<div class="wx-as-row2"><b>下次满月</b><span>' + dTxt(dFull) + '</span></div>' +
       '<div class="wx-as-row2"><b>下次新月</b><span>' + dTxt(dNew) +
       '（新月前后几天的夜最黑，观星最佳）</span></div></div>';
@@ -1896,6 +1918,11 @@
     html += '<div class="wx-as-foot">全部在本地推算（astro.js，Meeus 简化式）：' +
       '日出日落 ±1 分钟、月出月落 ±10 分钟、月球距离 ±0.3%。' +
       '黄金时刻＝太阳高度 +6°～-4°；蓝调时刻＝-4°～-6°；天文夜＝低于 -6°。' +
+      /* 视直径那一格的说明搬到这里 —— 表格里只需要一个数，
+         为什么它会长会短，是这个数**怎么来的**，属于脚注不属于行内。 */
+      '<br>视直径随距离变：近地点约 0.56°、远地点约 0.49°，满月平均 0.518°。' +
+      '差值肉眼分不出来，也只有拍照党在意 —— 所以上面「月亮此刻」里只给一个数，' +
+      '「偏近 / 偏远」写在**距离**那一行（视直径的变化本来就是距离造成的，说两遍是重复）。' +
       (mp.illum > 0.7 ? '<br>⚠ 今晚月光很亮，深空天体基本被压住 —— 适合看月面和行星。' : '') +
       '<br>日月食<b>没有做</b>：找过 NASA/USNO 那几个免费源，本机要么域名解析不了、要么没有可直连的接口；' +
       '硬编码一张表又没法当场核验，宁可先不写（宁可没有，也不要写错的日子）。' +
