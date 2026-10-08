@@ -369,6 +369,135 @@
                                 : url.replace(/\.jpg$/, '.JPG');
     },
 
+    /* ═══════════ 海陆温（陆地气温实况 + 海表温度）═══════════
+       使用者 m00882 要的「陆地温度图 / 海洋温度图」，形态照卫星云图与降水预报。
+
+       ① 陆地温度：**中央气象台「全国气温实况图」**，产品代号 `ET0`、目录 `STFC`，
+          文件名与降水实况同构（`..._PB_<yyyyMMddHHMM>00000.jpg`），但时次是**逐小时**。
+          页面出处 `https://www.nmc.cn/publish/observations/hourly-temperature.html`
+          （标题「天气实况_气温_全国逐时气温」）。实测拉下来那张图上印着
+          「全国气温实况图 · 2026年10月8日12时 · 中央气象台」，带色标图例（-12 ℃ ~ >40 ℃）。
+          ⚠ 文件名里的时次是 **UTC**、图上印的是**北京时**（差 8 小时）。实测
+          （tmp/tstamp_semantics.py，本机 12:45 / UTC 04:45）：今天存在的时次 0..4、
+          昨天 2..23 —— 即**最新一帧就是当前 UTC 小时**。别把 UTC 时次当成"图是旧的"。
+          扩展名只有小写 `.jpg` 命中。
+
+       ② 海洋温度：**气象局/中央气象台没有这个产品**。逐条查过：
+          - `nmc.cn/publish/sitemap.html` 里跟温度有关的只有「气温」「气温预报」两项；
+          - `publish/marine/*`（北太平洋形势分析 OSRA、海洋天气公报 OCBU、海洋浮标能见度
+            APWF/SOB）都不是海温；`marine/forecast.htm`、`h000.html` 的图另有用途；
+          - `publish/marine/index.html`、`sst.html`、`publish/sea/index.html` 都是同一张
+            13,482 B 的空壳页；猜过的 `OSTA`/`SSTA` 图床路径全 404；
+          - 国家海洋环境预报中心 `www.nmefc.cn` 是 Vue SPA（首页只有 2.5 KB、资源在
+            oceanguide.org.cn），拿不到稳定图片地址。
+          所以改用 **NASA GIBS 的 WMS**：一次 GetMap 直接返回一张画好的图，不必拼瓦片。
+          实测 `GHRSST_L4_MUR_Sea_Surface_Temperature` → 200 / PNG（多光谱 1 km 日合成）。
+
+          ⚠ GIBS 的 TIME 语义**必须先量再用**（tmp/gibs_time.py）：传一个它没有的日期
+          **不会报错**，而是返回一张 **2,173 B 的空白 PNG**（sha `75faada3`，未来日期、
+          今天、昨天都是它）；真实海温图是 156~166 KB 且每天 sha 不同。也就是说
+          `probeSeaTemp` **不能用 `_tryImg` 判存在**（永远 onload 成功），必须读字节大小。
+          实测最新可用是**前天**（MUR NRT 滞后约 2 天），不传 TIME 时 GIBS 给的就是它。
+
+       ③ 三个图源都**不认 Referer**（实测：无 / 外站 lolikonnn.github.io / 站内，
+          三种都是 200），所以网页端不会重演 `weather.cma.cn` 那个外站 Referer 403。 */
+
+    /** 中央气象台「全国气温实况图」（逐时，UTC 时次，小写 .jpg） */
+    landTempUrl(dt) {
+      const y = dt.getUTCFullYear(), m = pad2(dt.getUTCMonth() + 1), d = pad2(dt.getUTCDate());
+      const ts = '' + y + m + d + pad2(dt.getUTCHours()) + pad2(dt.getUTCMinutes()) + '00000';
+      return IMG + '/product/' + y + '/' + m + '/' + d + '/STFC/medium/' +
+        'SEVP_NMC_STFC_SFER_ET0_ACHN_L88_PB_' + ts + '.jpg';
+    },
+
+    /** GIBS 取图范围：东亚 + 西太（东海、南海、日本以南都在里面）。顺序是 W,S,E,N */
+    SEA_BBOX: '100,0,150,45',
+
+    /** 海温两种产品。`note` 是要显示在播放器页脚的来源说明 ——
+        这不是装饰：数据来自 NASA/NOAA，必须跟"中国气象局"那张陆地图标清楚，
+        否则就是把别人家的数据挂在中国气象局名下。 */
+    SEA_LAYERS: [
+      { k: 'sst', n: '海表温度', layer: 'GHRSST_L4_MUR_Sea_Surface_Temperature',
+        note: '数据来源：NASA GIBS · GHRSST MUR 海表温度（日合成）' },
+      // ⚠ 图层名是 **Anomalies（复数）**，不是 Anomaly。写成单数时 GIBS 会回一张
+      //   错误说明图（不是 404），`<img>` 照样 onload、但解码不出图像 ⇒ 画面空着、
+      //   探针只报"超时"。这是查 `GetCapabilities`（1,615 个图层）才定位到的。
+      { k: 'anom', n: '温度距平', layer: 'GHRSST_L4_MUR_Sea_Surface_Temperature_Anomalies',
+        note: '数据来源：NASA GIBS · GHRSST MUR 海表温度距平' }
+    ],
+
+    /** 一张 GIBS 海温图。`dt` 为 null 时不传 TIME，GIBS 给最近可用那一天。
+        `TRANSPARENT=FALSE&BGCOLOR=0x12141a`：不铺底色的话，没有数据的陆地区域是
+        全黑（PNG 带 alpha，压在深色面板上就是纯黑块），跟周围界面差一截；
+        铺成应用的主题底色 `#12141a` 就融为一体了。 */
+    seaTempUrl(dt, layer, w, h) {
+      let u = 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi' +
+        '?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&STYLES=' +
+        '&LAYERS=' + encodeURIComponent(layer) +
+        '&SRS=EPSG:4326&BBOX=' + this.SEA_BBOX +
+        '&WIDTH=' + (w || 1200) + '&HEIGHT=' + (h || 780) +
+        '&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0x12141a';
+      if (dt) {
+        u += '&TIME=' + dt.getUTCFullYear() + '-' + pad2(dt.getUTCMonth() + 1) +
+          '-' + pad2(dt.getUTCDate());
+      }
+      return u;
+    },
+
+    /** 陆地气温实况：从当前 UTC 小时往回凑 n 帧（整点网格，404 = 这一小时没有） */
+    async probeLandTemp(n, onStep) {
+      n = n || 10;
+      const now = new Date();
+      const base = new Date(now.getTime());
+      base.setUTCMinutes(0, 0, 0);
+      const out = [];
+      let miss = 0;
+      // 容忍连续 miss：官方偶尔断档（实测昨天就缺 00、01 两个时次），
+      // 但也不能无限往前翻 —— 连续 10 个空就认为到头了。
+      for (let k = 0; k < n * 6 && out.length < n && miss < 10; k++) {
+        const dt = new Date(base.getTime() - k * 3600000);
+        const url = this.landTempUrl(dt);
+        /* eslint-disable no-await-in-loop */
+        const ok = await this._tryImg(url);
+        if (ok) { out.push({ url: url, t: dt, f: true }); miss = 0; }
+        else miss++;
+        if (onStep) onStep(out.length, n);
+      }
+      out.sort((a, b) => a.t - b.t);
+      return out;
+    },
+
+    /** 海温：逐日往回凑 n 帧。
+        ⚠ **不能用 `_tryImg` 判存在** —— 见上面 ② 里量到的：GIBS 对没有数据的日期
+        照样回 200，只是那张 PNG 只有 2,173 B。所以这里直接 `fetch` 读 `blob().size`，
+        小于 20 KB 的当空白丢掉。（GIBS 带 `Access-Control-Allow-Origin: *`，能读。）
+        `dt` 为 null 时退化成"只要最新那一张"，探测失败时的兜底。 */
+    async probeSeaTemp(n, onStep, layer) {
+      n = n || 8;
+      layer = layer || this.SEA_LAYERS[0].layer;
+      const MIN_BYTES = 20000;
+      const now = new Date();
+      const base = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const out = [];
+      for (let k = 1; k <= n + 3 && out.length < n; k++) {
+        const dt = new Date(base.getTime() - k * 86400000);
+        const url = this.seaTempUrl(dt, layer);
+        /* eslint-disable no-await-in-loop */
+        try {
+          const r = await fetch(url, { mode: 'cors' });
+          const b = await r.blob();
+          if (b.size >= MIN_BYTES) out.push({ url: url, t: dt, f: true });
+        } catch (e) { /* 这张跳过 */ }
+        if (onStep) onStep(out.length, n);
+      }
+      out.sort((a, b) => a.t - b.t);
+      if (!out.length) {
+        // 全都没数据（极端情况）→ 退回"不传 TIME"，让 GIBS 给最近可用那张
+        out.push({ url: this.seaTempUrl(null, layer), t: now, f: true });
+      }
+      return out;
+    },
+
     /** 逐帧试探：能把 404 变成"跳过这一帧"，因为图床对不存在的时次返回 404 */
     _tryImg(url) {
       return new Promise(res => {

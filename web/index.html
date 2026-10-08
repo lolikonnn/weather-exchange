@@ -72,6 +72,7 @@
   <button class="wxbtn" data-wx="wxRadar"  title="最近几小时的雷达回波动画，能看出雨在哪、往哪走；范围可以一直选到自己所在的城市">🛰 <b>雷达回波</b></button>
   <button class="wxbtn" data-wx="wxSat"    title="风云卫星云图，看大范围的云系"><span>☁</span> <b>卫星云图</b></button>
   <button class="wxbtn" data-wx="wxPrecip" title="中央气象台画的全国降水量预报图，未来 24 小时">🌧 <b>降水预报</b></button>
+  <button class="wxbtn" data-wx="wxSeaLandTemp" title="陆地：中央气象台全国气温实况图（逐时，带色标图例）。海洋：NASA GHRSST 海表温度与温度距平（逐日，东亚与西太平洋）">🌡 <b>海陆温</b></button>
   <button class="wxbtn" data-wx="wxTy"     title="台风和热带气旋的实况路径与预报路径">🌀 <b>台风路径</b></button>
   <button class="wxbtn" data-wx="wxWarn"   title="全国正在生效的气象预警信号">⚠ <b>预警信号</b></button>
   <button class="wxbtn" data-wx="wxQuake"  title="USGS 记录到的真实地震：按当前城市算距离，最近的排最前">🌋 <b>地震</b></button>
@@ -428,6 +429,9 @@
         <li><b>中国天气网</b> <code>weather.com.cn</code> —— 城市代码、15/40 日预报、天气日历</li>
         <li><b>Open-Meteo</b>（国外的免费源）—— 逐小时、历史日K、空气质量</li>
         <li><b>美国 USGS</b> —— 地震；<b>美国 NOAA SWPC</b> —— 空间天气（极光）</li>
+        <!-- 海陆温模块的海洋那一半来自 NASA，必须跟气象局那几张图分开写清楚：
+             数据挂错来源跟"自行更改预报内容"是同一类问题。 -->
+        <li><b>美国 NASA GIBS</b> —— 海表温度与海温距平（「🌡 海陆温」里的海洋那一档；陆地那一档仍是中央气象台的全国气温实况图）</li>
         <li><b>离线打包</b> —— 行政区划底图来自阿里 DataV，随站点一起下载，不联网查</li>
       </ul>
 
@@ -569,6 +573,20 @@
   </div>
 </div>
 
+<!-- 海陆温：陆地气温实况（中央气象台，逐时，中国区域）
+     + 海表温度 / 温度距平（NASA GIBS GHRSST MUR，逐日，东亚与西太平洋）
+     两块共用这一个抽屉，靠段按钮切；数据来源的差别见 web/js/weather.js 里的长注释。 -->
+<div class="drawer wx-drawer" id="wxSeaLandTemp" hidden>
+  <div class="drawer-panel wx-panel">
+    <div class="drawer-head">
+      <strong>🌡 海陆温</strong>
+      <span class="wx-sub" id="wxSeaLandTempSub"></span>
+      <button class="mini" data-close>✕</button>
+    </div>
+    <div class="drawer-body wx-body" id="wxSeaLandTempBody"></div>
+  </div>
+</div>
+
 <!-- 台风路径 -->
 <div class="drawer wx-drawer" id="wxTy" hidden>
   <div class="drawer-panel wx-panel wx-panel-wide">
@@ -667,9 +685,9 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(loca
 <script src="js/indicators.js?v=1677e654"></script>
 <script src="js/api.js?v=b248515e"></script>
 <script src="js/chart.js?v=a022e87e"></script>
-<script src="js/weather.js?v=cbd8d98f"></script>
+<script src="js/weather.js?v=d3f5873d"></script>
 <script src="js/astro.js?v=4c3c6385"></script>
-<script src="js/wxui.js?v=18f39598"></script>
+<script src="js/wxui.js?v=8a19284d"></script>
 <script src="js/app.js?v=7bec7211"></script>
 <script src="js/game.js?v=3f1686fa"></script>
 </body>

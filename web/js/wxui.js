@@ -643,6 +643,64 @@
       });
     },
 
+    /* ── 海陆温：陆地气温实况（中央气象台逐时）+ 海表温度（NASA GIBS）──
+       使用者 m00882 提的「陆地温度图 / 海洋温度图」。两栏共用这一个抽屉，
+       靠上面那排段按钮切换，跟卫星云图（真彩 / 红外）是同一个用法。
+       两个来源的差别、以及"为什么海温不用气象局的"写在 weather.js 里
+       `landTempUrl` / `SEA_LAYERS` 上方那段长注释里。 */
+    _slKind: 'land',
+    _slLayer: 'sst',
+    async openSeaLandTemp(kind, layer) {
+      kind = kind || this._slKind || 'land';
+      this._slKind = kind;
+      const body = $('#wxSeaLandTempBody'), sub = $('#wxSeaLandTempSub');
+      if (!body) return;
+      const sea = kind === 'sea';
+      const segs = [{
+        regions: [['land', '陆地温度'], ['sea', '海洋温度']], region: kind, act: 'kind'
+      }];
+      const opt = { segs: segs, onSeg: (a, reg) => WXUI.openSeaLandTemp(reg) };
+
+      if (!sea) {
+        body.innerHTML = '<div class="wx-load">正在探测最近的气温实况图…</div>';
+        let frames;
+        try {
+          frames = await W.probeLandTemp(12, (got) => {
+            if (sub) sub.textContent = '已找到 ' + got + ' 张';
+          });
+        } catch (e) {
+          body.innerHTML = '<div class="wx-load">气温实况图获取失败：' + esc(e.message) + '</div>';
+          return;
+        }
+        if (!frames.length) { body.innerHTML = '<div class="wx-load">暂时取不到气温实况图</div>'; return; }
+        renderPlayer(body, sub, frames, '陆地气温实况 · 中央气象台 · 全国（逐时）', opt);
+        return;
+      }
+
+      const layers = W.SEA_LAYERS || [];
+      const cur = layers.filter(l => l.k === (layer || this._slLayer))[0] || layers[0];
+      if (!cur) { body.innerHTML = '<div class="wx-load">没有配置海温图层</div>'; return; }
+      this._slLayer = cur.k;
+      opt.segs = segs.concat([{ regions: layers.map(l => [l.k, l.n]), region: cur.k, act: 'layer' }]);
+      opt.note = cur.note;                       // 页脚必须写 NASA，不能写气象局
+      opt.onSeg = (a, reg) => {
+        if (a === 'kind') WXUI.openSeaLandTemp(reg);
+        else WXUI.openSeaLandTemp('sea', reg);
+      };
+      body.innerHTML = '<div class="wx-load">正在探测最近的海表温度图…</div>';
+      let frames;
+      try {
+        frames = await W.probeSeaTemp(8, (got) => {
+          if (sub) sub.textContent = '已找到 ' + got + ' 张';
+        }, cur.layer);
+      } catch (e) {
+        body.innerHTML = '<div class="wx-load">海表温度图获取失败：' + esc(e.message) + '</div>';
+        return;
+      }
+      if (!frames.length) { body.innerHTML = '<div class="wx-load">暂时取不到海表温度图</div>'; return; }
+      renderPlayer(body, sub, frames, '海洋温度 · ' + cur.n + ' · 东亚与西太平洋（逐日）', opt);
+    },
+
     /* ── 台风 ── */
     _ty: null,
     async openTyphoon() {
@@ -998,6 +1056,7 @@
       if (id === 'wxRadar') this.openRadar();
       if (id === 'wxSat') this.openSat(this._satKind);
       if (id === 'wxPrecip') this.openPrecip(this._precipKind);
+      if (id === 'wxSeaLandTemp') this.openSeaLandTemp(this._slKind, this._slLayer);
       if (id === 'wxTy') this.openTyphoon();
       if (id === 'wxWarn') this.openWarn();
       if (id === 'wxQuake') this.openQuake();
@@ -1577,11 +1636,16 @@
           // 在 .wx-segs 右边、播放键左边，正好挨着第一行「📡 当前位置」那颗按钮）
           (opt.tools || '') +
           '<span class="wx-pt"></span>' +
-          '<button class="wx-btn" data-act="play">▶ 播放</button>' +
+          // 只有一帧时不放播放键（海温图退化成"最新一张"时就是这种情况，按钮点了也没意义）
+          (frames.length < 2 ? '' : '<button class="wx-btn" data-act="play">▶ 播放</button>') +
         '</div>' +
         '<div class="wx-stage"><img alt="' + esc(title) + '" /></div>' +
-        '<input type="range" class="wx-range" min="0" max="' + (frames.length - 1) + '" value="0" />' +
-        '<div class="wx-pfoot"><span class="wx-pidx"></span><span class="wx-pnote">数据来源：中国气象局 · image.nmc.cn</span></div>' +
+        '<input type="range" class="wx-range" min="0" max="' + (frames.length - 1) + '" value="0"' +
+          (frames.length < 2 ? ' hidden' : '') + ' />' +
+        // opt.note：来源说明。默认是气象局那几张图；海温那张来自 NASA GIBS，
+        // 必须由调用方改掉 —— 把别人的数据挂在中国气象局名下是错的。
+        '<div class="wx-pfoot"><span class="wx-pidx"></span><span class="wx-pnote">' +
+          esc(opt.note || '数据来源：中国气象局 · image.nmc.cn') + '</span></div>' +
       '</div>';
 
     const img = body.querySelector('.wx-stage img');
@@ -1612,11 +1676,11 @@
     rng.addEventListener('input', e => show(+e.target.value));
 
     let timer = null;
-    const btn = body.querySelector('[data-act="play"]');
+    const btn = body.querySelector('[data-act="play"]');      // 只有一帧时没有这个按钮
     /** 停掉自动播放。调用方自己重画了某一行之后，要在它的点击处理里先调这个，
      *  否则切城市时那个 420ms 的定时器会挂在已经脱离文档的旧节点上继续空转。 */
-    function stopPlay() { if (timer) { clearInterval(timer); timer = null; btn.textContent = '▶ 播放'; } }
-    btn.addEventListener('click', () => {
+    function stopPlay() { if (timer) { clearInterval(timer); timer = null; if (btn) btn.textContent = '▶ 播放'; } }
+    if (btn) btn.addEventListener('click', () => {
       if (timer) { clearInterval(timer); timer = null; btn.textContent = '▶ 播放'; return; }
       btn.textContent = '⏸ 暂停';
       if (i >= frames.length - 1) show(0);
@@ -1636,7 +1700,7 @@
     // 关闭时把定时器停掉，别在后台空转
     const drawer = body.closest('.wx-drawer');
     const obs = new MutationObserver(() => {
-      if (drawer.hidden && timer) { clearInterval(timer); timer = null; btn.textContent = '▶ 播放'; }
+      if (drawer.hidden && timer) { clearInterval(timer); timer = null; if (btn) btn.textContent = '▶ 播放'; }
     });
     obs.observe(drawer, { attributes: true, attributeFilter: ['hidden'] });
   }
