@@ -98,6 +98,12 @@
   function storeSet(k, v) {
     try { localStorage.setItem(NS + k, JSON.stringify(v)); } catch (e) { /* 隐私模式忽略 */ }
   }
+  /* ⚠ 想"删掉"一个键**必须**用这个，不能用 `storeSet(k, null)` ——
+     后者写进去的是 4 个字符的字符串 `"null"`（一个墓碑），键还在、还占地方、
+     遍历 localStorage 时还会被当成一份有效数据扫出来。 */
+  function storeDel(k) {
+    try { localStorage.removeItem(NS + k); } catch (e) { /* 隐私模式忽略 */ }
+  }
 
   /* ───────── 颜色 ───────── */
   /* 持平色也进了色板：`--flat` 现在是绿色（绿色＝平），不再是写死的中性灰。
@@ -270,7 +276,7 @@
 
   global.U = {
     $, $$, el, pad2, fx, sgn, cls, fmtDate, fmtTime, fmtHM, parseDate, parseISO, weekday,
-    pluck, clamp, sum, avg, last, clone, storeGet, storeSet,
+    pluck, clamp, sum, avg, last, clone, storeGet, storeSet, storeDel,
     UP, DOWN, FLAT, upColor, downColor, flatColor, trendColor, K0, pctOf, diffOf,
     wxIcon, wxShort, wxSeverity, windLevel, sessionLabel, sparkPath,
     toast, debounce, marketPhase, monoCubic

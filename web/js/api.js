@@ -6,7 +6,7 @@
    ═══════════════════════════════════════════════════════════════ */
 (function (global) {
   'use strict';
-  const { storeGet, storeSet, fmtDate, pad2, parseISO } = U;
+  const { storeGet, storeSet, storeDel, fmtDate, pad2, parseISO } = U;
 
   const TZ = 'Asia/Shanghai';
   const CMA = 'https://weather.cma.cn';
@@ -1454,18 +1454,36 @@
    *
    * 存哪儿：localStorage。key 里带**结构版本号**，`out` 的形状一改就把版本 +1，
    * 旧的一律不认 —— 免得读出一份缺字段的旧结构，在渲染里炸出一堆 undefined。
-   * 存多少：只留最近 CX_KEEP 座城市（一份 200~400 KB，localStorage 一共才 5 MB）。
+   * 存多少：见下面 CX_KEEP / CX_BUDGET 那一段（**按字节算**，不按座数拍脑袋）。
    */
-  /* ⚠ CX_KEEP 从 **2 提到 6**：要让**收藏城市互相不挤掉对方**。
-     原来只留 2 座，于是除"上次打开过的那座"以外，收藏里的城市点过去永远是空壳 ——
-     而使用者说得很准：「收藏了城市说明查看会相对没收藏的城市更加频繁」，
-     每次切过去都要重走六路请求，那个卡顿正是这么来的。
-     6 份 × 实测约 200~400 KB ≈ 1.2~2.4 MB（localStorage 一共 5 MB）。
-     配额真不够时，下面 cxSave 里那段 catch 会先把别的清掉再试一次，不会把主流程带崩。 */
-  const CX_VER = 1, CX_KEEP = 6, CX_MAX_AGE = 30 * 86400000;
+  /* ⚠ 这段原来写的是「CX_KEEP 从 2 提到 6」，6 是照着 `DEFAULT_WATCH` 的 6 座定的 ——
+     纯拍脑袋，结果就是使用者报的那句：
+       「收藏城市静默预热最多只支持六座吗？最顶上天气指数这一栏包括当前所在地
+         最多可是能放八座城市呢，再加上收藏页里的城市数量更多」
+     于是 2026-10-08 把两条边界**实测**了一遍（tmp/cap.js / tmp/cap2.js，桌面 Chrome）：
+       · 一份 slim 过的快照 **355 KB**（隔省抽 12 座，339~359 KB，城市之间只差 ±3%）；
+       · localStorage 的真实配额 **5086 KB** —— 是往死里塞、塞到 QuotaExceededError
+         量出来的，不是注释里猜的"5 MB"（它按 UTF-16 码元算，所以就是 500 万字符量级）；
+       · 快照内部：`hourly` 162 KB(46%) + `daily` 154 KB(44%，其中每天那个 `hours`
+         又占 61.5 KB)。`hourly` 是**真的要**（副图月K/周K 靠这 92 天），
+         而 `daily[].hours` 是纯中间产物 —— 已由 cxSlim 扔掉。
+     ⇒ 一份 ≈ **293 KB**，硬上限 = 5086 / 293 ≈ **17 座**。
+       超了会怎样：cxSave 的 catch 会把**所有**别的快照清掉再重试一次，缓存整体塌一次 ——
+       所以宁可自己先淘汰，也不能撞配额。 */
+  const CX_VER = 1, CX_KEEP = 12, CX_MAX_AGE = 30 * 86400000;
   const CX_HOURS = 2800;
+  /** 快照总字节预算：3.6 MB 刚好装 12 座（12 × 293 KB = 3516 KB ≤ 3600），
+   *  剩下约 1.4 MB 留给别的键（实测其它键合计约 460 KB），配额不踩线。
+   *  座数上限（CX_KEEP）只是第二道闸 —— 真正管用的是这个字节数，
+   *  因为"一份多大"是实测出来的，不该被一个魔法常数绑死。 */
+  const CX_BUDGET = 3600 * 1024;
+  const CX_SZ_KEY = 'cx.sz';                 // id -> 那份快照的字节数（见 cxSave 里为什么不现量）
   const cxKey = id => 'cx' + CX_VER + '.' + id;
   const cxIndex = () => storeGet('cx.idx', null) || [];
+  const cxSizes = () => storeGet(CX_SZ_KEY, null) || {};
+  const cxSizeOf = id => {
+    try { const v = localStorage.getItem('tjs.' + cxKey(id)); return v ? v.length : 0; } catch (e) { return 0; }
+  };
 
   /** 派生数据**一律不存**：`indicators` / `week` / `month` 全都能由 `daily` 现算，
    *  而它们加起来 **524 KB**，占了整份快照的 61%（实测：indicators 221 + week 154 + month 149）。
@@ -1476,8 +1494,9 @@
   /** 存之前瘦身：① 扔掉派生数据；② 裁掉逐小时的历史长尾。
    *  为什么要裁逐小时：它是 **560 天 × 24 小时 × 12 条平行数组**，整份 JSON 实测 1622 KB；
    *  localStorage 一共才 5 MB，而 `setItem` 是**同步**的 —— 手机上一次写 1.6 MB 会明显卡一下。
-   *  裁掉安全吗：日K 是**另外单独存的**（`daily` 里每天还自带 `hours` 数组），
-   *  真正会去翻 `hourly` 的只有三处，而且全都只看"最近"：
+   *  裁掉安全吗：日K 是**另外单独存的**（`daily` 里每天自带 `o/h/l/c`，
+   *  那才是画 K 线用的；它内部那个 `hours` 中间产物下面单独扔），
+   *  真正会去翻 `hourly` 的只有三处 —— 外加天气抽屉的副图（月K/周K 靠这 92 天）：
    *    · `renderTape` 从末尾往前数 60 行；
    *    · `hourIndexAt` 找"现在"是哪个时次；
    *    · 天文页取今晚 18:00 → 明晨 06:00 那一窗。
@@ -1496,6 +1515,25 @@
       copy.hourly = slim;
       copy.cxCut = cut;                                  // 记一笔裁了多少，方便排查
     }
+    /* 日K 里那个 `hours`（每天 24 格的逐时数组）也扔掉。
+       它是 `toDailyBars` 的**中间产物**：开盘/收盘两个价已经在建 bar 的时候从它里面取好了
+       （见下面 `b.c = b.hours[h]` / `b.o = b.hours[h]` 那两行），之后**全项目没有第二处读它**
+       —— 2026-10-08 把 `web/js/*.js` 里的 `hours` 全量 grep 了一遍：
+       一共 6 处命中，除"建 bar / 从它取 o、c"这三处，其余是 `S.hours`（分时图的会话标签，
+       app.js 传进去的那个数组）、`cmaCurve.hours`（气象局插值的锚点数）、`getHours()`，
+       跟这个字段没有任何关系。
+       实测它占 **61.5 KB / 355 KB = 17%** —— 而一份快照就是 localStorage 里的硬通货：
+       丢掉它，一份从 355 KB 降到约 293 KB，同样 5 MB 配额能多留 4 座城市。
+       ⚠ 只动**存下去的那一份**（`copy`），内存里的 `out.daily` 原样不动 ——
+         免得哪个我没 grep 到的角落突然拿不到 `hours` 而炸掉。 */
+    if (Array.isArray(out.daily) && out.daily.length) {
+      copy.daily = out.daily.map(b => {
+        if (!b || !b.hours) return b;
+        const c = {};
+        Object.keys(b).forEach(k => { if (k !== 'hours') c[k] = b[k]; });
+        return c;
+      });
+    }
     return copy;
   }
 
@@ -1507,13 +1545,33 @@
     try { storeSet(cxKey(id), rec); }
     catch (e) {
       // 配额爆了：先把别的几份清掉再试一次；还写不进去就放弃 —— 缓存失败绝不能影响主流程
-      try { cxIndex().forEach(o => { if (o !== id) storeSet(cxKey(o), null); }); storeSet(cxKey(id), rec); }
-      catch (e2) { }
+      try {
+        cxIndex().forEach(o => { if (o !== id) storeDel(cxKey(o)); });
+        storeSet(CX_SZ_KEY, {});                         // 字节表跟快照一起塌，别留一堆虚数
+        storeSet(cxKey(id), rec);
+      } catch (e2) { }
     }
+    /* 顺手记一笔「这份多大」，好让下面的淘汰按**字节**走。
+       为什么不现量：真要每次都去读全部 12 份快照（3.5 MB 字符串）只为拿个长度，
+       那是同步 I/O，反而把"省卡顿"这件事办反了；写的时候量一次几乎不要钱。
+       升级上来的老用户这张表是空的 —— 第一次遇到哪座就现量一次，之后一直命中。 */
+    const sz = cxSizes();
+    try { const v = localStorage.getItem('tjs.' + cxKey(id)); sz[id] = v ? v.length : 0; } catch (e) { }
     const idx = cxIndex().filter(x => x !== id);
     idx.unshift(id);
-    idx.slice(CX_KEEP).forEach(old => storeSet(cxKey(old), null));
-    storeSet('cx.idx', idx.slice(0, CX_KEEP));
+    const keep = [], drop = [];
+    let sum = 0;
+    for (let i = 0; i < idx.length; i++) {
+      const k = idx[i];
+      const n = (k === id && sz[id]) ? sz[id] : (sz[k] || (sz[k] = cxSizeOf(k)));
+      /* 第一份**无论如何留着** —— 刚写进去就被自己淘汰掉，等于这一趟白跑。
+         之后两道闸门任过其一即淘汰：座数到顶，或预算不够。淘汰从最旧的那头开始。 */
+      if (keep.length && (keep.length >= CX_KEEP || sum + n > CX_BUDGET)) { drop.push(k); continue; }
+      keep.push(k); sum += n;
+    }
+    drop.forEach(old => { storeDel(cxKey(old)); delete sz[old]; });
+    storeSet(CX_SZ_KEY, sz);
+    storeSet('cx.idx', keep);
   }
 
   /* ── Open-Meteo 当前值的**长期兜底缓存** ─────────────────────────────────
@@ -1697,7 +1755,14 @@
     /** 手写一份快照。正常路径由 loadCity 自己存，这个口子是给探针/排错用的。 */
     saveCity(out) { cxSave(out); },
     /** 手动丢缓存（调试/排错用） */
-    dropCity(city) { if (city && city.id) storeSet(cxKey(city.id), null); },
+    dropCity(city) {
+      if (!city || !city.id) return;
+      storeDel(cxKey(city.id));
+      const sz = cxSizes(); delete sz[city.id]; storeSet(CX_SZ_KEY, sz);
+    },
+    /** 快照最多留几座 —— app.js 的静默预热要跟这个数**对齐**：
+     *  预热得比这里多，多出来的那座下一轮就被挤掉，于是每轮都在重复拉同一批（白烧额度）。 */
+    snapshotKeep: CX_KEEP,
 
     /** 一次性拉齐某城市的全部分析数据 */
     async loadCity(city, onStep) {

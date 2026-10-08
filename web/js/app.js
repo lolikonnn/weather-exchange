@@ -1573,9 +1573,19 @@
        ② **只在真的过期时才跑**：快照 20 分钟内的直接跳过。
        ③ **省流模式 / 2G 不跑**（`navigator.connection`）：这是锦上添花，
           不该为它花用户的钱。 */
-  const WARM_MAX = 6;               // 一轮最多预热几座（收藏再多也不无限扫）
+  /* 一轮最多预热几座：**跟缓存能留下几座对齐**（`API.Store.snapshotKeep`）。
+     不对齐会怎样：预热 12 座、缓存只留 10 座的话，最先预热的那两座下一轮必定已被挤掉，
+     于是每一轮都在重拉同样的两座 —— 白烧额度，一点体验都没换到。
+     为什么这个数是 12 而不是"收藏多少就预热多少"：一份快照约 293 KB、
+     localStorage 配额实测 5086 KB ⇒ **硬上限 17 座**，12 是留了余量的那个数。
+     详见 api.js 里 CX_BUDGET 的注释。 */
+  const WARM_MAX = API.Store.snapshotKeep;
   const WARM_AGE = 20 * 60000;      // 快照比这新就不碰它
-  const WARM_GAP = 800;             // 每座之间歇一下
+  /* 每座之间歇一下。800 → 1200 ms 是跟着 WARM_MAX 一起抬的：
+     `loadCity` 一座要发六路请求，800 ms 一座 × 12 座 ≈ 7.5 请求/秒 = 450 次/分钟，
+     已经贴到 Open-Meteo 的 600 次/分钟上限（还得跟行情轮询分着用）；
+     1200 ms 降到 300 次/分钟。12 座一轮 ≈ 15 秒 —— 反正是后台的事。 */
+  const WARM_GAP = 1200;
   let warmBusy = false;
 
   function netCheap() {
