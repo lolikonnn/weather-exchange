@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#12141a">
 <title>天气战士 · 老实看天气预报，很枯燥吧？</title>
 <meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、降水/风/云量/空气，还有雷达回波、卫星云图、降水预报、台风路径、预警信号。老实看天气预报，很枯燥吧？">
-<link rel="stylesheet" href="css/app.css?v=d6e3c3dd">
+<link rel="stylesheet" href="css/app.css?v=4ec48a03">
 <link rel="stylesheet" href="css/game.css?v=e6133eb6">
 <link rel="icon" type="image/png" href="img/logo-32.png?v=189dcbb4">
 </head>
@@ -75,7 +75,7 @@
   <button class="wxbtn" data-wx="wxSeaLandTemp" title="陆地：中央气象台全国气温实况图（逐时，带色标图例）。海洋：NASA GHRSST 海表温度与温度距平（逐日，东亚与西太平洋）">🌡 <b>海陆温</b></button>
   <button class="wxbtn" data-wx="wxTy"     title="台风和热带气旋的实况路径与预报路径">🌀 <b>台风路径</b></button>
   <button class="wxbtn" data-wx="wxWarn"   title="全国正在生效的气象预警信号">⚠ <b>预警信号</b></button>
-  <button class="wxbtn" data-wx="wxQuake"  title="真实地震：中国地震台网（CENC，经 Wolfx 转发）+ USGS 两路合并，按当前城市算距离，最近的排最前，逐条标明来源">🌋 <b>地震</b></button>
+  <button class="wxbtn" data-wx="wxQuake"  title="真实地震：中国地震台网 + 日本气象厅 + 美国 USGS 三路目录合并（逐条标明来源），外加六条地震预警（EEW）流；按当前城市算距离，最近的排最前">🌋 <b>地震</b></button>
   <button class="wxbtn" data-wx="wxAstro"  title="天文爱好者那几样：观星指数、极光地磁、日月出没、流星雨日历">🔭 <b>天文</b></button>
   <span class="wx-bar-hint" id="wxHint"></span>
 </div>
@@ -428,9 +428,14 @@
           雷达拼图 <code>image.nmc.cn</code>；台风路径与预警信号 <code>typhoon.nmc.cn</code></li>
         <li><b>中国天气网</b> <code>weather.com.cn</code> —— 城市代码、15/40 日预报、天气日历</li>
         <li><b>Open-Meteo</b>（国外的免费源）—— 逐小时、历史日K、空气质量</li>
-        <li><b>中国地震台网（CENC）</b> —— 地震目录，经 <b>Wolfx</b> 的公开接口转发
-          （台网自己的站点不给跨域头，浏览器直连读不到）；<b>美国 USGS</b> —— 地震目录的另一路，
-          补 130 天窗口与全球覆盖。两路合并后逐条标明来源</li>
+        <li><b>中国地震台网（CENC）</b> · <b>日本气象厅（JMA）</b> · <b>美国 USGS</b> —— 「🌋 地震」的
+          目录，三路合并、逐条标明来源。前两路经 <b>Wolfx</b>（<code>bs.wolfx.jp</code>）的公开接口转发
+          —— 台网自己的站点响应 200 却不给跨域头，浏览器直连读不到，而 Wolfx 那份带
+          <code>Access-Control-Allow-Origin: *</code>；USGS 那一路补 130 天窗口与全球覆盖</li>
+        <li><b>日本气象厅 · 中国地震台网 · 四川省地震局 · 福建省地震局 · 重庆市地震局 · 台湾气象署</b>
+          —— 「🌋 地震」里的<b>地震预警（EEW / 紧急地震速报）</b>，同样经 Wolfx 转发。
+          这几条是各机构的**最新一次发布**、不代表此刻正在发生，所以界面上会写明"多久之前"，
+          只有 30 分钟以内的才按告警显示</li>
         <li><b>美国 NOAA SWPC</b> —— 空间天气（极光）</li>
         <!-- 海陆温模块的海洋那一半来自 NASA，必须跟气象局那几张图分开写清楚：
              数据挂错来源跟"自行更改预报内容"是同一类问题。 -->
@@ -686,11 +691,11 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(loca
 <script src="vendor/echarts.min.js"></script>
 <script src="js/util.js?v=40b630a5"></script>
 <script src="js/indicators.js?v=1677e654"></script>
-<script src="js/api.js?v=58b6fbc5"></script>
+<script src="js/api.js?v=093bcb58"></script>
 <script src="js/chart.js?v=a022e87e"></script>
 <script src="js/weather.js?v=d3f5873d"></script>
 <script src="js/astro.js?v=4c3c6385"></script>
-<script src="js/wxui.js?v=4102ebd9"></script>
+<script src="js/wxui.js?v=56ef9431"></script>
 <script src="js/app.js?v=7bec7211"></script>
 <script src="js/game.js?v=3f1686fa"></script>
 </body>

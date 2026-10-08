@@ -477,30 +477,48 @@
   };
 
   /* ═══════════════ 3. Open-Meteo 历史逐小时（K 线引擎） ═══════════════ */
-  /* ═══════════════ 地震目录：中国地震台网（经 Wolfx 转发）+ USGS ═══════════════
-     使用者 m01130 建议把地震数据源换成 <https://bs.wolfx.jp/>。查证后**采纳，但不是替换，是合并**：
+  /* ═══════════════ 地震：三路目录 + 六路预警（都经 Wolfx / USGS）═══════════════
+     使用者 m01130 建议把地震数据源换成 <https://bs.wolfx.jp/>。
+     ⚠ **接口清单在 `https://wolfx.jp/docs/open-api`**（v20260907）——
+       `https://api.wolfx.jp/` 只是一个 meta-refresh 跳转页（原始 HTML 只有 616 B），
+       第一轮就是没找到这份文档、只用了 `cenc_eqlist.json` 一条就以为做完了。
+     文档里的 HTTP 端点一共 12 个，跟地震有关的是这些：
 
-     ① **Wolfx 的 `api.wolfx.jp/cenc_eqlist.json` 转发的就是中国地震台网 CENC 的目录**，
-        而且带 `Access-Control-Allow-Origin: *`。这正好补上项目当初的一个缺口 ——
-        旧注释里写着「不用中国地震台网，是因为 `www.ceic.ac.cn` 响应 200 但**不带 CORS 头**」，
-        浏览器直连读不到。实测字段：`time`（北京时，形如 `2026-10-07 18:56:00`）、`magnitude`、
-        `depth`、`latitude`/`longitude`、`placeName`（**中文地名**）、`intensity`（烈度）、
-        `EventID`、`type`（实测恒为 `reviewed`）。**好处是两条**：中文地名（USGS 给的是
-        "X km NNW of Y, China"）＋ 中国境内的小震（CENC 从 M2.0 起报，USGS 常缺）。
-     ② **但它只有最近 50 条**（实测跨度 **2026-09-18 → 2026-10-07 ≈ 19 天**，键 `No1..No50`，
-        另外混着一个 `md5` 元数据键、**值不是 dict 必须跳过** —— 第一次解析就是栽在它上面）。
-        而这一页的口径是**最近 130 天 / 半径 700 公里**：实测以北京为圆心 700 km / 130 天 /
-        M≥3.0，CENC 那份只有 **1 条**。所以 USGS 那一路**必须保留**（它支持
-        `starttime`/`maxradiuskm` 服务端筛，能覆盖整段窗口，还带全球覆盖）。
-     ③ 合并策略：两边各自按「半径 + 天数 + M≥3.0」筛完再并起来，**同一场地震去重**
-        （判据：时刻相差 ≤ 10 分钟且距离 ≤ 100 km），**去重时保留 CENC 那条**
-        （中文地名、自家机构）。`src` 字段标明来源，界面照实显示。
-     ④ 震级下限维持 **M3.0 不变**：游戏里 `QUAKE_M0 = 3.0` 是标定过的压力源口径
+       `cenc_eqlist.json`  中国地震台网 地震情报（最近 50 条）
+       `jma_eqlist.json`   気象庁 地震情報（最近 50 条，多一个 `info` = 津波情报）
+       `jma_eew.json`      日本气象厅 緊急地震速報（字段最全）
+       `cenc_eew.json`     中国地震台网 地震速报
+       `sc_eew.json`       四川省地震局 地震速报
+       `fj_eew.json`       福建省地震局 地震速报
+       `cq_eew.json`       重庆市地震局 地震速报
+     另有 `cwa_eew.json`（台湾气象署）**不在文档里但实测 200 可用**，一并取；
+     以及 7 条 WebSocket 推送（`wss://ws-api.wolfx.jp/...`，本项目未用）。
+     其它端点与本模块无关：`weather_rank.json`(气象实况排行)、`ntp.json`(服务器时刻)、
+     `ip`(公网 IP)、`img`(随机图)、`geoip`(**已 404 失效**)。
+
+     ① **CENC 那一路**带来中文地名（`placeName`，如"四川宜宾市高县"）与中国境内的小震
+        （CENC 从 M2.0 起报，USGS 常缺），而且 Wolfx 给的数据带
+        `Access-Control-Allow-Origin: *` —— 这正好补上项目当初的一个缺口：旧注释里写着
+        「不用中国地震台网，是因为 `www.ceic.ac.cn` 响应 200 但**不带 CORS 头**」。
+     ② **JMA 那一路**同样带中文地名（"福島県沖"），但用**日本震度**（JMA 标准）；
+        CENC 用的是**中国烈度**（CSIS 标准）—— 两个词在界面上不能混。
+     ③ **但它俩都只有最近 50 条**（实测跨度约 19 天），而这一页的口径是
+        **最近 130 天 / 半径 700 公里**（以北京为圆心实测只有 1 条）⇒ USGS 那一路必须保留：
+        它支持 `starttime`/`maxradiuskm` 服务端筛，补长窗口与全球覆盖。
+     ④ 合并优先级 **CENC > JMA > USGS**（先到的胜），同一场地震判据
+        `|Δt| ≤ 10 分钟 且 距离 ≤ 100 km`。`src` 字段标明来源，界面逐条显示。
+     ⑤ 震级下限维持 **M3.0 不变**：游戏里 `QUAKE_M0 = 3.0` 是标定过的压力源口径
         （`web/js/game.js:327`），把 2.x 放进来会动那套已经调好的参数。
 
-     另一个坑：CENC 的 `time` 是**北京时且不带时区标记**，`new Date('2026-10-07 18:56:00')`
-     跨引擎解析不一致（Safari 直接 Invalid Date）。所以这里手工拆字段构造本地时间，
-     跟 `cmaStamp()` 同一个理由。 */
+     ⚠ **时区有两套，别当成一套**：文档明写 CENC 是 **UTC+8**、JMA 是 **UTC+9**；
+     `cenc_eqlist` 的 `time` 形如 `2026-10-07 18:56:00`、`jma_eqlist` 的 `time_full`
+     形如 `2026/10/08 13:30:00`（斜杠）。两者都**不带时区标记**，
+     `new Date('2026-10-07 18:56:00')` 跨引擎不一致（Safari 直接 Invalid Date），
+     所以统一走 `qkStamp(串, tz)` 手工拆字段，再按 `8 - tz` 小时折算。
+     （这个"北京时"的结论最早是用境外大震去对 USGS 的分钟数得出的，文档正好印证。）
+
+     ⚠ **两个 JSON 的顶层都混着一个 `md5` 键，值不是 dict**，遍历时必须先判类型。 */
+
   const QUAKE_MIN_MAG = 3.0;
 
   /** 两点大圆距离（km）。api.js 里自己留一份 —— 之前这个函数只在 wxui.js/app.js 里有，
@@ -513,6 +531,28 @@
     return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
   }
 
+  /** 把「不带时区的墙钟串」按**它自己那个时区**读成时刻。
+   *  两种格式都吃：`2026-10-07 10:00:11`（CENC / 各省局，北京时）与
+   *  `2026/10/08 13:41:55`（JMA，日本时）。
+   *  `new Date(y,m,d,H,M,S)` 得到的是"把这串当本机时区"的时刻；本应用按中国用户当 UTC+8，
+   *  所以源时刻若记在 UTC+tz，就要整体挪 `8 - tz` 小时。
+   *  ⚠ 这也是为什么不能直接把 JMA 的串丢给 `new Date` —— 它比北京时间**早 1 小时**，
+   *    不挪的话每次日本地震都会显示成晚一小时。 */
+  function qkStamp(s, tz) {
+    const m = /^(\d{4})[-\/](\d{2})[-\/](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(s || ''));
+    if (!m) return NaN;
+    const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime();
+    return t + (8 - (tz == null ? 8 : tz)) * 3600000;
+  }
+  /** 数值字段容错：这些流里同一个含义会以数字或字符串出现，还混着拼错的键名。 */
+  function qkNum() {
+    for (let i = 0; i < arguments.length; i++) {
+      const v = parseFloat(arguments[i]);
+      if (isFinite(v)) return v;
+    }
+    return null;
+  }
+
   const Quakes = {
     /** 中国地震台网（经 Wolfx 转发）。返回 null 表示这一路不可用 */
     async cenc() {
@@ -523,14 +563,39 @@
         Object.keys(d || {}).forEach(k => {
           const v = d[k];
           if (!v || typeof v !== 'object') return;            // `md5` 那类元数据键
-          const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(String(v.time || ''));
-          if (!m) return;
-          const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+          const t = qkStamp(v.time, 8);
           const mag = parseFloat(v.magnitude), la = parseFloat(v.latitude), lo = parseFloat(v.longitude);
           if (!isFinite(t) || !isFinite(mag) || !isFinite(la) || !isFinite(lo)) return;
           out.push({ t: t, mag: mag, place: String(v.placeName || v.location || ''),
                      lat: la, lon: lo, depth: parseFloat(v.depth),
-                     intensity: parseFloat(v.intensity), id: String(v.EventID || ''), src: 'cenc' });
+                     intensity: parseFloat(v.intensity), id: String(v.EventID || ''), src: 'cenc',
+                     // 官方文档：`type` 可能是 `automatic`（自动测定、未复核）或 `reviewed`
+                     auto: String(v.type || '') === 'automatic' });
+        });
+        return out;
+      } catch (e) { return null; }
+    },
+
+    /** 気象庁 地震情報（经 Wolfx 转发）—— 日本那一侧的地震目录。
+     *  ⚠ 它的 `time` / `time_full` 是 **UTC+9**（文档明写「地震発生時刻（UTC+9）」），
+     *    与中国那几条流的 UTC+8 **不是一回事**，所以走 `qkStamp(..., 9)`。
+     *  ⚠ `depth` 是**带单位的字符串**（`"30km"`）、`shindo` 是**日本震度**（不是中国烈度），
+     *    界面上必须分开叫，别混成一个词。`info` 是津波情报（多数条目为空串）。 */
+    async jma() {
+      try {
+        const d = await getJSON('https://api.wolfx.jp/jma_eqlist.json',
+          { ttl: 600000, key: 'eqjma|' + Math.floor(Date.now() / 600000) });
+        const out = [];
+        Object.keys(d || {}).forEach(k => {
+          const v = d[k];
+          if (!v || typeof v !== 'object') return;            // 同 CENC，`md5` 混在里面
+          const t = qkStamp(v.time_full || v.time, 9);
+          const mag = parseFloat(v.magnitude), la = parseFloat(v.latitude), lo = parseFloat(v.longitude);
+          if (!isFinite(t) || !isFinite(mag) || !isFinite(la) || !isFinite(lo)) return;
+          out.push({ t: t, mag: mag, place: String(v.location || ''), lat: la, lon: lo,
+                     depth: parseFloat(String(v.depth == null ? '' : v.depth).replace(/[^\d.\-]/g, '')),
+                     shindo: String(v.shindo || ''), tsunami: String(v.info || ''),
+                     id: String(v.EventID || ''), src: 'jma' });
         });
         return out;
       } catch (e) { return null; }
@@ -555,24 +620,77 @@
       }).filter(Boolean);
     },
 
-    /** 合并两路：各自按口径筛 → 并起来 → 同一场地震去重（保留 CENC 那条）→ 时间升序
-     *  返回 [{ t: epoch_ms, mag, place, lat, lon, depth, src, intensity? }] */
+    /** 合并三路：各自按口径筛 → 并起来 → 同一场地震去重（保留先到的那条）→ 时间升序
+     *  优先级 **CENC > JMA > USGS** —— CENC 有中文地名与中国境内小震，JMA 有日本那一侧的
+     *  中文地名（「福島県沖」这种），USGS 补长窗口与全球覆盖。
+     *  返回 [{ t: epoch_ms, mag, place, lat, lon, depth, src, intensity?/shindo?/tsunami? }] */
     async quakes(lat, lon, radiusKm, days) {
       const R = radiusKm || 700, D = days || 130;
-      const pair = await Promise.all([
+      const tri = await Promise.all([
         this.cenc().catch(() => null),
+        this.jma().catch(() => null),
         this.usgs(lat, lon, R, D).catch(() => [])
       ]);
-      const cencAll = pair[0], usgs = pair[1] || [];
       const recent = q => isFinite(q.t) && (Date.now() - q.t) <= D * 86400000 && q.mag >= QUAKE_MIN_MAG;
       const within = q => isFinite(q.lat) && isFinite(q.lon) && qkKm(lat, lon, q.lat, q.lon) <= R;
-      const out = (cencAll || []).filter(q => recent(q) && within(q));   // CENC 只能自己筛
-      usgs.forEach(u => {
-        const dup = out.some(c => Math.abs(c.t - u.t) <= 600000 &&
-          qkKm(c.lat, c.lon, u.lat, u.lon) <= 100);
-        if (!dup) out.push(u);
-      });
+      const out = [];
+      const add = q => {
+        const dup = out.some(c => Math.abs(c.t - q.t) <= 600000 &&
+          qkKm(c.lat, c.lon, q.lat, q.lon) <= 100);
+        if (!dup) out.push(q);
+      };
+      (tri[0] || []).filter(q => recent(q) && within(q)).forEach(add);   // CENC 只能自己筛
+      (tri[1] || []).filter(q => recent(q) && within(q)).forEach(add);   // JMA 同上
+      (tri[2] || []).forEach(add);                                       // USGS 已服务端筛过
       out.sort((a, b) => a.t - b.t);
+      return out;
+    },
+
+    /** 地震预警 / 紧急地震速报（EEW）—— **Wolfx 的主打功能，六条流**。
+     *  日本气象厅 / 中国地震台网 / 四川省地震局 / 福建省地震局 / 重庆市地震局 / 台湾气象署。
+     *  （`cwa_eew.json` 在公开文档里没列，但实测 200 可用，一并取。）
+     *
+     *  ⚠ **这六条给的是"该机构最后一次发布"，不代表刚刚发生**：
+     *    实测 `fj_eew` 停在 `2026-09-15`、`cq_eew` 停在 `2026-09-26`、`cwa_eew` 停在 `2026-10-06`。
+     *    所以界面**必须**把"多久之前"算出来写在旁边，绝不能一打开就当成正在发生的预警。
+     *  ⚠ 字段各家不一致：`Magnitude` 与拼错的 `Magunitude` 并存（文档说后者 deprecated
+     *    但值相同，实测两份都有）；序号在 JMA 叫 `Serial`、其余叫 `ReportNum`；
+     *    `MaxIntensity` 有时是数字（`5.6`）有时是字符串（`"3"`）；`fj_eew` 干脆没有 Depth。
+     *    `WarnArea[]`（各地震度与**到达时刻**）实测多为空数组，非空时才显示。 */
+    async eew() {
+      const FEEDS = [
+        { k: 'jma_eew', n: '日本气象厅', o: 'JMA', tz: 9 },
+        { k: 'cenc_eew', n: '中国地震台网', o: 'CENC', tz: 8 },
+        { k: 'sc_eew', n: '四川省地震局', o: 'SC', tz: 8 },
+        { k: 'fj_eew', n: '福建省地震局', o: 'FJ', tz: 8 },
+        { k: 'cq_eew', n: '重庆市地震局', o: 'CQ', tz: 8 },
+        { k: 'cwa_eew', n: '台湾气象署', o: 'CWA', tz: 8 }
+      ];
+      const rs = await Promise.all(FEEDS.map(f =>
+        getJSON('https://api.wolfx.jp/' + f.k + '.json',
+          { ttl: 60000, key: 'eew|' + f.k + '|' + Math.floor(Date.now() / 60000) })
+          .catch(() => null)));
+      const out = [];
+      rs.forEach((v, i) => {
+        const f = FEEDS[i];
+        if (!v || typeof v !== 'object') return;
+        const t = qkStamp(v.OriginTime, f.tz);
+        if (!isFinite(t)) return;
+        out.push({
+          src: f.o, name: f.n, t: t,
+          reportT: qkStamp(v.ReportTime || v.AnnouncedTime, f.tz),
+          serial: qkNum(v.Serial, v.ReportNum),
+          mag: qkNum(v.Magnitude, v.Magunitude),
+          depth: qkNum(v.Depth), lat: qkNum(v.Latitude), lon: qkNum(v.Longitude),
+          place: String(v.HypoCenter || v.Hypocenter || ''),
+          maxInt: (v.MaxIntensity == null ? '' : String(v.MaxIntensity)),
+          title: String(v.Title || ''),
+          isWarn: !!v.isWarn, isFinal: !!v.isFinal, isCancel: !!v.isCancel,
+          isTraining: !!v.isTraining,
+          areas: Array.isArray(v.WarnArea) ? v.WarnArea : []
+        });
+      });
+      out.sort((a, b) => b.t - a.t);       // 新的在前，界面直接取 [0]
       return out;
     }
   };

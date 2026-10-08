@@ -911,9 +911,14 @@ body{
 .wx-qk-place{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wx-qk-d{flex:none;color:var(--accent);font-size:11.5px;font-family:var(--mono)}
 .wx-qk-meta{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono)}
-/* 逐条来源标签（中国地震台网 / USGS）。合并两路之后每一行都得说清是谁报的，
+/* 逐条来源标签（中国地震台网 / 日本气象厅 / USGS）。合并三路之后每一行都得说清是谁报的，
    压暗一档让它退到时间/深度后面去。 */
 .wx-qk-src{color:var(--dim2)}
+/* CENC 的 `type: automatic` = 自动测定、还没人工复核。这个区别有意义（自动测定会改），
+   但也不能抢戏，所以给它一个安静的小标签而不是告警色。 */
+.wx-qk-auto{color:var(--accent)}
+/* 津波情报（只出现在日本气象厅的目录里，多数条目没有）。 */
+.wx-qk-tsu{color:var(--accent);font-size:11px;margin-top:3px;line-height:1.5}
 /* 列表底部的来源署名。**必须留在界面上**：Wolfx 的《使用许可》要求
    「在第三方引用本站内容请注明内容来自本站」，藏在免责声明弹窗里不算数。
    flex:none + 独立边框，所以列表自己滚的时候它始终停在底部。 */
@@ -922,6 +927,29 @@ body{
   color:var(--dim);font-size:11px;line-height:1.6;
 }
 .wx-qk-foot b{color:var(--txt-hi)}
+
+/* ───────────────── 地震预警（EEW）─────────────────
+   放在列表**上方**、`flex:none`，所以列表怎么滚它都停在最上面 —— 预警是这一页里
+   唯一"时间敏感"的东西，不能让它被滚走。
+   ⚠ 默认是灰底（`.wx-eew`）：那六条流给的是"该机构最后一次发布"，可能是三天前的。
+   只有发震在 **30 分钟内**才加 `.hot` 变成告警红 —— 否则一进页面就会看到一条
+   三天前的"预警"在闪，那比不显示更糟。 */
+.wx-eew{
+  flex:none;border:1px solid var(--line);border-left:3px solid var(--dim);
+  border-radius:3px;padding:8px 10px;margin-bottom:8px;background:var(--panel2);
+}
+.wx-eew.hot{border-left-color:#e74c3c;background:rgba(231,76,60,.10)}
+.wx-eew-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.wx-eew-t{font-size:12px;font-weight:700;color:var(--dim)}
+.wx-eew.hot .wx-eew-t{color:#e74c3c}
+.wx-eew-src{font-size:11px;color:var(--txt-hi)}
+.wx-eew-ago{margin-left:auto;font-size:11px;color:var(--dim2);font-family:var(--mono)}
+.wx-eew-b{font-size:13px;color:var(--txt-hi);font-weight:600;line-height:1.45}
+.wx-eew-b b{font-family:var(--mono);color:var(--accent)}
+.wx-eew.hot .wx-eew-b b{color:#e74c3c}
+.wx-eew-m{margin-top:3px;font-size:11px;color:var(--dim);font-family:var(--mono);line-height:1.5}
+.wx-eew-a{margin-top:3px;font-size:11px;color:var(--txt-hi);line-height:1.5}
+.wx-eew-f{margin-top:4px;font-size:10.5px;color:var(--dim2);line-height:1.5}
 
 /* ───────────────── 天文 ─────────────────
    跟 .wx-warn/.wx-quake 一样是长内容：父级 .wx-body 是 overflow:hidden 的
