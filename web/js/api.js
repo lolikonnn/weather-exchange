@@ -695,6 +695,30 @@
     }
   };
 
+  /* ═══════════════ 光污染（站点常量）═══════════════
+     数据是**离线烘好**的 `web/data/lp.json`（352 城，35,867 B）——
+     它由 `tmp/lp_bake2.py` 从 David Lorenz 的 Light Pollution Atlas 2025 上按
+     每城 5×5 像素窗口中位档取色生成（原图 3.2 MB，运行时不可能现取）。
+     所以这一项**同源、零跨域、零额外请求**，跟 `data/radar-cities.json` 一个待遇。
+
+     ⚠ 它不是 Bortle 等级 —— 作者明确要求不要混为一谈（详见 astro.js 里那段注释）。 */
+  const LP = {
+    _d: null,
+    _p: null,
+    async load() {
+      if (this._p) return this._p;
+      this._p = getJSON('data/lp.json', { ttl: 86400000, key: 'lp' })
+        .then(d => { this._d = (d && d.cities) || {}; return this._d; })
+        .catch(() => { this._p = null; return {}; });     // 失败了允许下次再试
+      return this._p;
+    },
+    /** 取某城的光污染档（`{z, lpiLo, lpiHi, magLo, magHi, zMin, zMax}`），没有就 null */
+    async of(cityId) {
+      const m = await this.load();
+      return m[String(cityId)] || null;
+    }
+  };
+
   const OpenMeteo = {
     /** 历史逐小时；返回 {time:[], temp:[], precip:[]}
      *
@@ -2006,5 +2030,5 @@
   };
 
   global.U = U;
-  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, Quakes, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num, overlayCma };
+  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, Quakes, LP, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num, overlayCma };
 })(window);

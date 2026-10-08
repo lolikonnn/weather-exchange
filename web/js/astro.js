@@ -599,6 +599,164 @@
     };
   }
 
+  /* ═══════════════ 光污染（站点常量，不进时间序列）═══════════════
+   *  数据来源：**David Lorenz 的 Light Pollution Atlas 2025**（2025 版，由 VIIRS 年度
+   *  夜间灯光经大气传输模型推算的天顶人工亮度）。离线烘成 `web/data/lp.json`，
+   *  运行时只查表、**零网络请求**；每城取的是 **5×5 像素（≈4.6 km）窗口的中位档**
+   *  （图集是 1/120° 的量化分档栅格，单像素会跳变 —— 实测相邻 12 km 的两点能差 3 档）。
+   *
+   *  ⚠ **这不是 Bortle 等级。** 作者 David Lorenz 明确要求过：
+   *    "I ask that you do not conflate the Bortle Scale with my maps."
+   *    他的图是**天顶人工亮度的模拟值**；Bortle 是肉眼主观评级、看的是整片天。
+   *    所以这个模块里**不许出现"波特尔"三个字**，只能说"光污染等级 / 天顶亮度"。
+   *
+   *  数值口径（来自 https://djlorenz.github.io/astronomy/lp/colors.html）：
+   *    Zone 号每 +1 = 人工光污染 ×3，a/b 子档各 ×1.73；LPI = 人工亮度/自然亮度，
+   *    LPI=1 正好是 3b/4a 的分界，城市常 >30；自然天光基准 **22.0 mag/arcsec²**。
+   */
+  const LP_ORDER = ['0', '1a', '1b', '2a', '2b', '3a', '3b', '4a', '4b',
+    '5a', '5b', '6a', '6b', '7a', '7b'];
+
+  /** 档位 → 人话。
+   *  `cap` 是**这个站点理论上限**：光污染是站点属性，天空再晴也冲不破它。
+   *  用天顶亮度线性映射到 0～100（17.5 等 = 谷底、22.0 等 = 满分），
+   *  下限压到 8 分而不是 0 —— "灯下也能看见月亮和木星"是事实，给 0 反而是错的。 */
+  function lpInfo(v) {
+    if (!v || !v.z) return null;
+    const magLo = v.magLo == null ? 22 : v.magLo;
+    const magHi = v.magHi == null ? magLo : v.magHi;
+    const cap = Math.round(Math.max(8, Math.min(100, (magLo - 17.5) / 4.5 * 100)));
+    const lpi = v.lpiLo == null ? 0 : v.lpiLo;
+    const lpiTxt = v.lpiHi == null ? ('>' + v.lpiLo) : (lpi < 1 ? v.lpiLo + '～' + v.lpiHi : Math.round((v.lpiLo + v.lpiHi) / 2) + '');
+    const desc =
+      magLo >= 21.5 ? '银河结构清晰，极限星等 6.5 上下' :
+        magLo >= 20.9 ? '银河清楚可见，深空目标好找' :
+          magLo >= 20.4 ? '银河看得出轮廓，但已发灰' :
+            magLo >= 19.9 ? '银河只剩淡淡一条，散星还清楚' :
+              magLo >= 19.4 ? '银河基本看不见，亮星仍醒目' :
+                magLo >= 18.9 ? '只有十几颗亮星，天空底色发橙' :
+                  '只剩月亮和几颗最亮的星，天空泛白';
+    const color =
+      magLo >= 21.4 ? '#2e9be6' : magLo >= 20.4 ? '#2ecc71' :
+        magLo >= 19.4 ? '#f0c419' : magLo >= 18.4 ? '#e67e22' : '#e74c3c';
+    return {
+      z: v.z, cap: cap, color: color, magLo: magLo, magHi: magHi, lpiTxt: lpiTxt,
+      label: v.z + ' 级',
+      /** 「3a · 天顶 21.7 等/平方角秒 · 人工光约 0.4 倍自然光」 */
+      brief: v.z + ' 级 · 天顶 ' + magLo.toFixed(2) + ' 等/平方角秒' +
+        (lpi >= 1 ? ' · 人工光约为自然光的 ' + lpiTxt + ' 倍' : ' · 人工光还少于自然光'),
+      desc: desc
+    };
+  }
+
+  /** 把站点光污染并进观星评分：**封顶**，不参与逐小时加减。
+   *  理由：云、湿度、月光每小时在变，光污染不会 —— 混进同一套线性扣分里，
+   *  会出现"重污染城市今晚云少所以 62 分"这种自欺欺人的结论。 */
+  function capByLP(sc, info) {
+    if (!sc || !info) return sc;
+    if (sc.score > info.cap) {
+      sc.score = info.cap;
+      sc.capped = Math.min(sc.capped == null ? 100 : sc.capped, info.cap);
+      sc.why = (sc.why || []).concat(['本站光污染 ' + info.z + ' 级，夜空上限就到这里']);
+      sc.label = sc.score >= 80 ? '极佳' : sc.score >= 60 ? '不错' : sc.score >= 40 ? '一般' : sc.score >= 20 ? '较差' : '不宜';
+      sc.color = sc.score >= 80 ? '#2ecc71' : sc.score >= 60 ? '#7ed957' : sc.score >= 40 ? '#f0c419' : sc.score >= 20 ? '#e67e22' : '#e74c3c';
+    }
+    return sc;
+  }
+
+  /* ═══════════════ 朝霞 / 晚霞 / 火烧云（本地启发式）═══════════════
+   *  ⚠ **没有免费开放的霞预报接口**，这是本站自拟的启发式评分，**不是权威预报**。
+   *  界面上必须如实这么写。物理依据（都是常识层面的）：
+   *    · 霞靠**中高云接光**：太少没画布（天空只会由蓝转灰），太多则整片挡掉；
+   *    · **低云挡地平线** —— 太阳得能照到云底，低云一厚就完；
+   *    · **气溶胶（AOD）**：适量（0.1~0.4）让红色更浓，过多（>0.7）把天糊成一片灰黄；
+   *    · **能见度**：霾同样会把颜色洗掉。
+   *  输入全部来自已经取到的数据（分层云量/能见度来自主站 hourly，AOD 来自
+   *  `API.OpenMeteo.astroAir`），所以**不新增任何网络请求**。 */
+  function twilightGlow(o) {
+    o = o || {};
+    const why = [];
+    const tot = o.cloud == null ? null : o.cloud;
+    const L = o.cloudLow == null ? (tot == null ? null : tot) : o.cloudLow;
+    const M = o.cloudMid == null ? (tot == null ? null : tot) : o.cloudMid;
+    const H = o.cloudHigh == null ? (tot == null ? null : tot) : o.cloudHigh;
+    if (L == null && M == null && H == null) {
+      return { score: null, label: '数据不足', color: '#7f8c9a', why: ['这一时段没有逐小时云量'], fire: false };
+    }
+    const low = L == null ? 30 : L, mid = M == null ? 30 : M, high = H == null ? 30 : H;
+    const canvas = Math.max(mid, high);
+
+    let s = 100;
+    // ① 画布：中高云
+    if (canvas < 10) { s -= 55; why.push('中高云太少（' + Math.round(canvas) + '%），没有能接光的云'); }
+    else if (canvas < 25) { s -= 22; why.push('中高云偏少（' + Math.round(canvas) + '%），颜色会淡'); }
+    else if (canvas <= 70) { why.push('中高云 ' + Math.round(canvas) + '%，正好当画布'); }
+    else if (canvas <= 90) { s -= 30; why.push('中高云 ' + Math.round(canvas) + '%，铺得太满'); }
+    else { s -= 50; why.push('中高云 ' + Math.round(canvas) + '%，整片糊住'); }
+
+    // ② 地平线：低云
+    if (low >= 70) { s -= 45; why.push('低云 ' + Math.round(low) + '%，把地平线挡死了'); }
+    else if (low >= 40) { s -= 18; why.push('低云 ' + Math.round(low) + '%，地平线附近会被挡'); }
+    else if (low <= 15) why.push('低云少，地平线通透');
+
+    // ③ 气溶胶
+    if (o.aod != null) {
+      if (o.aod > 0.7) { s -= 22; why.push('气溶胶太重（AOD ' + o.aod.toFixed(2) + '），天会发浑'); }
+      else if (o.aod > 0.4) { s -= 8; why.push('气溶胶偏多（AOD ' + o.aod.toFixed(2) + '）'); }
+      else if (o.aod >= 0.08) why.push('气溶胶适中（AOD ' + o.aod.toFixed(2) + '），利于出红');
+      else { s -= 6; why.push('空气太干净（AOD ' + o.aod.toFixed(2) + '），缺散射粒子'); }
+    }
+    // ④ 能见度
+    if (o.vis != null && o.vis < 10000) {
+      const vt = Math.min(20, (10000 - o.vis) / 10000 * 30);
+      s -= vt;
+      why.push('能见度只有 ' + (o.vis / 1000).toFixed(1) + ' km，霾会把颜色洗掉');
+    }
+    s = Math.max(0, Math.min(100, Math.round(s)));
+    return {
+      score: s, why: why,
+      // 「火烧云」单列一档：要中高云够、低云薄、还得有点气溶胶，三者同时满足才算
+      fire: s >= 62 && canvas >= 25 && low < 45,
+      label: s >= 75 ? '很可能烧起来' : s >= 55 ? '有机会' : s >= 35 ? '一般' : s >= 15 ? '希望不大' : '基本没戏',
+      color: s >= 75 ? '#e74c3c' : s >= 55 ? '#e67e22' : s >= 35 ? '#f0c419' : s >= 15 ? '#7f8c9a' : '#4a5560'
+    };
+  }
+
+  /* ═══════════════ 天体的可见时段（纯本地）═══════════════
+   *  使用者要的是"文字列表、不要甘特图"。做法：对高度角扫描一遍，
+   *  找出 `alt ≥ minAlt` 的连续区间。`minAlt` 默认 10°——
+   *  低于 10° 时大气消光已经吃掉一两个星等，而且多半被楼和树挡着，
+   *  把它算进"可见"是自欺欺人。 */
+  function altWindows(altFn, t0, t1, minAlt, stepMin) {
+    const step = (stepMin || 6) * 60000;
+    const lim = (minAlt == null ? 10 : minAlt);
+    const out = [];
+    let cur = null;
+    for (let t = t0; t <= t1; t += step) {
+      const a = altFn(t);
+      if (a >= lim) {
+        if (!cur) cur = { from: t, to: t, maxAlt: a, maxAt: t };
+        else {
+          cur.to = t;
+          if (a > cur.maxAlt) { cur.maxAlt = a; cur.maxAt = t; }
+        }
+      } else if (cur) { out.push(cur); cur = null; }
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  /** 一整夜里各天体的可见时段。`bodies` 形如 [{name, emoji, alt(ms)}]。
+   *  返回 [{name, emoji, windows:[{from,to,maxAlt,maxAt,dur}], best}]，按"最长的窗口"降序。 */
+  function skyWindows(bodies, t0, t1, minAlt, stepMin) {
+    return (bodies || []).map(b => {
+      const ws = altWindows(b.alt, t0, t1, minAlt, stepMin).map(w =>
+        ({ from: w.from, to: w.to, maxAlt: w.maxAlt, maxAt: w.maxAt, dur: w.to - w.from }));
+      const best = ws.slice().sort((p, q) => q.maxAlt - p.maxAlt)[0] || null;
+      return { name: b.name, emoji: b.emoji, windows: ws, best: best, total: ws.reduce((a, w) => a + w.dur, 0) };
+    }).sort((a, b) => (b.best ? b.best.maxAlt : -1) - (a.best ? a.best.maxAlt : -1));
+  }
+
   global.ASTRO = {
     // 基础几何
     sunAlt: sunAlt, moonAlt: moonAlt, sunRaDec: sunRaDec, moonRaDec: moonRaDec,
@@ -611,6 +769,12 @@
     // 评分与判据
     starScore: starScore, kpScale: kpScale, auroraNeedKp: auroraNeedKp,
     flareScale: flareScale, bzMood: bzMood,
+    // 光污染（站点常量，查 web/data/lp.json 的烘焙表）
+    lpInfo: lpInfo, capByLP: capByLP, LP_ORDER: LP_ORDER,
+    // 朝霞 / 晚霞 / 火烧云（本站启发式，非权威预报）
+    twilightGlow: twilightGlow,
+    // 天体可见时段（纯本地扫描高度角）
+    altWindows: altWindows, skyWindows: skyWindows,
     // 此刻的天空（全部本地算，不联网）
     stars: STARS, brightStars: brightStars, planets: planets,
     // 流星雨

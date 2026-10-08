@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#12141a">
-<title>天气战士 · 老实看天气预报，很枯燥吧？</title>
-<meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、降水/风/云量/空气，还有雷达回波、卫星云图、降水预报、台风路径、预警信号。老实看天气预报，很枯燥吧？">
-<link rel="stylesheet" href="css/app.css?v=4ec48a03">
+<title>天气战士 · 老实看天气很枯燥吧？</title>
+<meta name="description" content="把气温当成股价来看的天气终端：蜡烛图、分时、日周月K、降水/风/云量/空气，还有雷达回波、卫星云图、降水预报、台风路径、预警信号。老实看天气很枯燥吧？">
+<link rel="stylesheet" href="css/app.css?v=db191689">
 <link rel="stylesheet" href="css/game.css?v=e6133eb6">
 <link rel="icon" type="image/png" href="img/logo-32.png?v=189dcbb4">
 </head>
@@ -14,9 +14,9 @@
 
 <!-- ══════════════════════ 顶栏 ══════════════════════ -->
 <header class="topbar">
-  <div class="brand" title="老实看天气预报，很枯燥吧？">
+  <div class="brand" title="老实看天气很枯燥吧？">
     <img class="brand-mark" src="img/logo.png" alt="天气战士" width="26" height="26">
-    <span class="brand-text">天气战士<em>老实看天气预报，很枯燥吧？</em></span>
+    <span class="brand-text">天气战士<em>老实看天气很枯燥吧？</em></span>
   </div>
 
   <div class="search-wrap">
@@ -76,7 +76,7 @@
   <button class="wxbtn" data-wx="wxTy"     title="台风和热带气旋的实况路径与预报路径">🌀 <b>台风路径</b></button>
   <button class="wxbtn" data-wx="wxWarn"   title="全国正在生效的气象预警信号">⚠ <b>预警信号</b></button>
   <button class="wxbtn" data-wx="wxQuake"  title="真实地震：中国地震台网 + 日本气象厅 + 美国 USGS 三路目录合并（逐条标明来源），外加六条地震预警（EEW）流；按当前城市算距离，最近的排最前">🌋 <b>地震</b></button>
-  <button class="wxbtn" data-wx="wxAstro"  title="天文爱好者那几样：观星指数、极光地磁、日月出没、流星雨日历">🔭 <b>天文</b></button>
+  <button class="wxbtn" data-wx="wxAstro"  title="天文爱好者那几样：观星指数（含本站光污染等级）、此刻星空与今夜可见时段、朝霞晚霞火烧云、极光地磁、日月出没、流星雨日历">🔭 <b>天文</b></button>
   <span class="wx-bar-hint" id="wxHint"></span>
 </div>
 
@@ -452,8 +452,17 @@
       <p>另外几件容易误会的事，一并说清：</p>
       <ul class="wm-list">
         <li><b>天文那些是本地算的</b>：日出日落、月出月落、月相、太阳/月亮高度、黄金与蓝调时刻、
-          流星雨日历、星图，全是本站按经纬度和时间<b>推算的近似值</b>，
+          流星雨日历、星图、<b>天体可见时段</b>，全是本站按经纬度和时间<b>推算的近似值</b>，
           跟紫金山天文台那种权威值可能有几分钟到十几分钟的出入 —— 看个大概可以，别拿它定日子 ✧</li>
+        <!-- 光污染用的是第三方地图集，必须单独署名；作者还明确要求不许跟 Bortle 标度混为一谈 -->
+        <li><b>光污染数据来自 David Lorenz 的 Light Pollution Atlas</b>
+          （<code>djlorenz.github.io/astronomy/lp/</code>，2025 版，由 VIIRS 夜间灯光经大气传输模型推算）。
+          本站把它<b>离线取好</b>、每座城市按 5×5 像素（约 4.6 公里）窗口中位取一个值，运行时只查表。
+          它给的是<b>天顶人工亮度</b>的模拟值，<b>不是波特尔（Bortle）等级</b> ——
+          后者是肉眼主观评级、看的是整片天，作者明确要求两者不要混为一谈 ✧</li>
+        <li><b>朝霞 / 晚霞 / 火烧云是本站自拟的启发式</b>，<b>不是权威预报</b>，也没有对应的公开接口。
+          它只看三件事：中高云够不够当"画布"、低云会不会把地平线挡死、气溶胶够不够浓。
+          现实里它看不见远处的地形、云的具体形状和飞机拉线，<b>当参考可以，别当承诺</b> ✧</li>
         <li><b>界面可能显示的是缓存</b>：为了打开快，会先把上次看到的那份直接摆出来，
           再去拉最新的；底部状态栏会写清是哪时候的数据，别把旧的当刚出炉的 ✧</li>
         <li><b>定位只在你点的时候才请求</b>：坐标只存在你自己的浏览器里，本站不收集、不上传 ✧</li>
@@ -464,7 +473,7 @@
         <a href="https://weather.cma.cn" target="_blank" rel="noopener">中国气象局官网</a>。
         本站不承担由此产生的任何后果 (｡•́︿•̀｡)</p>
 
-      <p class="wm-cute">老实看天气预报，很枯燥吧？<br>
+      <p class="wm-cute">老实看天气很枯燥吧？<br>
         所以才做成这副样子的嘛 (๑&gt;؂&lt;๑)</p>
     </div>
     <div class="wm-foot">
@@ -515,7 +524,7 @@
         <dt>🌧 降水预报</dt><dd>中央气象台画的全国降水量预报图，未来 24 小时雨会下在哪、下多大，每 12 小时出一张。看色块：绿＝小雨、蓝＝中到大雨、紫红＝暴雨以上。</dd>
         <dt>🌀 台风路径</dt><dd>今年每个台风／热带气旋走过的路线（实线）和中央气象台预报的后续路线（虚线）。点左边列表切换台风，地图可以拖动缩放。</dd>
         <dt>⚠ 预警信号</dt><dd>全国正在生效的气象预警，按红／橙／黄／蓝排序显示原文。</dd>
-        <dt>🔭 天文</dt><dd>观星指数（拿云量／降水／湿度／风／月光打分）、极光与地磁（NOAA 的 Kp 指数）、日月出没与黄金／蓝调时刻、流星雨日历。除了 Kp 和太阳黑子来自 NOAA，其余全部在本地推算，不额外请求接口。</dd>
+        <dt>🔭 天文</dt><dd>六页：<b>✨ 观星</b>（拿云量／降水／湿度／风／月光／气溶胶打分，并按<b>本站光污染等级</b>封顶）、<b>🌟 此刻</b>（此刻的亮星与行星方位，外加<b>今夜各天体的可见时段</b>）、<b>🌇 霞</b>（朝霞／晚霞／火烧云，本站启发式）、<b>🌌 极光</b>（NOAA 的 Kp 指数与 Bz）、<b>🌗 日月</b>、<b>☄️ 流星雨</b>。除了 Kp／太阳黑子来自 NOAA、逐小时云量与气溶胶来自 Open-Meteo、光污染来自 David Lorenz 的地图集，其余全部在本地推算。</dd>
       </dl>
 
       <h4>右侧和顶部的词</h4>
@@ -691,11 +700,11 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(loca
 <script src="vendor/echarts.min.js"></script>
 <script src="js/util.js?v=40b630a5"></script>
 <script src="js/indicators.js?v=1677e654"></script>
-<script src="js/api.js?v=093bcb58"></script>
+<script src="js/api.js?v=bab9fd6f"></script>
 <script src="js/chart.js?v=a022e87e"></script>
 <script src="js/weather.js?v=efe47d62"></script>
-<script src="js/astro.js?v=4c3c6385"></script>
-<script src="js/wxui.js?v=56ef9431"></script>
+<script src="js/astro.js?v=852658b2"></script>
+<script src="js/wxui.js?v=489dbdac"></script>
 <script src="js/app.js?v=7bec7211"></script>
 <script src="js/game.js?v=3f1686fa"></script>
 </body>

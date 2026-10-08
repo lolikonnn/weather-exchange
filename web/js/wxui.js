@@ -1112,7 +1112,7 @@
       const c = (app && app.S && app.S.cur) || null;
       const d = (app && app.S && app.S.data) || null;
       const me = this;
-      const PAGES = [['star', '✨ 观星'], ['sky', '🌟 此刻'], ['aurora', '🌌 极光'],
+      const PAGES = [['star', '✨ 观星'], ['sky', '🌟 此刻'], ['glow', '🌇 霞'], ['aurora', '🌌 极光'],
         ['moon', '🌗 日月'], ['meteor', '☄️ 流星雨']];
       body.innerHTML =
         '<div class="wx-seg">' + PAGES.map(p =>
@@ -1129,6 +1129,7 @@
       const now = Date.now();
       if (this._as.page === 'aurora') { asAurora(pane, sub, c, now); return; }
       if (this._as.page === 'sky') { asSky(pane, sub, c, now); return; }
+      if (this._as.page === 'glow') { asGlow(pane, sub, c, d, now); return; }
       if (this._as.page === 'moon') { asMoon(pane, sub, c, now); return; }
       if (this._as.page === 'meteor') { asMeteor(pane, sub, c, now); return; }
       asStar(pane, sub, c, d, now);
@@ -1329,17 +1330,23 @@
   function asStar(pane, sub, c, d, now) {
     const A = global.ASTRO;
     if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
-    if (!(global.API && API.OpenMeteo && API.OpenMeteo.astroAir)) {
-      drawStar(pane, sub, c, d, now, null); return;
-    }
-    pane.innerHTML = '<div class="wx-load">正在取气溶胶（通透度）…</div>';
-    API.OpenMeteo.astroAir(c.lat, c.lon)
-      .then(air => { if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, air); })
-      .catch(() => { if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, null); });
+    // 两件事并发等：AOD 在 air-quality 那台主机上（跨域），光污染是**本地烘焙表**
+    // （`web/data/lp.json`，同源、35 KB）。分开等会让这一页慢一倍。
+    const airP = (global.API && API.OpenMeteo && API.OpenMeteo.astroAir)
+      ? API.OpenMeteo.astroAir(c.lat, c.lon).catch(() => null) : Promise.resolve(null);
+    const lpP = (global.API && API.LP && c.id != null)
+      ? API.LP.of(c.id).catch(() => null) : Promise.resolve(null);
+    pane.innerHTML = '<div class="wx-load">正在取气溶胶与光污染…</div>';
+    Promise.all([airP, lpP]).then(rs => {
+      if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, rs[0], rs[1]);
+    }).catch(() => {
+      if (!asStale(pane, 'star')) drawStar(pane, sub, c, d, now, null, null);
+    });
   }
 
-  function drawStar(pane, sub, c, d, now, air) {
+  function drawStar(pane, sub, c, d, now, air, lp) {
     const A = global.ASTRO;
+    const lpI = A.lpInfo ? A.lpInfo(lp) : null;
     const mp = A.moonPhase(now);
     const night = A.nextNight(now, c.lat, c.lon);
     const from = night ? Math.max(night.from, now - 3600000) : now;
@@ -1356,13 +1363,13 @@
         total: g('cloud'),
         low: low, high: (mid == null && hi == null) ? null : Math.max(mid || 0, hi || 0),
         aod: am[aodKey(x.t)],
-        sc: A.starScore({
+        sc: A.capByLP(A.starScore({
           cloud: g('cloud'), cloudLow: low, cloudMid: mid, cloudHigh: hi,
           precip: g('precip'), humidity: g('humidity'), wind: g('wind'),
           vis: g('vis'), aod: am[aodKey(x.t)],
           moonUp: A.moonAlt(x.t, c.lat, c.lon) > 0,
           moonIllum: mp.illum
-        })
+        }), lpI)
       };
     });
     const best = rows.slice().sort((p, q) => q.sc.score - p.sc.score)[0] || null;
@@ -1378,6 +1385,16 @@
         '<span class="wx-as-big" style="color:' + best.sc.color + '">' + best.sc.score + '</span>' +
         '<span class="wx-as-leadlab"><b>' + best.sc.label + '</b><br>' + asHM(best.t) + ' 前后最合适</span></div>';
       if (best.sc.why.length) html += '<div class="wx-as-note">' + esc(best.sc.why.join(' · ')) + '</div>';
+    }
+    /* 光污染是**站点属性**：云会散、月会落，这个不会。所以它单独一块，
+       并且已经通过 capByLP 把整页的分数封了顶 —— 不混进逐小时加减里。 */
+    if (lpI) {
+      html += '<div class="wx-as-h2">本站光污染（决定天花板）</div>' +
+        '<div class="wx-as-lp">' +
+          '<span class="wx-as-lpz" style="background:' + lpI.color + '">' + esc(lpI.z) + '</span>' +
+          '<span class="wx-as-lpt">' + esc(lpI.brief) + '<br><em>' + esc(lpI.desc) + '</em></span>' +
+          '<span class="wx-as-lpcap"><i>夜空上限</i><b>' + lpI.cap + '</b></span>' +
+        '</div>';
     }
     html += '<div class="wx-as-h2">' + (night ? '今晚逐小时' : '接下来几小时') +
       '（云那一列是「低云/中高云」）</div>';
@@ -1401,6 +1418,106 @@
       '「天文夜」是太阳低于 -6°、天真正黑透的那一段。逐小时气象（含分层云量与能见度）来自 Open-Meteo，' +
       '气溶胶来自同一家的 air-quality 接口，月相与月光遮挡在本地推算 —— ' +
       '全部跟主站天气同一套模型，不会互相打脸。</div>';
+    pane.innerHTML = html;
+  }
+
+  /* ── ①c 朝霞 / 晚霞 / 火烧云 ──
+     ⚠ **没有免费开放的霞预报接口**（查过 SunsetWx 之类，都要 key 或没有公开 API），
+     所以这一页是**本站自拟的启发式**，界面上必须如实这么写。
+     输入全部是已经取到的数据：分层云量 / 能见度 / 湿度来自主站逐小时，
+     气溶胶来自 `API.OpenMeteo.astroAir`（air-quality 那台主机）。
+     评分逻辑在 `astro.js` 的 `twilightGlow()` 里，这里只管挑时刻、取数、画。 */
+  function asGlow(pane, sub, c, d, now) {
+    const A = global.ASTRO;
+    if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
+    const evs = A.sunEvents(now - 12 * 3600000, now + 36 * 3600000, c.lat, c.lon) || [];
+    const pick = kind => evs.filter(e => e.kind === kind && e.t >= now - 20 * 60000)[0] || null;
+    const set = pick('sunset'), rise = pick('sunrise');
+    if (!set && !rise) {
+      pane.innerHTML = '<div class="wx-load">这个纬度近期没有日出或日落（极昼 / 极夜）。</div>';
+      return;
+    }
+    const airP = (global.API && API.OpenMeteo && API.OpenMeteo.astroAir)
+      ? API.OpenMeteo.astroAir(c.lat, c.lon).catch(() => null) : Promise.resolve(null);
+    pane.innerHTML = '<div class="wx-load">正在取气溶胶（霞的颜色靠它）…</div>';
+    airP.then(air => { if (!asStale(pane, 'glow')) drawGlow(pane, sub, c, d, now, air, set, rise); });
+  }
+
+  function drawGlow(pane, sub, c, d, now, air, set, rise) {
+    const A = global.ASTRO;
+    const h = d && d.hourly;
+    const am = aodMap(air);
+    // 取"离这个时刻最近的那个整点"的逐小时值
+    const at = (t, k) => {
+      if (!h || !h.time || t == null) return null;
+      let bi = -1, bd = Infinity;
+      for (let i = 0; i < h.time.length; i++) {
+        const dt = Math.abs(new Date(h.time[i]).getTime() - t);
+        if (dt < bd) { bd = dt; bi = i; }
+      }
+      if (bi < 0) return null;
+      const col = h[k] || [];
+      return col[bi] == null ? null : col[bi];
+    };
+    const oAt = t => ({
+      cloud: at(t, 'cloud'), cloudLow: at(t, 'cloudLow'), cloudMid: at(t, 'cloudMid'),
+      cloudHigh: at(t, 'cloudHigh'), vis: at(t, 'vis'), humidity: at(t, 'humidity'),
+      aod: t == null ? null : am[aodKey(t)]
+    });
+    const ev = set || rise;
+    const sunEv = A.sunEvents(ev.t - 3 * 3600000, ev.t + 3 * 3600000, c.lat, c.lon) || [];
+    const golden = ev.kind === 'sunset'
+      ? sunEv.filter(e => e.kind === 'golden' && e.t < set.t).slice(-1)[0]
+      : sunEv.filter(e => e.kind === 'golden' && e.t > rise.t)[0];
+
+    const cards = [];
+    [['晚霞', set], ['朝霞', rise]].forEach(([nm, e]) => {
+      if (!e) return;
+      const g = A.twilightGlow(oAt(e.t));
+      const dd = new Date(e.t);
+      cards.push({
+        nm: nm, t: e.t,
+        hm: asHM(e.t) ,
+        d: (dd.getMonth() + 1) + '/' + dd.getDate(),
+        g: g
+      });
+    });
+
+    // 头部：哪一个更值得等
+    const focus = cards.slice().sort((p, q) => (q.g.score == null ? -1 : q.g.score) - (p.g.score == null ? -1 : p.g.score))[0];
+    if (sub && focus) {
+      sub.textContent = focus.nm + ' ' + focus.hm + ' · ' + (focus.g.score == null ? '数据不足' : focus.g.score + ' 分 ' + focus.g.label);
+    }
+
+    let html = '';
+    if (focus && focus.g.score != null) {
+      html += '<div class="wx-as-lead">' +
+        '<span class="wx-as-big" style="color:' + focus.g.color + '">' + focus.g.score + '</span>' +
+        '<span class="wx-as-leadlab"><b>' + esc(focus.nm) + ' ' + esc(focus.g.label) + '</b><br>' +
+        esc(focus.d + ' ' + focus.hm) + ' 前后往西/东边看</span></div>';
+      if (focus.g.why.length) html += '<div class="wx-as-note">' + esc(focus.g.why.join(' · ')) + '</div>';
+    }
+    cards.forEach(cd => {
+      const g = cd.g;
+      const fire = g.fire ? '<span class="wx-as-fire">🔥 可能烧起来</span>' : '<span class="wx-as-nofire">无火烧云</span>';
+      html += '<div class="wx-as-h2">' + esc(cd.nm) + ' · ' + esc(cd.d + ' ' + cd.hm) + '</div>' +
+        '<div class="wx-as-row">' + (g.score == null ? '<span>数据不足</span>' :
+          asBar(g.score, g.color) + '<span style="color:' + g.color + '">' + g.score + ' ' + esc(g.label) + '</span>') +
+        fire + '</div>' +
+        (g.why.length ? '<div class="wx-as-note">' + esc(g.why.join(' · ')) + '</div>' : '');
+    });
+    if (golden) {
+      html += '<div class="wx-as-note">黄金时刻 ' + esc(asHM(golden.t)) +
+        ' 起 —— 那才是颜色最浓的时候，霞只是它的前菜。</div>';
+    }
+    html += '<div class="wx-as-foot">' +
+      '<b>这是本站自拟的启发式，不是权威预报。</b>没有免费的霞预报接口，所以它只看三件事：' +
+      '中高云够不够当"画布"（太少没得照、太多整片糊）、低云会不会把地平线挡死、' +
+      '气溶胶够不够浓（AOD 0.1~0.4 最出红，>0.7 反而发浑）。<br>' +
+      '逐小时云量/能见度来自 Open-Meteo，气溶胶来自同一家的 air-quality 接口，' +
+      '日出日落与黄金时刻在本地推算。<br>' +
+      '现实里还有太多它看不见的东西（远处的山、云的具体形状、飞机拉线），' +
+      '<b>当个参考，别当承诺</b>。</div>';
     pane.innerHTML = html;
   }
 
@@ -1451,6 +1568,53 @@
         (p.up ? Math.round(p.alt) + '° ' + esc(p.dir) : '方位 ' + esc(p.dir)) + '　·　距角 ' +
         Math.round(p.elong) + '°' + vis + '</span></div>';
     }).join('') + '</div>';
+
+    /* ── 今夜各天体的可见时段 ──
+       使用者要的是**文字列表**，不要甘特图，所以这里只出「19:20 → 01:05（最高 63°）」这种一行。
+       门槛 10°：低于 10° 时大气消光已经吃掉一两个星等，而且多半早被楼和树挡住，
+       把它算进"可见"是自欺欺人。
+       ⚠ 高度是**先按 6 分钟步长采样一次**（`planets()` 一次返回全部行星，所以只算一遍），
+       再让 `A.skyWindows()` 从这份采样里查 —— 若让它自己去调 `planets()`，
+       8 颗行星 × 一夜 140 个采样点会把开普勒方程解上千遍。 */
+    const night = A.nextNight(now, c.lat, c.lon);
+    if (night && night.to > night.from) {
+      const step = 6 * 60000;
+      const ts = [];
+      for (let t = night.from; t <= night.to; t += step) ts.push(t);
+      const moonAlt = ts.map(t => A.moonAlt(t, c.lat, c.lon));
+      const bodies = [{ name: '月亮', emoji: '🌙', arr: moonAlt }];
+      pls.forEach(p => {
+        const arr = ts.map(t => {
+          const q = A.planets(t, c.lat, c.lon).filter(x => x.name === p.name)[0];
+          return q ? q.alt : -90;
+        });
+        bodies.push({ name: p.name, emoji: '🪐', arr: arr });
+      });
+      const idx = ms => Math.max(0, Math.min(ts.length - 1, Math.round((ms - night.from) / step)));
+      const win = A.skyWindows(bodies.map(b => ({
+        name: b.name, emoji: b.emoji, alt: ms => b.arr[idx(ms)]
+      })), night.from, night.to, 10, 6);
+
+      html += '<div class="wx-as-h2">今夜可见时段（高度 ≥ 10°，' +
+        asHM(night.from) + '→' + asHM(night.to) + '）</div>';
+      const vis = win.filter(w => w.windows.length);
+      if (!vis.length) {
+        html += '<div class="wx-load">今夜没有天体升到 10° 以上 —— 换个日子。</div>';
+      } else {
+        html += '<div class="wx-as-list">' + vis.map(w => {
+          const seg = w.windows.map(x =>
+            asHM(x.from) + '→' + asHM(x.to) +
+            '（最高 ' + Math.round(x.maxAlt) + '° ' + asHM(x.maxAt) + '）').join('　·　');
+          return '<div class="wx-as-row2"><b>' + w.emoji + ' ' + esc(w.name) + '</b>' +
+            '<span>共 ' + asDur(w.total) + '　·　' + esc(seg) + '</span></div>';
+        }).join('') + '</div>';
+      }
+      const noVis = win.filter(w => !w.windows.length).map(w => w.name);
+      if (noVis.length) {
+        html += '<div class="wx-as-note">今夜不会升到 10° 以上：' + esc(noVis.join('、')) +
+          '（多半在地平线以下或一直贴着地平线）。</div>';
+      }
+    }
 
     html += '<div class="wx-as-h2">月亮与银心</div><div class="wx-as-list">' +
       '<div class="wx-as-row2"><b>月亮</b><span>' +

@@ -1026,6 +1026,35 @@ body{
 .wx-as-badge{flex:none;font-size:10px;padding:1px 5px;border-radius:2px;background:var(--accent);color:#1a1400}
 .wx-as-meta{font-size:11.5px;color:var(--dim);font-family:var(--mono);line-height:1.6}
 
+/* ── 光污染卡（观星页）──
+   这是**站点常量**，不该跟逐小时的云量评分挤在同一排，所以单独一块。
+   左边一个 zone 徽标、中间两行字、右边"夜空上限"的分数。
+   ⚠ 窄屏下必须允许换行：`.wx-as-lpt` 里那句 brief 有二十多个字，
+     不让它 `flex:1 1 auto; min-width:0` 就会把右列顶出去（横向溢出）。 */
+.wx-as-lp{
+  flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:8px 10px;border-radius:3px;background:var(--panel2);border:1px solid var(--line);
+}
+.wx-as-lpz{
+  flex:none;font-family:var(--mono);font-size:15px;font-weight:700;
+  padding:3px 9px;border-radius:2px;color:#12141a;
+}
+.wx-as-lpt{flex:1 1 auto;min-width:0;font-size:12px;color:var(--txt-hi);line-height:1.6}
+.wx-as-lpt em{color:var(--dim);font-style:normal}
+.wx-as-lpcap{flex:none;text-align:right;font-size:10.5px;color:var(--dim);line-height:1.35}
+.wx-as-lpcap i{display:block;font-style:normal;color:var(--dim2)}
+.wx-as-lpcap b{font-family:var(--mono);font-size:19px;color:var(--accent)}
+
+/* 火烧云徽标（霞页）。它是"有没有"的判定，不是分数，所以做成一枚小标签。 */
+.wx-as-fire{
+  flex:none;font-size:10.5px;padding:1px 6px;border-radius:2px;
+  background:rgba(231,76,60,.16);color:#e74c3c;border:1px solid rgba(231,76,60,.4);
+}
+.wx-as-nofire{
+  flex:none;font-size:10.5px;padding:1px 6px;border-radius:2px;
+  background:var(--panel3);color:var(--dim2);border:1px solid var(--line);
+}
+
 /* ───────────────── 竖屏 ───────────────── */
 @media (max-width:860px){
   /* 这一排按钮（雷达回波…地震…天文）在 390px 下合计超过一屏：靠横向滚动的话
@@ -1205,4 +1234,16 @@ body.fullchart .mtabs{visibility:hidden}
   font-family:inherit;font-size:13px;font-weight:600;
 }
 .btn-wm:hover{filter:brightness(1.1)}
+
+/* ── 天文那排 tab 在窄屏上的内边距 ──
+   这一排原来是 5 个（✨观星 / 🌟此刻 / 🌌极光 / 🌗日月 / ☄️流星雨），
+   5×68 + 4×4 间距 = 364px，390px 竖屏装得下。加了第 6 个「🌇 霞」之后
+   实测 6×68 上下 + 5×4 = 428px，比可视的 388px 多出 40px —— 第 6 个被切掉一半。
+   量过每按钮只需瘦 7px，所以把内边距 11px 收到 7px（省 8px/个 × 6 = 48px → 380px），
+   正好装下并留 8px 余量。**只改内边距、不改字号也不动 .wx-seg 的横滚兜底** ——
+   360px 的机器（可视约 358px）还是会差一点，那就照旧横向滚，滚动条提示和滚轮处理器都在。
+   选择器写窄一点（只用 .wx-body > .wx-seg），雷达页 .wx-segs 里那几排不受影响。 */
+@media (max-width:520px){
+  .wx-body > .wx-seg .wx-segbtn{padding:0 7px}
+}
 
