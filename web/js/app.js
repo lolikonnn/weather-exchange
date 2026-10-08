@@ -332,7 +332,10 @@
   function addWatch(id) {
     if (S.watch.indexOf(id) >= 0) { toast('已经收藏过了'); return; }
     S.watch.push(id); storeSet('watch', S.watch);
-    refreshWatchViews(); warmQuotes();
+    refreshWatchViews();
+    warmQuotes();
+    // 刚收藏的这座，趁现在就把整份数据补上 —— 下次点过去就不会先空等六路请求
+    warmCities();
     toast('已收藏：' + (API.Cities.get(id) || {}).name);
   }
   function removeWatch(id) {
@@ -1554,6 +1557,66 @@
     renderIndexes();
   }
 
+  /* ── 静默预热「收藏城市」的整份数据 ───────────────────────────────
+     使用者的原话：「收藏城市列表可以在不查看的时候静默获取数据吗？每次切换收藏城市的时候
+     都会稍微卡一下等它读取数据，而收藏了城市说明查看会相对没收藏的城市更加频繁。
+     现在的体验感有点割裂。」
+
+     说得对，而且原因很具体：`loadCity` 只在「打开页面 / 切城市 / 30 分钟全量重载」时跑，
+     所以**除当前这一座以外，其它收藏城市永远没有快照**（再加上 CX_KEEP 原来只留 2 份，
+     就算看过也会被挤掉）—— 点过去只能挂起加载遮罩，等六路请求。
+     这里趁当前城市画完之后，一座一座把它们补进缓存。**只喂缓存，一个 DOM 都不碰。**
+
+     ⚠ 三条自我约束（这类"后台顺手做点事"的功能最容易做过头）：
+       ① **串行**，一次一座，并且每次都让开前台：`S.loading` 为真就等，绝不跟切城市抢带宽 ——
+          预热的意义是"切过去不卡"，要是它把切城市本身拖慢了就本末倒置了。
+       ② **只在真的过期时才跑**：快照 20 分钟内的直接跳过。
+       ③ **省流模式 / 2G 不跑**（`navigator.connection`）：这是锦上添花，
+          不该为它花用户的钱。 */
+  const WARM_MAX = 6;               // 一轮最多预热几座（收藏再多也不无限扫）
+  const WARM_AGE = 20 * 60000;      // 快照比这新就不碰它
+  const WARM_GAP = 800;             // 每座之间歇一下
+  let warmBusy = false;
+
+  function netCheap() {
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return true;                       // 浏览器不报，就当它便宜
+    if (c.saveData) return false;
+    return !/^(slow-2g|2g)$/.test(c.effectiveType || '');
+  }
+
+  async function warmCities() {
+    if (warmBusy || !netCheap()) return;
+    const curId = S.cur && S.cur.id;
+    const ids = S.watch.filter(i => i !== curId && i !== LOC_ID && API.Cities.get(i))
+      .slice(0, WARM_MAX);
+    if (!ids.length) return;
+    // 整轮节流：心跳每几十秒就会走一次 warmQuotes，别让它每轮都把这一串重扫一遍
+    if (S.warmAt && Date.now() - S.warmAt < 10 * 60000) return;
+    warmBusy = true;
+    let done = 0;
+    try {
+      for (let k = 0; k < ids.length; k++) {
+        const c = API.Cities.get(ids[k]);
+        const snap = API.Store.peekCity(c);
+        if (snap && snap.out && Date.now() - (snap.at || 0) < WARM_AGE) continue;
+        // 让开前台：正在切城市/加载就等它，最多等 30 秒，等不到就整轮放弃
+        const t0 = Date.now();
+        while (S.loading && Date.now() - t0 < 30000) {
+          await new Promise(r => setTimeout(r, 500));
+        }
+        if (S.loading || !netCheap()) break;
+        try { await API.Store.loadCity(c, function () { }); done++; }
+        catch (e) { /* 单座失败不连累其它 —— 多半是 Open-Meteo 额度或网络抖动 */ }
+        await new Promise(r => setTimeout(r, WARM_GAP));
+      }
+    } finally {
+      warmBusy = false;
+      S.warmAt = Date.now();
+      if (done && S.cur) renderQuoteHead();   // 当前这座不受影响，重画只是让状态栏别停在旧文案
+    }
+  }
+
   /* ── 刷新调度：**心跳** + 墙上时钟比对 ──────────────────────────────────
      老写法 `setInterval(…, S.refreshMs)` 一把梭，有三个洞：
        ① 频率调成「手动刷新」时**一个定时器都不挂**，实况永远停在最后一次 loadCity；
@@ -2019,6 +2082,11 @@
 
     warmIndexes();
     warmQuotes();
+    /* 收藏城市的**整份数据**趁空闲静默预热（见 warmCities 的注释）。
+       用 requestIdleCallback 是为了不跟首屏抢主线程；setTimeout 那条是给 Safari 兜底的
+       （它到 2026 年还没有 requestIdleCallback）。 */
+    if (window.requestIdleCallback) requestIdleCallback(function () { warmCities(); }, { timeout: 4000 });
+    else setTimeout(warmCities, 1500);
     checkDownloads();
     // 第一次打开（本机没记过 welcomed）弹一次免责声明；?welcome=1 可以强制弹出来
     // （方便截图自查，也方便把这个链接发给别人看声明）。

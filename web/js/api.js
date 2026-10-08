@@ -1456,7 +1456,13 @@
    * 旧的一律不认 —— 免得读出一份缺字段的旧结构，在渲染里炸出一堆 undefined。
    * 存多少：只留最近 CX_KEEP 座城市（一份 200~400 KB，localStorage 一共才 5 MB）。
    */
-  const CX_VER = 1, CX_KEEP = 2, CX_MAX_AGE = 30 * 86400000;
+  /* ⚠ CX_KEEP 从 **2 提到 6**：要让**收藏城市互相不挤掉对方**。
+     原来只留 2 座，于是除"上次打开过的那座"以外，收藏里的城市点过去永远是空壳 ——
+     而使用者说得很准：「收藏了城市说明查看会相对没收藏的城市更加频繁」，
+     每次切过去都要重走六路请求，那个卡顿正是这么来的。
+     6 份 × 实测约 200~400 KB ≈ 1.2~2.4 MB（localStorage 一共 5 MB）。
+     配额真不够时，下面 cxSave 里那段 catch 会先把别的清掉再试一次，不会把主流程带崩。 */
+  const CX_VER = 1, CX_KEEP = 6, CX_MAX_AGE = 30 * 86400000;
   const CX_HOURS = 2800;
   const cxKey = id => 'cx' + CX_VER + '.' + id;
   const cxIndex = () => storeGet('cx.idx', null) || [];
