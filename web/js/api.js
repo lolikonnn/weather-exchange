@@ -294,6 +294,23 @@
      只有站点停报（或偶发 9999）才会跨过这条线。解析不出来时不判定，宁可信其有。 */
   const CMA_STALE_MS = 24 * 3600 * 1000;
 
+  /* ── 「现在就要最新实况」的 TTL ─────────────────────────────────────────
+     默认那 180 秒是为了别让**列表轮询**（自选 6~13 座城市、每 tick 一次）去捶气象局。
+     但它不该管「使用者自己动手要」的两种情形：点 ⟳ 刷新、以及打开/切到某个城市。
+     实测（2026-10-08 09:55，探针 tmp/btnrefresh.js）：加载完 15 秒后点 ⟳ 刷新，
+     `/api/cma/now` 的新增请求 = **0 条** —— 点击根本没去问气象局，屏幕上那份实况
+     最多可以是 3 分钟前的。使用者要的是"我按了它就该是最新的"。
+
+     取值 10 秒（不是 0）有两个硬理由：
+       ① `server/app.py:355` 是 `ttl = int(g("ttl","120") or 120)` —— **传 0 会被 falsy
+          判成 120**，等于比默认还保守。实测 ttl=0 第二次 0.9 ms（命中缓存）。
+       ② 同处 `fetch_cached(…, max(10, min(ttl, 86400)))` —— 下限就是 10 秒。
+     10 秒同时挡住了连点两下刷新造成的重复请求。
+
+     实测（tmp/srvttl.py）：ttl=180 隔 20 秒仍命中缓存（20.8 ms）；同一次隔 20 秒
+     用 ttl=10 → 146.4 ms 回上游；ttl=0 → 0.9 ms 命中缓存（证实 0 会变 120）。 */
+  const CMA_FRESH_MS = 10000;
+
   /** 清洗 data.now；整站没有可用温度、或实况已经过期时返回 null，让调用方退回 Open-Meteo */
   function cleanNow(n, lastUpdate) {
     if (!n) return null;
@@ -1343,7 +1360,9 @@
       const archStart = shiftDate(todayStr(), -560);
       const archEnd = shiftDate(todayStr(), -93);
       const [now0, fcst, hist0, recent0, official, cnPair, cmaH] = await Promise.all([
-        Cma.now(city),
+        // ★ 强制取最新：`loadCity` 只在「打开页面 / 切城市 / 30 分钟全量重载」时跑，
+        //   一次一个城市，用 10 秒 TTL 换"打开就是最新的"完全划算（理由见 CMA_FRESH_MS）。
+        Cma.now(city, CMA_FRESH_MS),
         Cma.forecast(city),
         hasLL ? OpenMeteo.archive(city.lat, city.lon, archStart, archEnd).catch(() => null) : null,
         hasLL ? OpenMeteo.forecast(city.lat, city.lon, 92, 16).catch(() => null) : null,
@@ -1556,9 +1575,9 @@
      *  口径（使用者定）：**气象局最新 → 本地缓存的 meteo → 空着**。
      *  所以这里有三级，最后一级**不编数字** —— 两个来源都没有就返回 null，
      *  界面照实显示 `--`。（`--` 是"取不到"，不是"气温是零下"。） */
-    async quote(city) {
-      // ① 气象局最新数据
-      const n = await Cma.now(city);
+    async quote(city, fresh) {
+      // ① 气象局最新数据。`fresh=true` 时绕开那 180 秒缓存（点 ⟳ 刷新、切城市走这条）。
+      const n = await Cma.now(city, fresh ? CMA_FRESH_MS : undefined);
       if (n && n.temp != null) return n;
       // ② Open-Meteo 当前值。成功了顺手留一份**长期缓存**，供 ③ 顶班。
       if (city.lat != null) {

@@ -42,7 +42,7 @@
     loading: false, timer: null, lastQuoteAt: 0, lastFullAt: 0, tick: 0,
     /* 实况自己的节拍（obsAt）与行情轮询的到期时刻（refreshDue）——
        两者解耦，理由见 scheduleRefresh() 上面那段注释 */
-    obsAt: 0, refreshDue: 0, polls: 0
+    obsAt: 0, refreshDue: 0, polls: 0, beating: false
   };
 
   /** 副图口径的中文名（给提示语和叠加按钮的 tooltip 用） */
@@ -1483,12 +1483,15 @@
     return false;
   }
 
-  /** 只刷「当前城市」的实况：一个请求，跟行情刷新频率完全无关 */
-  async function warmObs() {
+  /** 只刷「当前城市」的实况：一个请求，跟行情刷新频率完全无关。
+   *  `force=true`（点 ⟳ 刷新时）绕过 `Cma.now` 那 180 秒缓存 —— 实测过：
+   *  加载完 15 秒后点刷新，**一条 `/api/cma/now` 请求都不会发**，屏幕上还是旧的那份。
+   *  TTL 用 10 秒而不是 0（`server/app.py` 把 0 当 falsy 吃成 120 秒）。 */
+  async function warmObs(force) {
     try {
       const city = S.cur && API.Cities.get(S.cur.id);
       if (!city) return;
-      const fresh = await API.Store.quote(city);
+      const fresh = await API.Store.quote(city, !!force);
       S.obsAt = Date.now();          // 失败也算「试过了」：3 分钟后再来，别每秒捶它
       if (applyObs(fresh)) { renderQuoteHead(); renderOrderbook(); renderTape(); }
     } catch (e) { S.obsAt = Date.now(); }
@@ -1547,21 +1550,32 @@
     renderIndexes();
   }
 
-  /* ── 刷新调度：**固定 60 秒心跳** + 墙上时钟比对 ────────────────────────
+  /* ── 刷新调度：**心跳** + 墙上时钟比对 ──────────────────────────────────
      老写法 `setInterval(…, S.refreshMs)` 一把梭，有三个洞：
        ① 频率调成「手动刷新」时**一个定时器都不挂**，实况永远停在最后一次 loadCity；
        ② 定时器只数"又过了一个周期" —— 标签页被浏览器冻住/节流后恢复，还得再等满一整个
           周期（默认 15 分钟）才动一下；
        ③ 实况本该跟气象局走（它 5~10 分钟就更新一次），却被绑在行情刷新频率上。
-     现在：心跳固定 60 秒（后台标签被节流到 ≥1 分钟一次也漏不掉），每次醒来**比墙上时钟**，
-     该补的立刻补；实况另有 3 分 20 秒的节拍，跟 `refreshMs` 完全解耦。
+     现在：心跳 **min(60 秒, S.refreshMs)**，每次醒来**比墙上时钟**，该补的立刻补。
+     取 min 是因为 60 秒只是"后台节流也漏不掉"的上界，不是速率本身：1/3/5/10/30 秒那几档
+     比 60 秒小，必须按档位走（写死 60 秒会把它们降级成 1 分钟）。
      （3m20s 是故意的：`Cma.now` 的缓存 TTL 是 180s，60 秒网格上最近的那一次必然越过它，
-       不会白拿一份缓存里的旧实况。） */
+       不会白拿一份缓存里的旧实况。）
+     注意这条节拍只是「后台自己补」的下限：**使用者动手**的那两个入口（点 ⟳ 刷新、
+     打开/切城市）走的是 `CMA_FRESH_MS`＝10 秒的强制取数，不必等这个节拍。
+
+     ⚠ 心跳周期取 `min(60 秒, S.refreshMs)`，**不能写死 60 秒**。
+     界面上的刷新档位有 1 / 3 / 5 / 10 / 30 秒这几档，全都比 60 秒小：写死等于
+     把它们**悄悄降级成 1 分钟**（老版本是 `setInterval(warmQuotes, S.refreshMs)`，
+     那几档是真按秒走的 —— 换心跳时这条被漏掉了，属于回归）。
+     `beat()` 判断到期用的是 `Date.now() >= S.refreshDue`，周期变小只会更准时、
+     不会重复刷；`S.beating` 那道闸挡住"上一轮还没跑完又进来一轮"的堆积。 */
   const HEARTBEAT_MS = 60000;
   const OBS_MS = 200000;
 
   async function beat() {
-    if (S.loading) return;
+    if (S.loading || S.beating) return;
+    S.beating = true;
     try {
       // ① 实况：自己的节拍，永远跑（「手动刷新」模式下也跑）
       if (!S.obsAt || Date.now() - S.obsAt >= OBS_MS) await warmObs();
@@ -1578,7 +1592,7 @@
       $('#statusNext').textContent = S.refreshMs
         ? ('下次刷新 ' + fmtGap(Math.max(0, S.refreshDue - Date.now())))
         : '手动刷新 · 实况自动';
-    } catch (e) { /* 静默 */ }
+    } catch (e) { /* 静默 */ } finally { S.beating = false; }
   }
 
   function scheduleRefresh() {
@@ -1586,7 +1600,7 @@
     S.refreshDue = S.refreshMs ? Date.now() + S.refreshMs : 0;
     $('#statusNext').textContent = S.refreshMs
       ? ('下次刷新 ' + fmtGap(S.refreshMs)) : '手动刷新 · 实况自动';
-    S.timer = setInterval(beat, HEARTBEAT_MS);
+    S.timer = setInterval(beat, Math.min(HEARTBEAT_MS, S.refreshMs || HEARTBEAT_MS));
     beat();
   }
 
@@ -1782,7 +1796,20 @@
       S.metric = e.target.value; storeSet('metric', S.metric); renderChart();
       toast('量能指标：' + Chart.METRICS[S.metric].label);
     });
-    $('#btnManual').addEventListener('click', async () => { await warmQuotes(); await warmIndexes(); if (S.cur) { S.lastFullAt = 0; } toast('已刷新'); });
+    /* 「⟳ 刷新」＝**先强制取一次当前城市的实况**，再刷列表。
+       顺序要紧：`warmQuotes()` 里也会写一次当前城市的报价，但它走默认的 180 秒缓存；
+       先强制取一次，新数据落进同一个缓存 key，后面的列表轮询直接复用，不会多打一枪。
+       （改之前实测：加载完 15 秒后点这个按钮，`/api/cma/now` 新增请求 = 0 条。） */
+    $('#btnManual').addEventListener('click', async () => {
+      toast('正在取最新实况…');
+      await warmObs(true);
+      await warmQuotes();
+      await warmIndexes();
+      if (S.cur) { S.lastFullAt = 0; }
+      const nw = S.data && S.data.now;
+      toast(nw ? ('已刷新 · ' + (nw.src === 'cma' ? '中国气象局实况 ' : '备援源 ') +
+        String(nw.time || '').slice(-5)) : '已刷新');
+    });
     // 自选列表长按拖动排序（事件委托挂一次就够，列表反复重画也不用重挂）
     bindWatchDrag();
     $('#btnSortWatch').addEventListener('click', () => {
