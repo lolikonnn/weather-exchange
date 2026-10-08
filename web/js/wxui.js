@@ -958,8 +958,12 @@
     },
 
     /* ── 地震 ──
-       数据源是 USGS（免 key、CORS 全开）。为什么不用中国地震台网：www.ceic.ac.cn
-       响应是 200 但**不带 CORS 头**，浏览器里直连读不到。
+       **数据源：中国地震台网（CENC，经 Wolfx <https://bs.wolfx.jp/> 转发）+ USGS，合并。**
+       使用者 m01130 建议换成 bs.wolfx.jp，查证后采纳为合并而非替换 —— 理由在
+       `web/js/api.js` 的 `Quakes` 那段长注释里（概括：CENC 带来中文地名与中国境内小震，
+       但它只有最近 50 条约 19 天；USGS 负责 130 天窗口与全球覆盖；同一场地震去重时留 CENC 那条）。
+       项目当初为什么没用 CENC：`www.ceic.ac.cn` 响应 200 却**不带 CORS 头**，浏览器直连读不到 ——
+       而 Wolfx 那份带 `Access-Control-Allow-Origin: *`，这个缺口就补上了。
        为什么按"离当前城市的距离"排：全国一年几千次地震，不筛距离就是一堆与你无关的列表。
        半径 700 公里、震级 3.0 以上、最近 130 天 —— 与游戏里用的是同一套口径。 */
     _qk: { R: 700, D: 130 },
@@ -976,7 +980,7 @@
         return;
       }
       let list;
-      try { list = await API.OpenMeteo.quakes(c.lat, c.lon, this._qk.R, this._qk.D); }
+      try { list = await API.Quakes.quakes(c.lat, c.lon, this._qk.R, this._qk.D); }
       catch (e) { body.innerHTML = '<div class="wx-load">地震目录获取失败：' + esc(e.message) + '</div>'; return; }
       if (!list.length) {
         if (sub) sub.textContent = '最近 ' + this._qk.D + ' 天 · ' + this._qk.R + ' 公里内';
@@ -990,8 +994,10 @@
         return { q: q, d: d };
       });
       const near = rows.filter(r => r.d != null).sort((a, b) => a.d - b.d)[0];
+      const nCenc = rows.filter(r => r.q.src === 'cenc').length;
       if (sub) sub.textContent = '最近 ' + this._qk.D + ' 天 · ' + this._qk.R + ' 公里内 ' + rows.length +
-        ' 次' + (near ? ' · 最近一次 ' + Math.round(near.d) + ' 公里' : '');
+        ' 次（中国地震台网 ' + nCenc + ' · USGS ' + (rows.length - nCenc) + '）' +
+        (near ? ' · 最近一次 ' + Math.round(near.d) + ' 公里' : '');
       // 近的排前面：同一次地震对"当地"的意义就是这个距离
       rows.sort((a, b) => (a.d == null ? 1e9 : a.d) - (b.d == null ? 1e9 : b.d));
       body.innerHTML = '<div class="wx-quake">' + rows.map(r => {
@@ -1000,14 +1006,25 @@
         const t = q.t ? new Date(q.t) : null;
         const ts = t ? (t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate()) +
           ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes())) : '';
+        /* 逐条标明来源：合并了两路之后，"这条是谁报的"是必须说清的 ——
+           中国地震台网的条目带中文地名（如"四川宜宾市高县"），USGS 的是英文方位描述。
+           不标的话，用户会以为那些中文地名也是 USGS 给的。 */
+        const srcTxt = q.src === 'cenc' ? '中国地震台网' : 'USGS';
         return '<div class="wx-qk-item" style="border-left-color:' + col + '">' +
           '<div class="wx-qk-top"><span class="wx-qk-mag" style="background:' + col + '">M' + mag + '</span>' +
           '<span class="wx-qk-place">' + esc(q.place || '（无地点描述）') + '</span>' +
           (r.d != null ? '<span class="wx-qk-d">' + Math.round(r.d) + ' km</span>' : '') + '</div>' +
           '<div class="wx-qk-meta">' + esc(ts) +
           (q.depth != null && isFinite(q.depth) ? ' · 深 ' + Math.round(q.depth) + ' km' : '') +
+          (q.intensity != null && isFinite(q.intensity) ? ' · 烈度 ' + q.intensity : '') +
+          ' · <span class="wx-qk-src">' + srcTxt + '</span>' +
           '</div></div>';
-      }).join('') + '</div>';
+      }).join('') + '</div>' +
+      /* ★ 来源署名必须**留在界面上**，不能只写在免责声明里：
+         Wolfx 的《使用许可》（https://bs.wolfx.jp/about）明确写着
+         「若要在第三方(非本站)引用本站内容，请**注明内容来自本站**」。
+         所以这条署名跟着列表一起显示，而不是藏在弹窗里。 */
+      '<div class="wx-qk-foot">地震目录：中国地震台网（CENC）· 转载自 <b>Wolfx</b>（bs.wolfx.jp） ｜ 另一路：美国 USGS</div>';
     },
 
     /* ── 天文 ──

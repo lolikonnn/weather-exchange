@@ -477,6 +477,106 @@
   };
 
   /* ═══════════════ 3. Open-Meteo 历史逐小时（K 线引擎） ═══════════════ */
+  /* ═══════════════ 地震目录：中国地震台网（经 Wolfx 转发）+ USGS ═══════════════
+     使用者 m01130 建议把地震数据源换成 <https://bs.wolfx.jp/>。查证后**采纳，但不是替换，是合并**：
+
+     ① **Wolfx 的 `api.wolfx.jp/cenc_eqlist.json` 转发的就是中国地震台网 CENC 的目录**，
+        而且带 `Access-Control-Allow-Origin: *`。这正好补上项目当初的一个缺口 ——
+        旧注释里写着「不用中国地震台网，是因为 `www.ceic.ac.cn` 响应 200 但**不带 CORS 头**」，
+        浏览器直连读不到。实测字段：`time`（北京时，形如 `2026-10-07 18:56:00`）、`magnitude`、
+        `depth`、`latitude`/`longitude`、`placeName`（**中文地名**）、`intensity`（烈度）、
+        `EventID`、`type`（实测恒为 `reviewed`）。**好处是两条**：中文地名（USGS 给的是
+        "X km NNW of Y, China"）＋ 中国境内的小震（CENC 从 M2.0 起报，USGS 常缺）。
+     ② **但它只有最近 50 条**（实测跨度 **2026-09-18 → 2026-10-07 ≈ 19 天**，键 `No1..No50`，
+        另外混着一个 `md5` 元数据键、**值不是 dict 必须跳过** —— 第一次解析就是栽在它上面）。
+        而这一页的口径是**最近 130 天 / 半径 700 公里**：实测以北京为圆心 700 km / 130 天 /
+        M≥3.0，CENC 那份只有 **1 条**。所以 USGS 那一路**必须保留**（它支持
+        `starttime`/`maxradiuskm` 服务端筛，能覆盖整段窗口，还带全球覆盖）。
+     ③ 合并策略：两边各自按「半径 + 天数 + M≥3.0」筛完再并起来，**同一场地震去重**
+        （判据：时刻相差 ≤ 10 分钟且距离 ≤ 100 km），**去重时保留 CENC 那条**
+        （中文地名、自家机构）。`src` 字段标明来源，界面照实显示。
+     ④ 震级下限维持 **M3.0 不变**：游戏里 `QUAKE_M0 = 3.0` 是标定过的压力源口径
+        （`web/js/game.js:327`），把 2.x 放进来会动那套已经调好的参数。
+
+     另一个坑：CENC 的 `time` 是**北京时且不带时区标记**，`new Date('2026-10-07 18:56:00')`
+     跨引擎解析不一致（Safari 直接 Invalid Date）。所以这里手工拆字段构造本地时间，
+     跟 `cmaStamp()` 同一个理由。 */
+  const QUAKE_MIN_MAG = 3.0;
+
+  /** 两点大圆距离（km）。api.js 里自己留一份 —— 之前这个函数只在 wxui.js/app.js 里有，
+      数据层反过来依赖界面层不合理，而跨文件调用又容易在加载顺序上翻车。 */
+  function qkKm(la1, lo1, la2, lo2) {
+    const R = 6371.0, rad = Math.PI / 180;
+    const p1 = la1 * rad, p2 = la2 * rad, dp = p2 - p1, dl = (lo2 - lo1) * rad;
+    const a = Math.sin(dp / 2) * Math.sin(dp / 2) +
+      Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+
+  const Quakes = {
+    /** 中国地震台网（经 Wolfx 转发）。返回 null 表示这一路不可用 */
+    async cenc() {
+      try {
+        const d = await getJSON('https://api.wolfx.jp/cenc_eqlist.json',
+          { ttl: 600000, key: 'eqcenc|' + Math.floor(Date.now() / 600000) });
+        const out = [];
+        Object.keys(d || {}).forEach(k => {
+          const v = d[k];
+          if (!v || typeof v !== 'object') return;            // `md5` 那类元数据键
+          const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(String(v.time || ''));
+          if (!m) return;
+          const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+          const mag = parseFloat(v.magnitude), la = parseFloat(v.latitude), lo = parseFloat(v.longitude);
+          if (!isFinite(t) || !isFinite(mag) || !isFinite(la) || !isFinite(lo)) return;
+          out.push({ t: t, mag: mag, place: String(v.placeName || v.location || ''),
+                     lat: la, lon: lo, depth: parseFloat(v.depth),
+                     intensity: parseFloat(v.intensity), id: String(v.EventID || ''), src: 'cenc' });
+        });
+        return out;
+      } catch (e) { return null; }
+    },
+
+    /** USGS：服务端按半径/时间/震级筛，负责那 130 天的窗口与全球覆盖 */
+    async usgs(lat, lon, R, D) {
+      const iso = t => new Date(t).toISOString().slice(0, 10);
+      const now = Date.now();
+      const q = '?format=geojson&starttime=' + iso(now - D * 86400000) + '&endtime=' + iso(now) +
+        '&minmagnitude=' + QUAKE_MIN_MAG + '&limit=400&latitude=' + lat + '&longitude=' + lon +
+        '&maxradiuskm=' + R;
+      const d = await getJSON('https://earthquake.usgs.gov/fdsnws/event/1/query' + q,
+        { ttl: 1800000, key: 'eq|' + lat + ',' + lon + ',' + R + '|' + iso(now) });
+      return ((d && d.features) || []).map(f => {
+        const p = (f && f.properties) || {}, g = f && f.geometry;
+        if (p.mag == null || !p.time) return null;
+        const c = (g && g.coordinates) || [];
+        return { t: p.time, mag: p.mag, place: p.place || '', lat: +c[1], lon: +c[0],
+                 depth: (c.length > 2 ? +c[2] : null),
+                 id: String(p.ids || p.code || ''), src: 'usgs' };
+      }).filter(Boolean);
+    },
+
+    /** 合并两路：各自按口径筛 → 并起来 → 同一场地震去重（保留 CENC 那条）→ 时间升序
+     *  返回 [{ t: epoch_ms, mag, place, lat, lon, depth, src, intensity? }] */
+    async quakes(lat, lon, radiusKm, days) {
+      const R = radiusKm || 700, D = days || 130;
+      const pair = await Promise.all([
+        this.cenc().catch(() => null),
+        this.usgs(lat, lon, R, D).catch(() => [])
+      ]);
+      const cencAll = pair[0], usgs = pair[1] || [];
+      const recent = q => isFinite(q.t) && (Date.now() - q.t) <= D * 86400000 && q.mag >= QUAKE_MIN_MAG;
+      const within = q => isFinite(q.lat) && isFinite(q.lon) && qkKm(lat, lon, q.lat, q.lon) <= R;
+      const out = (cencAll || []).filter(q => recent(q) && within(q));   // CENC 只能自己筛
+      usgs.forEach(u => {
+        const dup = out.some(c => Math.abs(c.t - u.t) <= 600000 &&
+          qkKm(c.lat, c.lon, u.lat, u.lon) <= 100);
+        if (!dup) out.push(u);
+      });
+      out.sort((a, b) => a.t - b.t);
+      return out;
+    }
+  };
+
   const OpenMeteo = {
     /** 历史逐小时；返回 {time:[], temp:[], precip:[]}
      *
@@ -750,27 +850,12 @@
       return { time: m.time || [], act: m.temperature_2m || [], fc1: m.temperature_2m_previous_day1 || [] };
     },
 
-    /** ② 地震：USGS，免 key、CORS 全开、支持按城市半径筛。
-     *  用 maxradiuskm 让"附近的地震"才有意义 —— 智利 8 级对广州的天气没影响，
-     *  但对"当地压力源"的设定来说，它也不该推动广州的指数。
-     *  返回 [{ t: epoch_ms, mag, place, depth }]，按时间升序。 */
+    /** ② 地震：**实现在上面的 `Quakes` 里**（中国地震台网经 Wolfx 转发 + USGS 合并，
+     *  理由见那段长注释）。这里只留一个转发，纯粹为了不打断既有调用点 ——
+     *  `web/js/game.js` 那处用的是 `API.OpenMeteo.quakes(...)`。
+     *  新代码请直接用 `API.Quakes.quakes(...)`（名字跟数据源对得上）。 */
     async quakes(lat, lon, radiusKm, days) {
-      const R = radiusKm || 700, D = days || 130;
-      const iso = t => new Date(t).toISOString().slice(0, 10);
-      const now = Date.now();
-      const q = '?format=geojson&starttime=' + iso(now - D * 86400000) + '&endtime=' + iso(now) +
-        '&minmagnitude=3.0&limit=400&latitude=' + lat + '&longitude=' + lon + '&maxradiuskm=' + R;
-      const d = await getJSON('https://earthquake.usgs.gov/fdsnws/event/1/query' + q,
-        { ttl: 1800000, key: 'eq|' + lat + ',' + lon + ',' + R + '|' + iso(now) });
-      const out = ((d && d.features) || []).map(f => {
-        const p = (f && f.properties) || {}, g = f && f.geometry;
-        if (p.mag == null || !p.time) return null;
-        const c = (g && g.coordinates) || [];
-        return { t: p.time, mag: p.mag, place: p.place || '',
-                 lat: +c[1], lon: +c[0], depth: (c.length > 2 ? +c[2] : null) };
-      }).filter(Boolean);
-      out.sort((a, b) => a.t - b.t);
-      return out;
+      return Quakes.quakes(lat, lon, radiusKm, days);
     },
 
     /** ③ 台风：中央气象台台风网（typhoon.nmc.cn）。
@@ -1803,5 +1888,5 @@
   };
 
   global.U = U;
-  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num, overlayCma };
+  global.API = { Cities, Cma, OpenMeteo, Cn, Store, SWPC, Quakes, LOCAL, wmoText, todayStr, shiftDate, toDailyBars, toHourlyPoints, getJSON, num, overlayCma };
 })(window);
