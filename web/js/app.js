@@ -688,34 +688,26 @@
     const offLo = curBar ? (curBar.low != null ? curBar.low : curBar.l)
       : (offToday ? offToday.low : null);
 
-    /* ── 「今日最高/最低」＝**今天已经发生过的极值** ──────────────────────
-       为什么不能直接用上面那两个：
-         · `offHi/offLo`（官方）是**预报**高低温，预报是几小时前发的，实况冲过它就会出现
-           「最新价 > 今日最高」这种自相矛盾的画面 —— 使用者报的正是它；
-         · meteo 聚合的 `curBar.h/.l` 把**今天还没到的小时**也算进去，同样会被实况冲过。
-       所以今天这一格只认"已经发生过"的：**今天已过去的逐小时 + 最新价本身**，取 min/max。
-       凌晨刚过零点、一个已过去的时次都没有时，退回上面那两个（那时也没有"已发生"可言）。
+    /* ── 「今日最高/最低」＝**分时图整条（今天 00–23）的极点** ──────────────
+       口径由使用者（m01295）定：跟着分时图的极点走，**同时把分时图未发生的那半画成虚线**
+       （见 `chart.js` 的 `optTrend`）—— 数字与图口径一致，而且一眼能看出这个极值里
+       "有多少是预报"。行情栏里**不加任何新说明**，靠图上的虚线区分。
+       为什么直接读 `curBar.h`/`curBar.l`：分时图就是 `d.intraday`（今天 24 个整点），
+       而两者是**同一份逐小时数据**，实测三城逐个精确相等
+       （娄底 26.5/13.9、北京 24.8/13、广州 30.3/19.4）。
+       ⚠ 保底必须留着：**最新价并进区间**。只取极点、不并最新价的话「价 > 今日最高」
+         当场就会出现 —— 实测北京：已过小时最高 16.9，而最新价 17.2。
+       没有日K（Open-Meteo 全断）时退回官方预报 `offHi`/`offLo`。
        ⚠ 只动这两个数：行情栏其它格子**不加不减不改**。
-         （`全天波动` 是从这两个数算出来的，会跟着走 —— 那是同一件事的两面，不是新格子。） */
+         （`全天波动` 是从这两个数算出来的，会跟着走 —— 同一件事的两面，不是新格子。） */
     let hiToday = offHi, loToday = offLo;
-    if (curBar && d.hourly && d.hourly.time && d.hourly.temp) {
-      const day = curBar.d;                                   // 'YYYY-MM-DD'
-      const hh = new Date().getHours();
-      const cut = day + 'T' + (hh < 10 ? '0' + hh : hh);      // 与 hourly.time 同形，直接比字符串
-      const T = d.hourly.time, V = d.hourly.temp;
-      let h = null, l = null;
-      for (let i = 0; i < T.length; i++) {
-        const k = String(T[i]).replace(' ', 'T').slice(0, 13);
-        if (k.slice(0, 10) !== day || k > cut) continue;       // 不是今天、或今天还没到 → 不算
-        const x = V[i];
-        if (x == null) continue;
-        if (h == null || x > h) h = x;
-        if (l == null || x < l) l = x;
-      }
-      // 最新价本身就是"刚刚发生的一次观测"，必须并进区间（这样它永远不可能落在外面）
+    if (curBar && curBar.h != null && curBar.l != null) { hiToday = curBar.h; loToday = curBar.l; }
+    {
       const nv = (q.temp != null) ? q.temp : ((d.now && d.now.temp != null) ? d.now.temp : null);
-      if (nv != null) { h = (h == null) ? nv : Math.max(h, nv); l = (l == null) ? nv : Math.min(l, nv); }
-      if (h != null && l != null) { hiToday = h; loToday = l; }
+      if (nv != null) {
+        hiToday = (hiToday == null) ? nv : Math.max(hiToday, nv);
+        loToday = (loToday == null) ? nv : Math.min(loToday, nv);
+      }
     }
     const prevBar = ti > 0 ? d.daily[ti - 1] : null;
     const base = d.base;

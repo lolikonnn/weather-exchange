@@ -241,6 +241,23 @@
     const basePct = v => (base == null ? undefined : +U.pctOf(v, base).toFixed(2));
     const xs = pts.map(p => p.t);
     const ys = pts.map(p => p.p);
+
+    /* ── 「未发生」的那半画虚线（使用者 m01295 定）─────────────────────────
+       分界 = 最后一个「不晚于现在」的时次。已发生的实线、未发生的虚线，两边在分界点
+       **共用一个点**，所以接得上、不是两段拼起来的断层。
+       为什么要有这个：行情栏的「今日最高/最低」现在跟着**这条线整条**的极点走，而这条线里
+       混着今天还没到的小时（`d.intraday` 是 00→23 共 24 个整点，`recent` 那份含未来 16 天预报）。
+       画面必须能一眼看出哪半是预报，否则「今日最高 26.5」会被读成"今天到过 26.5"。
+       全都在未来时（例如只剩气象局那条保底曲线，它只有未来）：实线为空、整条虚线 —— 这是**对的**，
+       那本来就全是预报。 */
+    const nowKey = (() => { const n = new Date(); return U.fmtDate(n) + 'T' + U.pad2(n.getHours()); })();
+    let cutIdx = -1;
+    for (let i = 0; i < xs.length; i++) {
+      if (String(xs[i]).replace(' ', 'T').slice(0, 13) <= nowKey) cutIdx = i;
+    }
+    const solidYs = xs.map((_, i) => (i <= cutIdx ? ys[i] : null));
+    const dashYs = (cutIdx < 0) ? ys.slice() : xs.map((_, i) => (i >= cutIdx ? ys[i] : null));
+
     const vals = ys.filter(v => v != null);
     let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
     const span = Math.max(hi - lo, 1);
@@ -380,7 +397,7 @@
           // 为什么现在要开：7 日分时是**逐小时**的真数据（约 168 个点挤在 1100px 里），
           // 昼夜循环本身就长得像锯齿；不开平滑的话每个小时都是一个硬折角，
           // 看上去比实际天气"尖锐"得多。0.25 只把折角磨圆，不改变数据。
-          name: '气温', type: 'line', data: ys, showSymbol: false, symbol: 'circle', symbolSize: 5,
+          name: '气温', type: 'line', data: solidYs, showSymbol: false, symbol: 'circle', symbolSize: 5,
           smooth: 0.25,
           lineStyle: { width: 1.5, color: C.up }, z: 5,
           areaStyle: {
@@ -407,6 +424,8 @@
         } : null,
         // 日界背景带（不画线）：z 最低，保证明暗带在气温/均价下面，
         // 顺便在每条分界线上画一根竖虚线，即使被面积渐变盖住也还能看出"一天到这儿结束"。
+        // ⚠ 它要排在**有数据的系列之后**（`data: []` 是空的；空系列占住低下标会吃掉悬停映射，
+        //   两个方向都试过、都是使用者报过的）。末尾那条"未发生的虚线"自带数据，排在它后面没问题。
         bands.length ? {
           name: '_days', type: 'line', data: [], silent: true, z: 1, showSymbol: false,
           markArea: { silent: true, data: bands },
@@ -415,7 +434,15 @@
             lineStyle: { color: 'rgba(255,255,255,.16)', type: 'dashed', width: 1 },
             data: dayBoundary.map(b => ({ xAxis: b.xAxis - 0.5 }))
           }
-        } : null
+        } : null,
+        /* 未发生的那半：**虚线**（分界与理由见上面 nowKey / cutIdx）。
+           放在数组**最末** —— 前面所有系列的**下标一个都没变**，
+           `echarts.connect('tjs')` 对"已发生"那半的悬停映射完全不受影响。 */
+        {
+          name: '气温（未发生）', type: 'line', data: dashYs, showSymbol: false, symbol: 'circle', symbolSize: 5,
+          smooth: 0.25, connectNulls: false,
+          lineStyle: { width: 1.5, color: C.up, type: 'dashed', opacity: 0.85 }, z: 5
+        }
       ].filter(Boolean)
     };
   }
