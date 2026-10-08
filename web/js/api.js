@@ -120,7 +120,12 @@
     const timer = setTimeout(() => ctl.abort(), opt.timeout || 20000);
     const p = (async () => {
       try {
-        const res = await fetch(url, { signal: ctl.signal, headers: opt.headers, mode: opt.mode || 'cors' });
+        const res = await fetch(url, {
+          signal: ctl.signal, headers: opt.headers, mode: opt.mode || 'cors',
+          // `referrerPolicy` 透传：气象局对外站 Referer 一律 403，而浏览器跨域默认会发本站 Referer
+          // （Referer 是禁止手写的头，只能靠这个开关控制）。不传时保持浏览器默认行为。
+          referrerPolicy: opt.referrerPolicy
+        });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const txt = await res.text();
         let data;
@@ -250,7 +255,28 @@
       } catch (e) { /* 落到直连 */ }
     }
     try {
-      return await getJSON(CMA + ep + id, { ttl: ttlMs, key: 'cd:' + key });
+      /* ★ `referrerPolicy: 'no-referrer'` 是网页端这条路能不能成立的**唯一关键**。
+         气象局（SafeLine WAF）对**外站 Referer** 一律 403 —— 实测（`tmp/cma_cors2.py`）：
+             无 Referer                                  → 200 + `Access-Control-Allow-Origin: *`
+             Referer: https://lolikonnn.github.io/       → **403 Forbidden**（nginx 的 HTML 错误页）
+             Referer: https://weather.cma.cn/            → 200
+             Referrer-Policy: no-referrer                → 200
+         而浏览器做跨域 fetch 时，默认按 `strict-origin-when-cross-origin` **必然**把本站源
+         当 Referer 发出去；`Referer` 又是**禁止脚本手写**的头（forbidden header），
+         所以只能靠 `referrerPolicy` 让它**根本不发**。
+
+         不修会怎样（使用者 m00672 报的正是它）：网页端（Pages 上 `LOCAL=false`，没有本地代理）
+         这条路 100% 失败，于是每次都落到第三级 `data/official/cma/<站号>.now.json`
+         —— 那是 Actions 机器人预抓的静态文件，**只覆盖 40 座城市**（`web/data/official/cma/`
+         下 40 个 `*.now.json`），而且内容是机器人上一次跑的时刻。表现就是：
+         「只有少数几个城市（立项时的热门城市）显示气象局实况，并且是很久以前的数据；
+           其他所有城市，不管有没有站，都显示 Open-Meteo」。
+         APK 里看不出这个问题，因为 `LOCAL=true` 先走本地代理，代理侧不带 Referer。
+
+         注意 d1.weather.com.cn 是**相反**的规矩（必须带它自己站内的 Referer，否则 403），
+         所以那边继续只走本地代理 / 预抓文件，**不要**跟着改成 no-referrer。 */
+      return await getJSON(CMA + ep + id,
+                           { ttl: ttlMs, key: 'cd:' + key, referrerPolicy: 'no-referrer' });
     } catch (e) { /* 落到静态预抓 */ }
     try {
       return await getJSON('data/official/cma/' + id + '.' + sub + '.json',
