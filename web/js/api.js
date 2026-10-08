@@ -696,19 +696,45 @@
   };
 
   /* ═══════════════ 光污染（站点常量）═══════════════
-     数据是**离线烘好**的 `web/data/lp.json`（352 城，35,867 B）——
-     它由 `tmp/lp_bake2.py` 从 David Lorenz 的 Light Pollution Atlas 2025 上按
-     每城 5×5 像素窗口中位档取色生成（原图 3.2 MB，运行时不可能现取）。
-     所以这一项**同源、零跨域、零额外请求**，跟 `data/radar-cities.json` 一个待遇。
+     两条查法，都**同源、零跨域**：
+
+       ① `of(cityId)` —— 市级表。`web/data/lp.json` 里每城一条（352 座地级市），
+          由 `tmp/lp_bake3.py` 从 David Lorenz 的 Light Pollution Atlas 2025 上
+          按每城 5×5 像素（≈4.6 km）**窗口中位档**取色生成。
+       ② `at(lat, lon)` —— **按坐标查**（2026-10-08 补的「方案 A」）。
+          一张 `web/data/lpgrid.png`（0.025° ≈ 2.8 km 一格，214.7 KB），
+          每格是 3×3 源像素的**多数档**；省界之外（海面）是 nodata。
+
+     为什么非要 ②：市级表**只有地级市**，连「当前所在地」（`LOC_ID='__loc__'`，
+     见 `web/js/app.js:373`）都不在表里 —— 于是定位那条下观星页整块光污染是空的
+     （`web/js/wxui.js` 的 `if (lpI)`）。而底图本身就是 **30 弧秒 ≈ 0.93 km** 的栅格，
+     比一个区县细两个数量级：缺的从来不是数据，是**查表的键**。
+
+     ⚠ 两条路的估计量不同（市级 = 25 像素的中位，网格 = 9 像素的多数），
+       实测 352 城里有 **69 城**相差**一个子档**。城市条目仍走 ①（中位更稳），
+       ② 只用来回答"表里没有的那个点"。
 
      ⚠ 它不是 Bortle 等级 —— 作者明确要求不要混为一谈（详见 astro.js 里那段注释）。 */
   const LP = {
     _d: null,
     _p: null,
+    _g: null,          // grid 元数据
+    _z: null,          // zones 档位表（档名 → lpiLo/lpiHi/magLo/magHi）
+    _pal: null,        // palette（档名 → RGB）
+    _gp: null,         // 网格加载 Promise
+    _idx: null,        // {w,h,a:Uint8Array,no} 解出来的档序矩阵
+
     async load() {
       if (this._p) return this._p;
       this._p = getJSON('data/lp.json', { ttl: 86400000, key: 'lp' })
-        .then(d => { this._d = (d && d.cities) || {}; return this._d; })
+        .then(d => {
+          const doc = d || {};
+          this._d = doc.cities || {};
+          this._g = doc.grid || null;
+          this._z = doc.zones || {};
+          this._pal = doc.palette || {};
+          return this._d;
+        })
         .catch(() => { this._p = null; return {}; });     // 失败了允许下次再试
       return this._p;
     },
@@ -716,6 +742,79 @@
     async of(cityId) {
       const m = await this.load();
       return m[String(cityId)] || null;
+    },
+
+    /** 把档名拼成跟 `of()` 同形状的记录 —— `lpInfo` 要 magLo 与 lpiLo/lpiHi
+     *  才算得出「夜空上限」和那句描述，光有档名是不够的。 */
+    rec(z) {
+      const v = this._z && this._z[z];
+      if (!v) return null;
+      return {
+        z: z, lpiLo: v.lpiLo, lpiHi: v.lpiHi, magLo: v.magLo, magHi: v.magHi,
+        zMin: v.zMin == null ? z : v.zMin, zMax: v.zMax == null ? z : v.zMax
+      };
+    },
+
+    /** 一次性把 `data/lpgrid.png` 解成档序矩阵（按行分条读，避免整幅 RGBA 一起驻留）。
+     *  任何一步失败都返回 null —— 调用方回落市级表，不让它变成整页的硬依赖。 */
+    async gridData() {
+      if (this._idx) return this._idx;
+      if (this._gp) return this._gp;
+      this._gp = (async () => {
+        await this.load();
+        const g = this._g;
+        if (!g) return null;
+        if (typeof document === 'undefined' || typeof createImageBitmap !== 'function') return null;
+        const resp = await fetch(g.file);
+        if (!resp.ok) throw new Error('lpgrid ' + resp.status);
+        const bmp = await createImageBitmap(await resp.blob());
+        /* ⚠ 宽高**必须在 `close()` 之前读走**。Chrome 里 ImageBitmap 一旦 close，
+           `bmp.width/height` 就变成 0 —— 原来这两行写在 close 之后，于是画布尺寸是对的、
+           `W/H` 却是 0，档序数组长度为 0，每次查询都返回 null。
+           （首跑探针报「网格 0×0」，而同一页单跑的 PNG 解码探针是 2464×2008，
+           差的就只是这一行的先后。） */
+        const W = bmp.width, H = bmp.height;
+        const cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        const cx = cv.getContext('2d', { willReadFrequently: true });
+        cx.drawImage(bmp, 0, 0);
+        if (bmp.close) bmp.close();
+        const order = g.order || [];
+        /* 颜色 → 档序。调色板里 16 个色（15 档 + 洋红 nodata）互不相同，直接查表。
+           ⚠ nodata 用洋红而不是黑：档位 '0' 就是纯黑，撞色的话运行时分不清"海"和"全黑的山"。 */
+        const cmap = {};
+        order.forEach((z, i) => {
+          const c = this._pal && this._pal[z];
+          if (c) cmap[(c[0] << 16) | (c[1] << 8) | c[2]] = i;
+        });
+        const a = new Uint8Array(W * H);
+        const STRIP = 256;
+        for (let y0 = 0; y0 < H; y0 += STRIP) {
+          const h = Math.min(STRIP, H - y0);
+          const rgba = cx.getImageData(0, y0, W, h).data;
+          for (let i = 0, j = 0, base = y0 * W; i < W * h; i++, j += 4) {
+            const v = cmap[(rgba[j] << 16) | (rgba[j + 1] << 8) | rgba[j + 2]];
+            a[base + i] = v == null ? 255 : v;
+          }
+        }
+        this._idx = { w: W, h: H, a: a, no: g.nodata == null ? 255 : g.nodata };
+        return this._idx;
+      })().catch(() => { this._gp = null; return null; });   // 失败了允许下次再试
+      return this._gp;
+    },
+
+    /** 按坐标取光污染档 —— 表里没有的点（含「当前所在地」）就靠它。没有数据返回 null。
+     *  换算与 `tmp/lp_grid_bake.py` 严格一致：`box` 是 [西, 南, 东, 北]，行从北往南数。 */
+    async at(lat, lon) {
+      const d = await this.gridData();
+      if (!d || lat == null || lon == null) return null;
+      const g = this._g;
+      const col = Math.floor((lon - g.box[0]) / g.deg);
+      const row = Math.floor((g.box[3] - lat) / g.deg);
+      if (!(col >= 0 && col < d.w && row >= 0 && row < d.h)) return null;
+      const v = d.a[row * d.w + col];
+      if (v === d.no || v >= (g.order || []).length) return null;
+      return this.rec(g.order[v]);
     }
   };
 

@@ -1367,13 +1367,25 @@
   function asStar(pane, sub, c, d, now) {
     const A = global.ASTRO;
     if (!A) { pane.innerHTML = '<div class="wx-load">astro.js 没加载出来</div>'; return; }
-    // 三件事并发等：AOD 在 air-quality 那台主机上（跨域）；光污染是**本地烘焙表**
-    // （`web/data/lp.json`，同源、35 KB）；全年气候是一次 archive 请求（约 59 KB、10 年逐日）。
+    // 三件事并发等：AOD 在 air-quality 那台主机上（跨域）；光污染是**本地烘焙**
+    // （`web/data/lp.json` 的市级表 + `web/data/lpgrid.png` 的坐标网格，同源）；
+    // 全年气候是一次 archive 请求（约 59 KB、10 年逐日）。
     // 分开等会让这一页慢三倍。气候那一步自己也带 30 天缓存，第二次进这一页是瞬时的。
     const airP = (global.API && API.OpenMeteo && API.OpenMeteo.astroAir)
       ? API.OpenMeteo.astroAir(c.lat, c.lon).catch(() => null) : Promise.resolve(null);
-    const lpP = (global.API && API.LP && c.id != null)
-      ? API.LP.of(c.id).catch(() => null) : Promise.resolve(null);
+    /* 光污染：**先查市级表，查不到再按坐标查网格**。
+       为什么要有第二条路：市级表只有 352 座地级市，「当前所在地」不在表里
+       （`LOC_ID='__loc__'`，见 app.js:373），所以定位那条下这一整块根本画不出来。
+       反过来说，城市条目仍走市级表 —— 它是 5×5 像素的**中位档**，
+       比网格的 3×3 多数档更稳（实测 352 城里有 69 城两者差一个子档，
+       故意不让这次改动去动那些已经显示得好好的城市值）。 */
+    const lpP = (global.API && API.LP)
+      ? API.LP.of(c.id != null ? c.id : '').catch(() => null).then(v => {
+        if (v) return v;
+        return (c.lat != null && c.lon != null && API.LP.at)
+          ? API.LP.at(c.lat, c.lon).catch(() => null) : null;
+      })
+      : Promise.resolve(null);
     const climP = (global.API && API.Climate)
       ? API.Climate.of(c.lat, c.lon).catch(() => null) : Promise.resolve(null);
     pane.innerHTML = '<div class="wx-load">正在取气溶胶、光污染与近十年气候…</div>';
