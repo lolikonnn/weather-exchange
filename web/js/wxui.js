@@ -1435,19 +1435,10 @@
           (lpI.grade == null ? esc(lpI.z) : lpI.grade) + '</span>' +
           '<span class="wx-as-lpt">' + esc(lpI.brief) + '<br><em>' + esc(lpI.desc) + '</em></span>' +
           '<span class="wx-as-lpcap"><i>夜空上限</i><b>' + lpI.cap + '</b></span>' +
-        '</div>' +
-        /* 「银不银河」照天文通的说法：只给**门槛**和一句判定，不给我算出来的方位。
-           （它官方教程原话：「通常 5 级以下的光污染能看到银河」「哪怕光污染 5 级
-             的地方，也有机会看到淡淡的银河」；它的配图用的是 4 级。） */
-        '<div class="wx-as-go">' +
-          '<i>看银河要 ' + lpI.mwGrade + ' 级以下</i>' +
-          '<em>你现在 ' + esc(lpI.label) + '，' + (lpI.mwOk ? '能看到' : '看不到') + '</em>' +
-        '</div>' +
-        /* 想找够暗的地方 —— 天文通的做法是"地图上点任意地点"，所以这儿也给地图入口。 */
-        '<div class="wx-as-goa">想找够暗的地方：' +
-        '<a href="https://darkmap.cn" target="_blank" rel="noopener noreferrer">darkmap.cn</a> · ' +
-        '<a href="https://www.lightpollutionmap.info/" target="_blank" rel="noopener noreferrer">' +
-        'lightpollutionmap.info</a>（第三方站点，会离开本站）</div>';
+        '</div>';
+      /* 「看银河要几级 / 去哪找够暗的地方」这两句**搬到页脚**了，正文不再占两行 ——
+         使用者说：「这两句话你改一改塞到抽屉下方注脚里吧。」
+         （文案见下面拼 `wx-as-foot` 的地方。） */
     }
     html += '<div class="wx-as-h2">' + (night ? '今晚逐小时' : '接下来几小时') +
       '（云那一列是「低云/中高云」）</div>';
@@ -1485,8 +1476,24 @@
         '最适合的三个月：<b>' + clim.best.join('、') + ' 月</b>。</div>';
     }
     /* 页脚只留**给用户看**的。「为什么这么配分」「存在哪、缓存几天」是开发笔记，
-       已搬进 README.md 的「数据与口径」（见 2026-10-08 那条注脚整理）。 */
-    html += '<div class="wx-as-foot">评分：低云 40 分 · 中高云 25 · 降水 12 · 湿度 6 · 风 6 · ' +
+       已搬进 README.md 的「数据与口径」（见 2026-10-08 那条注脚整理）。
+
+       光污染那两句（银河门槛 + 去哪找够暗的地方）按使用者要求**塞进页脚**，
+       正文里不再单独占两行。照天文通的说法：等级 1～9、**数值越小越暗**，
+       「通常 5 级以下的光污染能看到银河」。 */
+    var lpFoot = '';
+    if (lpI) {
+      lpFoot = '光污染那个等级是 <b>1～9 级，数值越小越暗</b>；看银河一般要 ' +
+        lpI.mwGrade + ' 级以下 —— 你这儿是 ' +
+        (lpI.grade == null ? esc(lpI.z) : lpI.grade) + ' 级，' +
+        (lpI.mwOk ? '能看到' : '看不到') + '。<br>' +
+        '想找够暗的地方，可以查 ' +
+        '<a href="https://darkmap.cn" target="_blank" rel="noopener noreferrer">darkmap.cn</a> 或 ' +
+        '<a href="https://www.lightpollutionmap.info/" target="_blank" rel="noopener noreferrer">' +
+        'lightpollutionmap.info</a>（第三方站点，会离开本站）。<br>';
+    }
+    html += '<div class="wx-as-foot">' + lpFoot +
+      '评分：低云 40 分 · 中高云 25 · 降水 12 · 湿度 6 · 风 6 · ' +
       '月光 6 · 通透度 5；低云 ≥70% 直接封顶 45 分、≥90% 封 20 分。<br>' +
       '「天文夜」＝太阳低于 -6°、天真正黑透的那一段。<br>' +
       '「全年气候」是<b>近似</b>：拿近 10 年的全天平均云量算的，看不见夜里那一段 —— ' +
