@@ -444,26 +444,100 @@
       return u;
     },
 
-    /** 陆地气温实况：从当前 UTC 小时往回凑 n 帧（整点网格，404 = 这一小时没有） */
+    /* ── 帧列表缓存 ──
+       每个图源"多久出一张新图"是**已知的**，所以"每次打开都从头探一遍"纯属白干。
+       实测代价：陆地气温 12 张 × 105 KB、雷达 9 张 ≈ 4.9 MB、海温 11 次 fetch ≈ 2.5 MB，
+       而且**五个探针全是串行 `for` + `await`** ⇒ 12 帧就是 12 个 RTT。
+       这里按各自的节拍缓存**探测结果**（不是图片本身），再打开时直接用：
+
+         雷达 6 分钟一帧      → 缓存 3 分钟
+         卫星 30 分钟一帧     → 缓存 15 分钟
+         降水实况 1 小时/预报 6 小时 → 缓存 30 分钟
+         陆地气温 1 小时一帧  → 缓存 10 分钟
+         海温 **1 天**一帧    → 缓存 6 小时
+
+       ⚠ 存的是 **HTTP URL**，绝不能把 `blob:` URL 写进去 —— blob URL 只在这个页面活着，
+         下次读出来是死的。用 sessionStorage：同标签页刷新还在，关掉浏览器就清。 */
+    _framesKey(k) { return 'tjs.frames.' + k; },
+    _cacheGet(key) {
+      try {
+        const raw = sessionStorage.getItem(this._framesKey(key));
+        if (!raw) return null;
+        const o = JSON.parse(raw);
+        if (!o || !o.exp || o.exp < Date.now() || !(o.frames || []).length) return null;
+        return o.frames.map(f => ({ url: f.u, t: new Date(f.t), f: true }));
+      } catch (e) { return null; }
+    },
+    _cachePut(key, frames, ttlMs) {
+      // 缓存不是必需品：配额满了 / 隐私模式禁了 sessionStorage，都只是"下次再探一遍"。
+      try {
+        sessionStorage.setItem(this._framesKey(key), JSON.stringify({
+          exp: Date.now() + ttlMs,
+          frames: frames.map(f => ({ u: f.url, t: +f.t }))     // 只存 HTTP URL
+        }));
+      } catch (e) { /* 算了 */ }
+    },
+
+    /* ── 海温专用的两件套 ──
+       ① 用 **32×32 的小图**探"这一天有没有数据"：实测 32×32 时有数据 ≈1.2 KB、空白 =104 B，
+          分得非常干净；而 1200×780 一张就是 232 KB。探针只为拿一个是非答案，
+          没必要把整张大图拖下来。9 次探针从 ~2.1 MB 降到 ~11 KB。
+       ② 把**要显示**的那几张 `fetch` 成 `blob:` URL 缓存起来。
+          这一步是必须的 —— GIBS 明确发 `Cache-Control: max-age=0, no-store`，
+          浏览器不许缓存，不自己留一份的话：换个帧要重下、重开面板还要重下。 */
+    _blobs: Object.create(null),
+    _blobOrder: [],
+    async _blob(url) {
+      const c = this._blobs[url];
+      if (c) return c;
+      const r = await fetch(url, { mode: 'cors' });
+      const b = await r.blob();
+      const o = URL.createObjectURL(b);
+      this._blobs[url] = o;
+      this._blobOrder.push(url);
+      while (this._blobOrder.length > 24) {          // 上限 24 张 ≈ 6 MB
+        const k = this._blobOrder[0];
+        if (k === url) break;                        // 别把刚存的这条挤掉
+        this._blobOrder.shift();
+        try { URL.revokeObjectURL(this._blobs[k]); } catch (e) { }
+        delete this._blobs[k];
+      }
+      return o;
+    },
+    async _probeSmall(url) {
+      try {
+        const r = await fetch(url, { mode: 'cors' });
+        const b = await r.blob();
+        return b.size >= 600;      // 32×32：有数据 ≈1.2 KB、空白 104 B，600 是安全的分界
+      } catch (e) { return false; }
+    },
+
+    /** 陆地气温实况：从当前 UTC 小时往回凑 n 帧（整点网格，404 = 这一小时没有）。
+        ⚠ 原来是**一小时一小时串行等**的：12 帧就是 12 个 RTT，光回环就一秒多。
+        现在先把整段窗口**并发**探一遍，再按结果挑帧。 */
     async probeLandTemp(n, onStep) {
       n = n || 10;
+      const key = 'land';
+      const hit = this._cacheGet(key);
+      if (hit) { if (onStep) onStep(hit.length, n); return hit; }
       const now = new Date();
       const base = new Date(now.getTime());
       base.setUTCMinutes(0, 0, 0);
+      // 整段窗口一次并发探完（比串行快一个数量级），再按结果挑帧。
+      const cand = [];
+      for (let k = 0; k < n + 4; k++) cand.push(new Date(base.getTime() - k * 3600000));
+      const flags = await Promise.all(cand.map(dt => this._tryImg(this.landTempUrl(dt))));
       const out = [];
       let miss = 0;
       // 容忍连续 miss：官方偶尔断档（实测昨天就缺 00、01 两个时次），
       // 但也不能无限往前翻 —— 连续 10 个空就认为到头了。
-      for (let k = 0; k < n * 6 && out.length < n && miss < 10; k++) {
-        const dt = new Date(base.getTime() - k * 3600000);
-        const url = this.landTempUrl(dt);
-        /* eslint-disable no-await-in-loop */
-        const ok = await this._tryImg(url);
-        if (ok) { out.push({ url: url, t: dt, f: true }); miss = 0; }
+      for (let k = 0; k < cand.length && out.length < n && miss < 10; k++) {
+        if (flags[k]) { out.push({ url: this.landTempUrl(cand[k]), t: cand[k], f: true }); miss = 0; }
         else miss++;
-        if (onStep) onStep(out.length, n);
       }
       out.sort((a, b) => a.t - b.t);
+      if (out.length) this._cachePut(key, out, 10 * 60000);     // 逐小时发布 ⇒ 缓存 10 分钟
+      if (onStep) onStep(out.length, n);
       return out;
     },
 
@@ -475,26 +549,40 @@
     async probeSeaTemp(n, onStep, layer) {
       n = n || 8;
       layer = layer || this.SEA_LAYERS[0].layer;
-      const MIN_BYTES = 20000;
+      const key = 'sea|' + layer;
       const now = new Date();
+      // ① 先看缓存。海温是**逐日**产品、MUR NRT 还滞后两天 ⇒ 一天最多多出一帧，
+      //    缓存 6 小时完全够，而"每次打开都重探一遍"是纯浪费。
+      let hitUrls = null;
+      const hit = this._cacheGet(key);
+      if (hit) hitUrls = hit;
       const base = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      const out = [];
-      for (let k = 1; k <= n + 3 && out.length < n; k++) {
-        const dt = new Date(base.getTime() - k * 86400000);
-        const url = this.seaTempUrl(dt, layer);
-        /* eslint-disable no-await-in-loop */
-        try {
-          const r = await fetch(url, { mode: 'cors' });
-          const b = await r.blob();
-          if (b.size >= MIN_BYTES) out.push({ url: url, t: dt, f: true });
-        } catch (e) { /* 这张跳过 */ }
-        if (onStep) onStep(out.length, n);
+      let days;
+      if (hitUrls) {
+        days = hitUrls.map(f => f.t);
+      } else {
+        // ② 用 **32×32 的小图**并发问"哪几天有数据"（有 ≈1.2 KB / 无 =104 B）。
+        const cand = [];
+        for (let k = 1; k <= n + 4; k++) cand.push(new Date(base.getTime() - k * 86400000));
+        const flags = await Promise.all(cand.map(dt =>
+          this._probeSmall(this.seaTempUrl(dt, layer, 32, 32))));
+        days = cand.filter((dt, i) => flags[i]).slice(0, n);
       }
-      out.sort((a, b) => a.t - b.t);
-      if (!out.length) {
+      if (onStep) onStep(days.length, n);
+      if (!days.length) {
         // 全都没数据（极端情况）→ 退回"不传 TIME"，让 GIBS 给最近可用那张
-        out.push({ url: this.seaTempUrl(null, layer), t: now, f: true });
+        let u = this.seaTempUrl(null, layer);
+        try { u = await this._blob(u); } catch (e) { }
+        const one = [{ url: u, t: now, f: true }];
+        return one;
       }
+      // ③ 要显示的那几张：并发取回并缓存成 blob URL。
+      //    GIBS 发 `no-store`，不自己留一份的话，切帧、重开面板都要重下整张大图。
+      const urls = days.map(dt => this.seaTempUrl(dt, layer));
+      const got = await Promise.all(urls.map(u => this._blob(u).catch(() => u)));
+      const out = days.map((dt, i) => ({ url: got[i], t: dt, f: true }));
+      out.sort((a, b) => a.t - b.t);
+      if (!hitUrls) this._cachePut(key, days.map(dt => ({ url: this.seaTempUrl(dt, layer), t: dt })), 6 * 3600000);
       return out;
     },
 
@@ -512,20 +600,25 @@
         官方约滞后 20 分钟发布，中间偶尔断档，所以容忍一段连续 miss 再放弃。 */
     async probeRadar(region, n, onStep) {
       n = n || 16;
+      const key = 'radar|' + region;
+      const hit = this._cacheGet(key);
+      if (hit) { if (onStep) onStep(hit.length, n); return hit; }
       const base = new Date();
       base.setUTCMinutes(Math.floor(base.getUTCMinutes() / 6) * 6, 0, 0);
+      // 并发探完整段窗口（原来是一帧一帧串行等，16 帧 = 16 个 RTT）
+      const cand = [];
+      for (let k = 1; k <= n + 4; k++) cand.push(new Date(base.getTime() - k * 360000));
+      const urls = cand.map(dt => this.radarUrl(region, dt, 'small'));
+      const flags = await Promise.all(urls.map(u => this._tryImg(u)));
       const out = [];
       let miss = 0;
-      for (let k = 0; k < n * 8 && out.length < n && miss < 30; k++) {
-        const dt = new Date(base.getTime() - (k + 1) * 360000);
-        const url = this.radarUrl(region, dt, 'small');
-        /* eslint-disable no-await-in-loop */
-        const ok = await this._tryImg(url);
-        if (ok) { out.push({ url: url, t: dt, f: true }); miss = 0; }
+      for (let k = 0; k < cand.length && out.length < n && miss < 30; k++) {
+        if (flags[k]) { out.push({ url: urls[k], t: cand[k], f: true }); miss = 0; }
         else miss++;
-        if (onStep) onStep(out.length, n);
       }
       out.reverse();                       // 时间正序：最早的在前
+      if (out.length) this._cachePut(key, out, 3 * 60000);      // 6 分钟一帧 ⇒ 缓存 3 分钟
+      if (onStep) onStep(out.length, n);
       return out;
     },
 
@@ -534,20 +627,27 @@
     async probeSat(n, onStep, kind) {
       n = n || 12;
       const rgb = kind === 'rgb';
+      const key = 'sat|' + (rgb ? 'rgb' : 'ir');
+      const hit = this._cacheGet(key);
+      if (hit) { if (onStep) onStep(hit.length, n); return hit; }
       const now = new Date();
       const base = new Date(now.getTime());
       base.setUTCMinutes(base.getUTCMinutes() < 45 ? 15 : 45, 0, 0);
-      const out = [];
-      for (let k = 0; k < n * 4 && out.length < n; k++) {
+      const cand = [];
+      for (let k = 0; k < n + 4; k++) {
         const dt = new Date(base.getTime() - k * 1800000);
         if (dt.getTime() > now.getTime()) continue;
-        const url = rgb ? this.satColorUrl(dt) : this.satUrl(dt);
-        /* eslint-disable no-await-in-loop */
-        const ok = await this._tryImg(url);
-        if (ok) out.push({ url: url, t: dt, f: true });
-        if (onStep) onStep(out.length, n);
+        cand.push(dt);
+      }
+      const urls = cand.map(dt => (rgb ? this.satColorUrl(dt) : this.satUrl(dt)));
+      const flags = await Promise.all(urls.map(u => this._tryImg(u)));
+      const out = [];
+      for (let k = 0; k < cand.length && out.length < n; k++) {
+        if (flags[k]) out.push({ url: urls[k], t: cand[k], f: true });
       }
       out.sort((a, b) => a.t - b.t);
+      if (out.length) this._cachePut(key, out, 15 * 60000);     // 30 分钟一帧 ⇒ 缓存 15 分钟
+      if (onStep) onStep(out.length, n);
       return out;
     },
 
@@ -558,25 +658,36 @@
     async probePrecip(n, onStep, kind, win) {
       n = n || 6;
       const nowKind = kind === 'now';
+      const key = 'precip|' + (nowKind ? 'now' : 'fcst|' + win);
+      const hit = this._cacheGet(key);
+      if (hit) { if (onStep) onStep(hit.length, n); return hit; }
       const now = new Date();
       const base = new Date(now.getTime());
       base.setUTCMinutes(0, 0, 0);
       let step = 21600000;                       // 预报：6 小时网格
       if (nowKind) { step = 3600000; base.setUTCMinutes(0, 0, 0); }
       else { base.setUTCHours(Math.floor(base.getUTCHours() / 6) * 6); }
-      const out = [];
-      for (let k = 0; k < n * 4 && out.length < n; k++) {
+      const cand = [];
+      for (let k = 0; k < n + 2; k++) {
         const dt = new Date(base.getTime() - k * step);
         if (dt.getTime() > now.getTime()) continue;
-        let url = nowKind ? this.precipNowUrl(dt) : this.precipUrl(dt, win);
-        /* eslint-disable no-await-in-loop */
-        let ok = await this._tryImg(url);
-        // 同一档的扩展名不统一（大 JPG / 小 jpg 混用），主写法 404 就换另一种再试
-        if (!ok && !nowKind) { url = this.precipUrlAlt(url); ok = await this._tryImg(url); }
-        if (ok) out.push({ url: url, t: dt, f: true });
-        if (onStep) onStep(out.length, n);
+        cand.push(dt);
+      }
+      // 两种扩展名并发各试一次（同一档的扩展名不统一：大 JPG / 小 jpg 混用）
+      const uMain = cand.map(dt => (nowKind ? this.precipNowUrl(dt) : this.precipUrl(dt, win)));
+      const uAlt = uMain.map(u => this.precipUrlAlt(u));
+      const [okMain, okAlt] = await Promise.all([
+        Promise.all(uMain.map(u => this._tryImg(u))),
+        Promise.all(nowKind ? cand.map(() => Promise.resolve(false)) : uAlt.map(u => this._tryImg(u)))
+      ]);
+      const out = [];
+      for (let k = 0; k < cand.length && out.length < n; k++) {
+        if (okMain[k]) out.push({ url: uMain[k], t: cand[k], f: true });
+        else if (okAlt[k]) out.push({ url: uAlt[k], t: cand[k], f: true });
       }
       out.sort((a, b) => a.t - b.t);
+      if (out.length) this._cachePut(key, out, 30 * 60000);     // 实况 1 小时 / 预报 6 小时 ⇒ 缓存 30 分钟
+      if (onStep) onStep(out.length, n);
       return out;
     },
 
