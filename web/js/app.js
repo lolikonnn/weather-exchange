@@ -682,13 +682,41 @@
        而 `curBar.high` / `curBar.low` 才是 `api.js` 里定过稿的「**官方优先、meteo 补缺**」
        值（见 `api.js:1478` `b.high = o.high`，`hlSrc` 就标在它上面）。
        同一个文件里 5 日预报那条路（`app.js:839-840`）早就写着"不许再优先 Open-Meteo"，
-       这里却正是它警告的那种写法 —— 于是「区间来自 meteo、最新价来自气象局实况」，
-       价自然会跑到区间外面去（使用者报的"比今日最低还低 / 比今日最高还高"）。
-       改成跟 `app.js:839-840` 同一个口径：**官方 → meteo 日聚合 → 逐小时聚合**。 */
-    const hiToday = curBar ? (curBar.high != null ? curBar.high : curBar.h)
+       这里却正是它警告的那种写法。先把它改成同一口径，作为**下面的兜底**。 */
+    const offHi = curBar ? (curBar.high != null ? curBar.high : curBar.h)
       : (offToday ? offToday.high : null);
-    const loToday = curBar ? (curBar.low != null ? curBar.low : curBar.l)
+    const offLo = curBar ? (curBar.low != null ? curBar.low : curBar.l)
       : (offToday ? offToday.low : null);
+
+    /* ── 「今日最高/最低」＝**今天已经发生过的极值** ──────────────────────
+       为什么不能直接用上面那两个：
+         · `offHi/offLo`（官方）是**预报**高低温，预报是几小时前发的，实况冲过它就会出现
+           「最新价 > 今日最高」这种自相矛盾的画面 —— 使用者报的正是它；
+         · meteo 聚合的 `curBar.h/.l` 把**今天还没到的小时**也算进去，同样会被实况冲过。
+       所以今天这一格只认"已经发生过"的：**今天已过去的逐小时 + 最新价本身**，取 min/max。
+       凌晨刚过零点、一个已过去的时次都没有时，退回上面那两个（那时也没有"已发生"可言）。
+       ⚠ 只动这两个数：行情栏其它格子**不加不减不改**。
+         （`全天波动` 是从这两个数算出来的，会跟着走 —— 那是同一件事的两面，不是新格子。） */
+    let hiToday = offHi, loToday = offLo;
+    if (curBar && d.hourly && d.hourly.time && d.hourly.temp) {
+      const day = curBar.d;                                   // 'YYYY-MM-DD'
+      const hh = new Date().getHours();
+      const cut = day + 'T' + (hh < 10 ? '0' + hh : hh);      // 与 hourly.time 同形，直接比字符串
+      const T = d.hourly.time, V = d.hourly.temp;
+      let h = null, l = null;
+      for (let i = 0; i < T.length; i++) {
+        const k = String(T[i]).replace(' ', 'T').slice(0, 13);
+        if (k.slice(0, 10) !== day || k > cut) continue;       // 不是今天、或今天还没到 → 不算
+        const x = V[i];
+        if (x == null) continue;
+        if (h == null || x > h) h = x;
+        if (l == null || x < l) l = x;
+      }
+      // 最新价本身就是"刚刚发生的一次观测"，必须并进区间（这样它永远不可能落在外面）
+      const nv = (q.temp != null) ? q.temp : ((d.now && d.now.temp != null) ? d.now.temp : null);
+      if (nv != null) { h = (h == null) ? nv : Math.max(h, nv); l = (l == null) ? nv : Math.min(l, nv); }
+      if (h != null && l != null) { hiToday = h; loToday = l; }
+    }
     const prevBar = ti > 0 ? d.daily[ti - 1] : null;
     const base = d.base;
     const chg = q.chg, pct = q.pct;
