@@ -891,7 +891,10 @@ body{
   border-left:3px solid var(--flat);border-radius:3px;padding:8px 10px;flex:none;
 }
 .wx-warn-t{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt-hi);font-weight:600}
-.wx-warn-tag{flex:none;padding:1px 6px;border-radius:2px;color:#1a1400;font-size:11px;font-weight:700}
+/* ⚠ 这一格必须**定宽**。shortWarn() 取出来的是「大风 / 沙尘暴 / 道路结冰 / 雷雨大风 / 预警」
+   —— 1～4 个字都有，宽度不一，于是后面那句预警标题整排在 268…290 之间左右跳（实测偏 22px）。
+   定宽 56px：4 个 11px 粗体中文字约 44px，加左右各 6px 内边距正好；短的就居中留白。 */
+.wx-warn-tag{flex:none;width:56px;box-sizing:border-box;text-align:center;padding:1px 0;border-radius:2px;color:#1a1400;font-size:11px;font-weight:700}
 .wx-warn-time{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono)}
 .wx-warn-x{margin-top:6px;color:var(--txt);font-size:12px;line-height:1.6;white-space:pre-wrap}
 /* 「离你多远」那一小段，跟时间同行右对齐 */
@@ -910,10 +913,17 @@ body{
 }
 .wx-qk-place{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wx-qk-d{flex:none;color:var(--accent);font-size:11.5px;font-family:var(--mono)}
-.wx-qk-meta{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono)}
+/* 元信息那行做成 flex：左边一串流水账（时间 · 深度 · 震度 · 烈度 · 自动测定），
+   右端固定放来源。原来源是**接在流水账后面**的，而流水账长短不一
+   （实测来源标签的左缘在 365.7…406.3 之间跳，偏 40.6px）——
+   一列来源扫下来对不齐，也就失去了"一眼看出这条是谁报的"的意义。
+   `margin-left:auto` 把它顶到最右，右缘就稳定了；窄屏放不下时整块换行，仍然靠右。 */
+.wx-qk-meta{color:var(--dim);font-size:11px;margin-top:4px;font-family:var(--mono);
+  display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline}
+.wx-qk-mx{min-width:0}
 /* 逐条来源标签（中国地震台网 / 日本气象厅 / USGS）。合并三路之后每一行都得说清是谁报的，
    压暗一档让它退到时间/深度后面去。 */
-.wx-qk-src{color:var(--dim2)}
+.wx-qk-src{margin-left:auto;flex:none;color:var(--dim2)}
 /* CENC 的 `type: automatic` = 自动测定、还没人工复核。这个区别有意义（自动测定会改），
    但也不能抢戏，所以给它一个安静的小标签而不是告警色。 */
 .wx-qk-auto{color:var(--accent)}
@@ -1012,7 +1022,8 @@ body{
    于是后半截整排左右跳，看着歪歪扭扭。定宽之后行与行才对得齐。
    ⚠ `flex-wrap:wrap` 是必须的：竖屏一行放不下时让「今夜 …」整段落到下一行，
      而那一行的起点**仍在值这一列里**（不会跑回名字列最左边）。
-   ⚠ `.wc-w` 要能收缩，所以它的选择器必须比 `>i{flex:none}` 更具体。 */
+   ⚠ 但**光有 wrap 还不够**：换行位置必须只由定宽列决定，绝不能由某一格自己的文字长短决定，
+     否则同一张表里会长短两行各歪各的（`.wc-w` 就踩过这个坑，见下面的注释）。 */
 .wx-as-cols{display:flex;align-items:baseline;flex-wrap:wrap;min-width:0}
 .wx-as-cols>i{flex:none;font-style:normal}
 .wx-as-cols>i+i{margin-left:8px}
@@ -1020,8 +1031,23 @@ body{
 .wx-as-cols .wc-a{width:30px;text-align:right}   /* 高度  17°（地平线以下是 —） */
 .wx-as-cols .wc-d{width:58px}                    /* 方位  西南偏北 */
 .wx-as-cols .wc-e{width:64px;text-align:right}   /* 距角  24° */
-.wx-as-cols .wc-x{color:var(--dim2)}             /* 「地平线下」小标签 */
-.wx-as-cols .wc-w{flex:1 1 auto;min-width:0;color:var(--dim)}   /* 今夜时段，放不下就换行 */
+/* ⚠ 「地平线下」这一格**必须定宽、并且每一行都要有**（不该有的时候留空）。
+   最初它是"有就插、没有就省"的标签，于是没有它的那一行（行星正好在地平线上）
+   后面的「今夜 …」整个提前了 52px —— 使用者一眼就看出来那行歪了。
+   空格子比省掉更整齐：列是给眼睛看的，不是给 DOM 省节点用的。 */
+.wx-as-cols .wc-x{width:52px;color:var(--dim2)}
+/* 「日月」页那张时段表用的两格：时段（`06:16 → 17:45`，有时只有起始时刻没有结束，
+   宽度会差一个等宽字符）+ 时长。定时段宽度就够 —— 时长本身长短无所谓，它是行尾。 */
+.wx-as-cols .wc-t2{width:118px}
+.wx-as-cols .wc-d2{flex:none;color:var(--dim2)}
+/* ⚠ 这一格必须是**定宽且不收缩**（flex:none + 固定宽度），不能写成 `flex:1 1 auto`。
+   写成自适应时它会"能塞下就挤在「地平线下」右边、塞不下就自己另起一行" ——
+   于是同一张表里，文字短的两行（`今夜不升到 10°`）今夜在 x=186，
+   文字长的五行（`今夜 02:43→05:49（最高 46°） · 共 3 小时 06 分`）今夜在 x=126，
+   整列歪 60px。**实测确认**：`.wc-x` 七行都在 x=126/w52，`.wc-w` 却分成 186 与 126 两档。
+   定宽之后，换行位置只由前面那几个定宽列决定，跟这一格自己的文字长短彻底无关。
+   `max-width:100%` 是防极窄屏横向溢出（定宽 340 > 值列宽时会顶出去）。 */
+.wx-as-cols .wc-w{flex:none;width:340px;max-width:100%;color:var(--dim)}
 .wx-as-cols .wc-dim{color:var(--dim2)}
 
 /* Kp 柱状图：柱子按 Kp/9 的高度撑，颜色直接用 kpScale 的分级色 */
@@ -1267,5 +1293,12 @@ body.fullchart .mtabs{visibility:hidden}
      126 在窄屏上纯属浪费。省下的 30px 留给值那一列 —— 行星行现在多了「今夜时段」，
      不然它会被挤到第三行去。 */
   .wx-as-row2>b{width:96px}
+  /* 值内子列在窄屏也要收一收。不收的话 360px 屏上值列只有 222px，
+     `m+a+d` 已经 174（含间距），再放 `e` 要 246 —— 于是「距角 175°」被挤到自己一行，
+     行星表每行凭空多出一行。收完 56+28+52+58 = 194，加 3 个 8px 间距 = 218 ≤ 222。 */
+  .wx-as-cols .wc-m{width:56px}
+  .wx-as-cols .wc-a{width:28px}
+  .wx-as-cols .wc-d{width:52px}
+  .wx-as-cols .wc-e{width:58px}
 }
 

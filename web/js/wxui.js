@@ -1088,11 +1088,15 @@
           '<div class="wx-qk-top"><span class="wx-qk-mag" style="background:' + col + '">M' + mag + '</span>' +
           '<span class="wx-qk-place">' + esc(q.place || '（无地点描述）') + '</span>' +
           (r.d != null ? '<span class="wx-qk-d">' + Math.round(r.d) + ' km</span>' : '') + '</div>' +
-          '<div class="wx-qk-meta">' + esc(fmtT(q.t)) +
+          /* ⚠ 左边那串流水账要**整体包一个 span**，来源单独一格靠右。
+             原来源是直接接在流水账后面的，而流水账长短不一（深度/震度/烈度/自动测定
+             都是"有才写"），于是来源标签的左缘在 365.7…406.3 之间跳 —— 一列来源扫下来
+             对不齐，"一眼看出这条是谁报的"就没了。现在用 flex + margin-left:auto。 */
+          '<div class="wx-qk-meta"><span class="wx-qk-mx">' + esc(fmtT(q.t)) +
           (q.depth != null && isFinite(q.depth) ? ' · 深 ' + Math.round(q.depth) + ' km' : '') +
           intTxt +
           (q.auto ? ' · <span class="wx-qk-auto">自动测定</span>' : '') +
-          ' · <span class="wx-qk-src">' + srcTxt + '</span>' +
+          '</span><span class="wx-qk-src">' + srcTxt + '</span>' +
           '</div>' +
           (q.tsunami ? '<div class="wx-qk-tsu">🌊 ' + esc(q.tsunami) + '</div>' : '') +
           '</div>';
@@ -1650,7 +1654,10 @@
         '<i class="wc-a">' + (p.up ? Math.round(p.alt) + '°' : '—') + '</i>' +
         '<i class="wc-d">' + esc(p.dir) + '</i>' +
         '<i class="wc-e">距角 ' + Math.round(p.elong) + '°</i>' +
-        (p.up ? '' : '<i class="wc-x">地平线下</i>') +
+        // ⚠ 这一格**有没有内容都要渲染**：定宽的空格子占住位置，下面「今夜 …」才会
+        //   在每一行都从同一个 x 开始。当初写成 `p.up ? '' : '<i>地平线下</i>'`，
+        //   结果地平线以上那一行的今夜整个提前了 52px，一眼就看出歪。
+        '<i class="wc-x">' + (p.up ? '' : '地平线下') + '</i>' +
         winSeg(p.name) +
         '</span></div>';
     }).join('') + '</div>';
@@ -1844,9 +1851,14 @@
       WIN.map(w => {
         // ⚠「天黑 → 天亮」是**跨午夜**的，w[2] < w[1]，直接相减会得到负数被夹成 0 分。
         const dur = (w[1] && w[2]) ? (w[2] > w[1] ? w[2] - w[1] : w[2] - w[1] + 86400000) : null;
-        return '<div class="wx-as-row2"><b>' + w[0] + '</b><span>' +
-          (w[1] ? asHM(w[1]) : '--') + (w[2] ? ' → ' + asHM(w[2]) : '') +
-          (dur != null ? '　<i>' + asDur(dur) + '</i>' : '') + '</span></div>';
+        /* ⚠ 时段那一格要**定宽**。原来是 `(起始) + (结束) + '　<i>时长</i>'` 直接串下来，
+           而有的时段没有结束时刻（`asHM(w[1])` 后面为空），文字就短一截，
+           后面的时长整排在 423.8…431.1 之间跳（实测偏 7.3px，正好一个等宽字符）。
+           定宽之后时长从同一列开始。 */
+        return '<div class="wx-as-row2"><b>' + w[0] + '</b><span class="wx-as-cols">' +
+          '<i class="wc-t2">' + (w[1] ? asHM(w[1]) : '--') +
+          (w[2] ? ' → ' + asHM(w[2]) : '') + '</i>' +
+          (dur != null ? '<i class="wc-d2">' + asDur(dur) + '</i>' : '') + '</span></div>';
       }).join('') + '</div>';
     html += '<div class="wx-as-foot">全部在本地推算（astro.js，Meeus 简化式）：' +
       '日出日落 ±1 分钟、月出月落 ±10 分钟、月球距离 ±0.3%。' +
