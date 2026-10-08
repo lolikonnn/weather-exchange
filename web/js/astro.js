@@ -524,6 +524,14 @@
     };
   }
 
+  /** 日地距离（AU）。就是地球轨道的**日心半径** —— 跟 `planets()` 里算地球位置用的是
+      同一个量。太阳的视直径、以及"现在离太阳近不近"（近日点 1 月初、远日点 7 月初）都靠它。 */
+  function sunDist(ms) {
+    const T = (jdOf(ms) - 2451545.0) / 36525;
+    const E = helio(EARTH_EL, EARTH_RT, T);
+    return Math.sqrt(E.x * E.x + E.y * E.y + E.z * E.z);
+  }
+
   /** 视星等的经验式（Mallama 那一套的简化版，土星环忽略不计） */
   /** 行星的视星等：V = H + 5·log10(r·Δ) + 相位项。
       前五颗用 Astronomical Almanac 的经典拟合（含相位角的多项式）；
@@ -775,6 +783,7 @@
   global.ASTRO = {
     // 基础几何
     sunAlt: sunAlt, moonAlt: moonAlt, sunRaDec: sunRaDec, moonRaDec: moonRaDec,
+    sunDist: sunDist,
     azOf: azOf, dirName: dirName,
     // 月相与月亮
     moonPhase: moonPhase, moonPhaseTxt: moonPhaseTxt,

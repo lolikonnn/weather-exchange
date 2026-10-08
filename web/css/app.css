@@ -1047,7 +1047,13 @@ body{
    土星/天王星/海王星恰好都是三位数，看起来就像"加了这两颗星才歪的"。
    现在格内不断行：真放不下时宁可溢出几像素到 8px 的格间空隙里（看不出来），
    也绝不折行。换行只允许发生在**格子与格子之间**。 */
-.wx-as-cols>i{flex:none;font-style:normal;white-space:nowrap}
+/* ⚠ 这一格要用**正常值颜色**，不能沿用 `.wx-as-row2 i` 的 `--dim2`。
+   上面那条 `i{color:var(--dim2)}` 本来是给「日月」页的**时长**那种次要注解用的，
+   而 `.wx-as-cols>i` 装的是**主值** —— 于是同一个抽屉里，用 `<span>` 写的行（月亮此刻）
+   是亮的、用 `.wx-as-cols` 写的行（太阳此刻、行星表）是暗的，同一份数据两种亮度。
+   使用者一眼就看出来了。次要格子各自有更具体的选择器（`.wc-x` / `.wc-w` / `.wc-d2` / `.wc-dim`），
+   要压暗在它们自己那儿压。 */
+.wx-as-cols>i{flex:none;font-style:normal;white-space:nowrap;color:var(--txt-hi)}
 .wx-as-cols>i+i{margin-left:8px}
 .wx-as-cols .wc-m{width:62px;text-align:right}   /* 星等  -0.05 等 */
 .wx-as-cols .wc-a{width:30px;text-align:right}   /* 高度  17°（地平线以下是 —） */

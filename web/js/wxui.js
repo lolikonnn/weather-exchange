@@ -1826,7 +1826,14 @@
           : '') +
         '数据来源：NOAA SWPC（免 key、CORS 全开）。Kp 是三小时一档的地磁活动指数，' +
         '5 以上算地磁暴，也就是 G1～G5；极光概率来自 OVATION 模型的 1° 全球网格，' +
-        '<b>是"这一个经纬度格"的概率，不是全国的</b>。</div>';
+        '<b>是"这一个经纬度格"的概率，不是全国的</b>。<br>' +
+        /* 使用者问过："极光页里那些跟太阳有关的项目，哪些该放这页、哪些该放日月页的『太阳此刻』？"
+           答案按**这条因果链**划：耀斑 → 太阳风 → Bz → Kp → 极光，四段都在这一页，
+           拆开就断了因果；而"太阳现在在哪个方位、离地球多远、今天正午多高"是太阳**自身**的
+           位置与距离，跟地磁无关，归「日月」页。黑子数留在这里，因为它是这条链的**背景强度**。 */
+        '太阳**自身**的方位、高度、日地距离、正午高度角在「🌗 日月」页的『太阳此刻』里 —— ' +
+        '这一页只放<b>地球端被扰成什么样</b>，以及那条链条本身：耀斑 → 太阳风 → Bz → Kp → 极光。' +
+        '黑子数留在这儿，因为它是这条链的<b>背景强度</b>（一整个月的活动水平）。</div>';
       pane.innerHTML = html;
     }).catch(e => {
       if (asStale(pane, 'aurora')) return;
@@ -1875,11 +1882,31 @@
     const sa = spos.alt;
     const sPhase = sa > 0 ? '白天' : sa > -0.833 ? '太阳刚过地平线' : sa > -4 ? '黄金时刻'
       : sa > -6 ? '蓝调时刻' : sa > -18 ? '天文暮光' : '天已黑透';
+    /* 太阳**自身**的几个量，全部本地算得出来（这一页因此仍然"一个网络请求都不发"）：
+       日地距离（近日点 1 月初 ≈ 0.983 AU、远日点 7 月初 ≈ 1.017 AU），
+       由它推出的视直径（≈ 0.524°～0.542°），以及今天太阳最高的那个高度角。
+       ⚠ 太阳黑子数与耀斑等级**故意不放这一页** —— 那两个要打 NOAA，会毁掉"本页不联网"这条；
+         它们留在地磁/极光页，因为那条因果链（耀斑 → 太阳风 → Bz → Kp → 极光）拆开就断了。 */
+    const AU_KM = 149597870.7, R_SUN = 695700;
+    const dAU = A.sunDist ? A.sunDist(now) : 1;
+    const dKm = dAU * AU_KM;
+    const sunSize = 2 * Math.asin(R_SUN / dKm) * 180 / Math.PI;
+    const noonAlt = 90 - Math.abs(c.lat - sr.dec);
     html += '<div class="wx-as-h2">太阳此刻</div><div class="wx-as-list">' +
       '<div class="wx-as-row2"><b>位置</b><span class="wx-as-cols">' +
       '<i>' + (sa > 0 ? Math.round(sa) + '° ' + esc(sdir) : '已落下（' + esc(sdir) + '）') + '</i>' +
       '<i>高度 ' + sa.toFixed(1) + '°</i>' +
       '<i>' + sPhase + '</i>' +
+      '</span></div>' +
+      '<div class="wx-as-row2"><b>日地距离</b><span class="wx-as-cols">' +
+      '<i>' + Math.round(dKm).toLocaleString('en-US') + ' km</i>' +
+      '<i>' + dAU.toFixed(4) + ' AU</i>' +
+      '<i>' + (dAU < 0.999 ? '偏近（近日点 1 月初）' : dAU > 1.001 ? '偏远（远日点 7 月初）' : '接近平均') + '</i>' +
+      '</span></div>' +
+      '<div class="wx-as-row2"><b>视直径</b><span class="wx-as-cols">' +
+      '<i>' + sunSize.toFixed(3) + '°</i></span></div>' +
+      '<div class="wx-as-row2"><b>今天正午</b><span class="wx-as-cols">' +
+      '<i>' + (noonAlt > 0 ? '太阳最高 ' + noonAlt.toFixed(1) + '°' : '太阳整天不升起（极夜）') + '</i>' +
       '</span></div></div>';
 
     // 月亮此刻 + 朔望倒计时：全部本地算（距离用 Meeus 前 5 项，误差 ±0.3%）
@@ -1888,19 +1915,27 @@
     const dNew = ((1 - mp.p) % 1) * A.SYNODIC;
     const dTxt = d => d < 0.05 ? '就是今天' : '还有 ' + d.toFixed(1) + ' 天';
     html += '<div class="wx-as-h2">月亮此刻</div><div class="wx-as-list">' +
-      '<div class="wx-as-row2"><b>位置</b><span>' +
-      (mpos.alt > 0 ? Math.round(mpos.alt) + '° ' + esc(mpos.dir) : '已落下（' + esc(mpos.dir) + '）') +
-      '　·　高度按月亮中心算</span></div>' +
-      '<div class="wx-as-row2"><b>距离</b><span>' +
-      Math.round(mpos.dist).toLocaleString('en-US') + ' km' +
-      (mpos.big ? '　·　偏近，超级月亮档' : mpos.small ? '　·　偏远（微月）' : '　·　常距') + '</span></div>' +
-      /* 视直径**不再挂括号说明**：那两个数字的变化本来就是上一行"距离"造成的，
-         而"偏近/偏远"已经写在距离那一行了 —— 同一件事说两遍，还把这一格撑成两行。
-         想看口径的话，页脚里有完整的一句。 */
-      '<div class="wx-as-row2"><b>视直径</b><span>' + mpos.size.toFixed(3) + '°</span></div>' +
-      '<div class="wx-as-row2"><b>下次满月</b><span>' + dTxt(dFull) + '</span></div>' +
-      '<div class="wx-as-row2"><b>下次新月</b><span>' + dTxt(dNew) +
-      '（新月前后几天的夜最黑，观星最佳）</span></div></div>';
+      /* ⚠ 跟「太阳此刻」用**同一套写法**：位置 + 高度各一格。
+         原来是 `已落下（西北）　·　高度按月亮中心算` —— 高度干脆没给数，
+         而太阳那边给了 -27.8°。同一个抽屉里两种给法，使用者一眼就问出来了。 */
+      '<div class="wx-as-row2"><b>位置</b><span class="wx-as-cols">' +
+      '<i>' + (mpos.alt > 0 ? Math.round(mpos.alt) + '° ' + esc(mpos.dir) : '已落下（' + esc(mpos.dir) + '）') + '</i>' +
+      '<i>高度 ' + mpos.alt.toFixed(1) + '°</i>' +
+      '</span></div>' +
+      /* ⚠ 这两张表的**每一行都用同一个结构**：`<b>字段名</b><span class="wx-as-cols"><i>值</i>…</span>`。
+         原来「距离」是一整句话、「视直径」是裸 span、「下次新月」把说明缀在值后面 ——
+         同一张表四种写法。使用者那条"同类要对称"的规矩，第一步就是**结构先一致**。 */
+      '<div class="wx-as-row2"><b>距离</b><span class="wx-as-cols">' +
+      '<i>' + Math.round(mpos.dist).toLocaleString('en-US') + ' km</i>' +
+      '<i>' + (mpos.big ? '偏近，超级月亮档' : mpos.small ? '偏远（微月）' : '常距') + '</i>' +
+      '</span></div>' +
+      '<div class="wx-as-row2"><b>视直径</b><span class="wx-as-cols">' +
+      '<i>' + mpos.size.toFixed(3) + '°</i></span></div>' +
+      '<div class="wx-as-row2"><b>下次满月</b><span class="wx-as-cols">' +
+      '<i>' + dTxt(dFull) + '</i></span></div>' +
+      '<div class="wx-as-row2"><b>下次新月</b><span class="wx-as-cols">' +
+      '<i>' + dTxt(dNew) + '</i>' +
+      '<i>新月前后几天的夜最黑，观星最佳</i></span></div></div>';
 
     html += '<div class="wx-as-h2">' + esc(c.name) + ' · 今天</div><div class="wx-as-list">' +
       WIN.map(w => {
@@ -1923,6 +1958,9 @@
       '<br>视直径随距离变：近地点约 0.56°、远地点约 0.49°，满月平均 0.518°。' +
       '差值肉眼分不出来，也只有拍照党在意 —— 所以上面「月亮此刻」里只给一个数，' +
       '「偏近 / 偏远」写在**距离**那一行（视直径的变化本来就是距离造成的，说两遍是重复）。' +
+      '<br>「位置」那一格的高度按**天体中心**算（太阳、月亮都是）——' +
+      '所以「已落下」指中心落到地平线以下。月面视直径有半个度，满月刚落下的那几分钟，' +
+      '上半边其实还露在地平线上；太阳同理，只是日面小得多，差不了几秒。' +
       (mp.illum > 0.7 ? '<br>⚠ 今晚月光很亮，深空天体基本被压住 —— 适合看月面和行星。' : '') +
       '<br>日月食<b>没有做</b>：找过 NASA/USNO 那几个免费源，本机要么域名解析不了、要么没有可直连的接口；' +
       '硬编码一张表又没法当场核验，宁可先不写（宁可没有，也不要写错的日子）。' +
