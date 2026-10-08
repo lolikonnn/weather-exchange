@@ -1306,12 +1306,24 @@ body.fullchart .mtabs{visibility:hidden}
 .wm-head{
   padding:13px 18px;border-bottom:1px solid var(--line);background:var(--bg2);
   border-radius:8px 8px 0 0;color:var(--txt-hi);font-size:14px;font-weight:600;
+  /* 内容变长之后整张卡会滚动（`.modal-card` 是 `max-height:88vh;overflow:auto`），
+     标题和底部那颗按钮得**粘住** —— 否则滚到中间时既看不到"这是什么"，
+     也看不到"怎么关掉"。 */
+  position:sticky;top:0;z-index:2;
   /* 竖屏上这句标题折成两行、末行只剩俩字（实测「…有件事得先说清楚」还差 3px 就一行）。
      `balance` 把两行劈匀 —— 它管不了"差 3px 就一行"这种，但能把孤字摊平。 */
   text-wrap:balance;
 }
 .wm-body{padding:16px 18px 4px;font-size:13px;line-height:1.75;color:var(--txt);text-wrap:pretty}
 .wm-body p{margin:0 0 12px}
+/* 免责声明升级成"分区"的（2026-10-08 使用者说「加了那么多功能免责声明是不是要补全一点了」）——
+   数据来源 / 本站自己算的 / 容易误会的事 / 隐私，四块。没有小标题就是一大坨，
+   读者根本不知道哪句在说哪件事。 */
+.wm-body h5{
+  margin:16px 0 8px;font-size:12.5px;font-weight:700;color:var(--accent);
+  letter-spacing:.4px;text-wrap:balance;
+}
+.wm-body h5:first-child{margin-top:0}
 /* 免责声明里那张「数据来源清单」和「容易误会的事」用列表 —— 以前全挤在段落里，
    加一个数据源就多一行字，读的人根本分不清哪句对应哪个来源。 */
 .wm-body ul.wm-list{margin:0 0 12px;padding-left:17px;list-style:disc}
@@ -1332,7 +1344,9 @@ body.fullchart .mtabs{visibility:hidden}
   text-align:center;color:var(--dim);font-size:12.5px;
   border-top:1px dashed var(--line2);padding-top:12px;
 }
-.wm-foot{padding:4px 18px 18px;display:flex;justify-content:flex-end}
+.wm-foot{padding:4px 18px 18px;display:flex;justify-content:flex-end;
+  position:sticky;bottom:0;background:var(--panel);z-index:2;
+  border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
 .btn-wm{
   height:32px;padding:0 18px;border-radius:var(--r);cursor:pointer;
   background:var(--accent);border:1px solid var(--accent);color:#1a1400;
