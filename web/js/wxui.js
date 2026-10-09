@@ -1332,6 +1332,18 @@
     const d = (t instanceof Date) ? t : new Date(t);
     return isNaN(d.getTime()) ? '--' : pad2(d.getHours()) + ':' + pad2(d.getMinutes());
   }
+  /** 时间段（`06:20 → 18:06`）的**对齐版**。
+   *  ⚠ 新规（2026-10-09 使用者原话）：「对于时间段……请保证箭头『→』是对齐的。
+   *    推广到全站，包括但不限于诸如『→』『~』等符号连接的两个时间」。
+   *  做法是把三样拆成三格：左截**右对齐**、箭头单独一格居中、右截左对齐，三格都定宽。
+   *  为什么不能靠"字体本来就等宽"：`--mono` 在安卓上不一定真落到等宽字体，
+   *  `06:20` 与 `05:57` 一旦度量不同、箭头就会左右漂 —— 拆成格子之后与字体彻底无关。
+   *  缺一头写 `--`，格子照样占位（跟 `.wc-x` 同一个道理：空格子比省掉整齐）。 */
+  function rangeHTML(a, b, sep) {
+    return '<i class="wc-r1">' + (a == null ? '--' : asHM(a)) + '</i>' +
+      '<i class="wc-rc">' + (sep || '→') + '</i>' +
+      '<i class="wc-r2">' + (b == null ? '--' : asHM(b)) + '</i>';
+  }
   /** 毫秒 → HH:MMZ。空间天气是全球量，报 UTC 比报本地时间更没有歧义。 */
   function asUTC(t) {
     const d = (t instanceof Date) ? t : new Date(t);
@@ -1720,11 +1732,14 @@
       if (!nightTxt) return '';
       const w = winOf[name];
       if (!w || !w.windows.length) return '<i class="wc-w wc-dim">今夜不升到 10°</i>';
-      const seg = w.windows.map(x => asHM(x.from) + '→' + asHM(x.to)).join('　·　');
+      /* 每个窗口一段 `rangeHTML`（三格定宽）—— 一行里有多个窗口时（`a→b ／ c→d`），
+         **每一个箭头**都落在同一列上，不受字体是否等宽影响。 */
+      const seg = w.windows.map(x => rangeHTML(x.from, x.to)).join('<i class="wc-rs">·</i>');
+      const multi = w.windows.length > 1;
       const hi = Math.max.apply(null, w.windows.map(x => x.maxAlt));
       return '<i class="wc-w">' +
         '<span class="nb">今夜 ' + seg + '</span>' +
-        (seg.indexOf('　·　') < 0 ? '<span class="nb">（最高 ' + Math.round(hi) + '°）</span>' : '') +
+        (!multi ? '<span class="nb">（最高 ' + Math.round(hi) + '°）</span>' : '') +
         '<span class="nb">· 共 ' + asDur(w.total) + '</span></i>';
     };
 
@@ -2003,10 +2018,14 @@
            而有的时段没有结束时刻（`asHM(w[1])` 后面为空），文字就短一截，
            后面的时长整排在 423.8…431.1 之间跳（实测偏 7.3px，正好一个等宽字符）。
            定宽之后时长从同一列开始。 */
-        return '<div class="wx-as-row2"><b>' + w[0] + '</b><span class="wx-as-cols">' +
-          '<i class="wc-t2">' + (w[1] ? asHM(w[1]) : '--') +
-          (w[2] ? ' → ' + asHM(w[2]) : '') + '</i>' +
-          (dur != null ? '<i class="wc-d2">' + asDur(dur) + '</i>' : '') + '</span></div>';
+      /* ⚠ 时段改成**三格对齐版**（2026-10-09 新规：箭头要对齐）。
+         原来是 `(起始) + ' → ' + (结束)` 串在一格里 —— 当时给它定宽 118px 是为了让
+         后面的时长从同一列开始；但**箭头本身**还是靠字体等宽来对齐的，
+         真机上一旦不是等宽字体就漂。现在拆成 `左截 / 箭头 / 右截` 三格定宽，
+         箭头永远在同一条竖线上（`rangeHTML()` 的注释里有完整理由）。 */
+      return '<div class="wx-as-row2"><b>' + w[0] + '</b><span class="wx-as-cols">' +
+        rangeHTML(w[1], w[2]) +
+        (dur != null ? '<i class="wc-d2">' + asDur(dur) + '</i>' : '') + '</span></div>';
       }).join('') + '</div>';
     /* ── 页脚只留**给用户看**的三件事 ──
        ① 精度（决定能不能拿它对表）；② 几个时刻名词的定义；③ 会让人误解的地方。

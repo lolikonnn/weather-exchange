@@ -1419,3 +1419,18 @@ body.fullchart .mtabs{visibility:hidden}
    跟 `.wc-x` 同一个道理：空格子比省掉更整齐，否则后面那格会左右跳。 */
 .wx-as-cols .wc-tn{width:56px;color:var(--accent)}
 
+/* 时间段的**对齐版**三格（2026-10-09 新规：「时间段……请保证箭头是对齐的，推广到全站」）。
+   左截右对齐、箭头单独一格居中、右截左对齐；三格都定宽 ⇒ 箭头落在同一条竖线上，
+   **与字体是否等宽无关**（真机上 `--mono` 不一定真等宽，`06:20` 与 `05:57` 会漂）。
+   用在「日月」页的今天表和「此刻星空」页的今夜时段。 */
+.wx-as-cols .wc-r1{display:inline-block;width:40px;text-align:right}
+.wx-as-cols .wc-rc{display:inline-block;width:16px;text-align:center;color:var(--dim2)}
+.wx-as-cols .wc-r2{display:inline-block;width:40px;text-align:left}
+/* 同一行里有多个窗口时的分隔符（`a→b · c→d`），跟箭头同色 */
+.wx-as-cols .wc-rs{display:inline-block;width:14px;text-align:center;color:var(--dim2)}
+/* ⚠ `display:inline-block` 不是可选的：这三格**有两种用法** ——
+   在「日月」页它们是 `.wx-as-cols` 的直接子元素（flex item，宽度天然生效）；
+   在「此刻星空」页它们嵌在 `.wc-w` 里的 `<span class="nb">` 内部，那里是**行内上下文**，
+   `<i>` 默认 `display:inline` ⇒ `width` 根本不生效（实测箭头左缘在 699.3~702 之间漂 2.7px，
+   正好是比例字体下 `18:28` 与 `03:04` 的数字宽度差）。改成 inline-block 后两处都成立。 */
+
