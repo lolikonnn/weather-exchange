@@ -1402,10 +1402,18 @@ body.fullchart .mtabs{visibility:hidden}
 .wx-as-tide-fill{fill:var(--accent);opacity:.12;stroke:none}
 .wx-as-tide-tr{stroke:var(--line2);stroke-width:1;vector-effect:non-scaling-stroke;opacity:.55}
 .wx-as-tide-ax{stroke:var(--dim2);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke;opacity:.8}
-.wx-as-tide-axl{fill:var(--dim2);font-size:9px;font-family:var(--mono)}
-.wx-as-tide-tx{fill:var(--dim2);font-size:9.5px;font-family:var(--mono)}
+/* ⚠ 曲线里的文字**全部搬到了 HTML**（2026-10-09 使用者截图："图里面的文字被压扁了"）：
+   SVG 用 `preserveAspectRatio="none"` 横向拉伸铺满宽度，里面的字会被一起拉扁；
+   线宽能靠 `vector-effect:non-scaling-stroke` 救，**文字救不了**。
+   所以下面这几条是 **HTML 标签**的样式，不是 SVG `<text>` 的。 */
+.wx-as-tide-wrap{position:relative;flex:none}
+.wx-as-tide-axis{display:flex;justify-content:space-between;font-size:9.5px;color:var(--dim2);
+  font-family:var(--mono);margin-top:-15px;padding:0 2px}
+.wx-as-tide-nowlab{position:absolute;top:1px;transform:translateX(-50%);font-size:9.5px;
+  color:var(--txt-hi);font-family:var(--mono);opacity:.85;white-space:nowrap}
+.wx-as-tide-zerolab{position:absolute;right:2px;transform:translateY(-105%);font-size:9px;
+  color:var(--dim2);font-family:var(--mono);white-space:nowrap}
 .wx-as-tide-now{stroke:var(--txt-hi);stroke-width:1;stroke-dasharray:2 2;vector-effect:non-scaling-stroke;opacity:.7}
-.wx-as-tide-nowt{fill:var(--txt-hi);font-size:9.5px;font-family:var(--mono);opacity:.85}
 
 /* 潮汐页那两张表的两格。**判据还是"贴近不变的那一侧"**（见上面 .wc-e / .wc-d2 那两段）：
    潮位写成 `-0.62 米` / `0.73 米` / `-1.05 米`，不变的是末尾那个「米」和等宽字体的对齐，

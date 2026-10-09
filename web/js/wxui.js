@@ -2155,7 +2155,17 @@
           '<div class="wx-as-note">' + DATUM_TXT + '。</div>';
       }
 
-      /* ② 未来 24 小时曲线（内联 SVG，不引图表库） */
+      /* ② 未来 24 小时曲线（内联 SVG，不引图表库）
+         ⚠ **「图里的文字被压扁」这个 bug**（使用者 2026-10-09 截图）：这张图用
+           `viewBox="0 0 320 104"` + `preserveAspectRatio="none"`，会被横向拉伸到实际宽度 ——
+           `none` 是"横竖各拉各的"，于是**图里的文字和线宽一起被横向拉扁**。
+           线宽能用 `vector-effect:non-scaling-stroke` 抵掉，**文字抵不掉**。
+         ⚠ 试过的另一条路是"按实际渲染宽度建 viewBox"（缩放系数正好=1）——
+           它在**抽屉还没布局时量到 0**，探针里当场撞上（viewBox 298 / 实测 0px），不可靠。
+         ✅ 最终做法：**把文字全部搬出 SVG**。SVG 只画线（拉伸无所谓）；
+           刻度用一行 `justify-content:space-between` 的 HTML（两端正好落在首尾网格线上），
+           「现在」与「0 平均海平面」用百分比定位的 HTML 标签。与拉伸彻底无关，
+           改窗口大小也不会变形。 */
       if (tl.length > 2) {
         const W = 320, H = 104, PL = 8, PR = 8, PT = 10, PB = 18;
         let mn = Infinity, mx = -Infinity;
@@ -2167,28 +2177,33 @@
         const Y = v => H - PB - (v - mn) / (mx - mn) * (H - PT - PB);
         const line = tl.map(p => X(p.time.getTime()).toFixed(1) + ',' + Y(p.level).toFixed(1)).join(' ');
         const area = PL + ',' + (H - PB) + ' ' + line + ' ' + (W - PR) + ',' + (H - PB);
+        /* 零线（平均海平面）：只画虚线，文字交给外面的 HTML 标签 */
         let ax = '';
         if (mn < 0 && mx > 0) ax += '<line x1="' + PL + '" y1="' + Y(0).toFixed(1) + '" x2="' + (W - PR) +
-          '" y2="' + Y(0).toFixed(1) + '" class="wx-as-tide-ax"/><text x="' + (W - PR) + '" y="' +
-          (Y(0) - 3).toFixed(1) + '" class="wx-as-tide-axl" text-anchor="end">0 平均海平面</text>';
-        const ticks = [];
+          '" y2="' + Y(0).toFixed(1) + '" class="wx-as-tide-ax"/>';
+        const ticks = [], labs = [];
         for (let k = 0; k <= 4; k++) {
           const t = t0 + (t1 - t0) * k / 4;
           ticks.push('<line x1="' + X(t).toFixed(1) + '" y1="' + PT + '" x2="' + X(t).toFixed(1) +
-            '" y2="' + (H - PB) + '" class="wx-as-tide-tr"/>' +
-            '<text x="' + X(t).toFixed(1) + '" y="' + (H - 6) + '" class="wx-as-tide-tx" text-anchor="' +
-            (k === 0 ? 'start' : (k === 4 ? 'end' : 'middle')) + '">' + asHM(t) + '</text>');
+            '" y2="' + (H - PB) + '" class="wx-as-tide-tr"/>');
+          labs.push('<span>' + asHM(t) + '</span>');
         }
         const nowX = X(now);
         html += '<div class="wx-as-h2">未来 24 小时</div>' +
+          '<div class="wx-as-tide-wrap">' +
           '<svg class="wx-as-tide" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
           ticks.join('') + ax +
           '<polygon points="' + area + '" class="wx-as-tide-fill"/>' +
           '<polyline points="' + line + '" class="wx-as-tide-line"/>' +
           '<line x1="' + nowX.toFixed(1) + '" y1="' + PT + '" x2="' + nowX.toFixed(1) + '" y2="' + (H - PB) +
           '" class="wx-as-tide-now"/>' +
-          '<text x="' + nowX.toFixed(1) + '" y="' + (PT + 9) + '" class="wx-as-tide-nowt" text-anchor="middle">现在</text>' +
           '</svg>' +
+          '<span class="wx-as-tide-nowlab" style="left:' + (nowX / W * 100).toFixed(2) + '%">现在</span>' +
+          (mn < 0 && mx > 0
+            ? '<span class="wx-as-tide-zerolab" style="top:' + (Y(0) / H * 100).toFixed(2) + '%">0 平均海平面</span>'
+            : '') +
+          '<div class="wx-as-tide-axis">' + labs.join('') + '</div>' +
+          '</div>' +
           '<div class="wx-as-note">实线是潮位曲线，虚线是「现在」。' +
           '曲线是<b>天文潮</b> —— 不含台风风暴增水和气压效应，所以天文大潮叠上台风时，' +
           '实际水位会比它高一两米。</div>';
@@ -2227,12 +2242,15 @@
         const maxR = Math.max.apply(null, rng);
         html += '<div class="wx-as-h2">未来 7 天</div><div class="wx-as-list">' +
           days.map((d, i) => '<div class="wx-as-row2"><b>' + (d.t.getMonth() + 1) + '/' + d.t.getDate() +
-            '　' + (d.hi ? asHM(d.hi) + ' 首次高潮' : '—') + '</b><span class="wx-as-cols">' +
+            ' ' + (d.hi ? asHM(d.hi) : '—') + '</b><span class="wx-as-cols">' +
             '<i class="wc-tv">潮差 ' + rng[i].toFixed(2) + ' 米</i>' +
             '<i class="wc-tn">' + (rng[i] >= maxR - 0.05 ? '本周最大' : '') + '</i>' +
             '</span></div>').join('') + '</div>' +
-          '<div class="wx-as-note">「潮差」＝当天最高减最低。高潮时刻每天比前一天<b>晚约 50 分钟</b>' +
-          '（月亮每天晚约 50 分钟回到同一位置），潮差则随朔望起落 —— 朔望那几天最大。</div>';
+          /* ⚠ 名字列里原来写的是 `10/12 00:49 首次高潮`，11 个字塞进 126px 的定宽格会**折成两行**
+             （截图里就是「首次高 / 潮」）。把"首次高潮"这句话挪到页脚说一次即可，
+             名字列只留 `日期 时刻`（11 个字符，不折行）。 */
+          '<div class="wx-as-note">左边是该日<b>第一次高潮</b>的时刻，右边是<b>潮差</b>（当天最高减最低）。' +
+          '高潮每天比前一天<b>晚约 50 分钟</b>（月亮每天晚约 50 分钟回到同一位置），潮差随朔望起落 —— 朔望那几天最大。</div>';
       }
 
       /* ⑤ 潮汐类型 + 月亮过中天 + 本站潮汐间隙
