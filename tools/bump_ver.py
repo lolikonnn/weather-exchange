@@ -76,6 +76,7 @@ TARGETS = [
     "js/chart.js",
     "js/weather.js",
     "js/astro.js",
+    "js/tide.js",
     "js/wxui.js",
     "js/app.js",
     "js/game.js",

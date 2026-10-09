@@ -1114,9 +1114,13 @@
     },
 
     /* ── 天文 ──
-       四页：观星 / 极光 / 日月 / 流星雨。
-       只有极光那页要打 NOAA SWPC（免 key、CORS 全开），其余三页全靠 astro.js
-       在本地推算 —— 打开就是瞬时的，也不占任何接口额度。 */
+       七页：观星条件 / 此刻星空 / 朝霞晚霞 / 极光（空间天气）/ 日月 / 流星雨 / 潮汐。
+       页序不是随便排的：前两页是"抬头看"，中间三页是"天象与地磁"，最后两页是有明确
+       日历或时刻的东西。**同一类东西不要跨页重复**（光污染只在观星页、月相只在日月页、
+       太阳活动只在极光页）—— 抬头每翻一页都重复一遍，使用者上次已经打回过一次。
+       联网的只有三处：极光页打 NOAA SWPC（免 key、CORS 全开）、观星页的云量走主站
+       已有的那套数据、潮汐页读本站烘好的调和常数（Neaps/TICON-4，CC BY 4.0）；
+       其余全靠 astro.js 在本地推算 —— 打开就是瞬时的，也不占任何接口额度。 */
     _as: { page: 'star' },
     openAstro(page) {
       const body = $('#wxAstroBody'), sub = $('#wxAstroSub');
@@ -1126,8 +1130,17 @@
       const c = (app && app.S && app.S.cur) || null;
       const d = (app && app.S && app.S.data) || null;
       const me = this;
-      const PAGES = [['star', '✨ 观星'], ['sky', '🌟 此刻'], ['glow', '🌇 霞'], ['aurora', '🌌 极光'],
-        ['moon', '🌗 日月'], ['meteor', '☄️ 流星雨']];
+      /* 页签的措辞改过一轮（2026-10-09 使用者让"整理一遍，标题跟内容不贴的改掉"）：
+         · 「观星」→「观星条件」：这一页答的是"今晚能不能看、哪儿最合适"，
+           主体是评分 + 光污染天花板 + 逐小时 + 全年气候，单叫"观星"太像个动作；
+         · 「此刻」→「此刻星空」：这页是亮星/行星/月亮/银心现在在哪儿，
+           原来的「此刻」既没说是什么的此刻，emoji 又跟上一页的 ✨ 撞脸（🌟 vs ✨）；
+         · 「霞」→「朝霞晚霞」：原来的单字在页签里认不出是朝霞还是晚霞；
+         · 「极光」→「极光 · 空间天气」：这页有一半是太阳风/耀斑/Kp 指数本身，
+           光写"极光"会让想看太阳活动的人不知道这些东西在这儿。 */
+      const PAGES = [['star', '✨ 观星条件'], ['sky', '🔭 此刻星空'], ['glow', '🌇 朝霞晚霞'],
+        ['aurora', '🌌 极光 · 空间天气'], ['moon', '🌗 日月'], ['meteor', '☄️ 流星雨'],
+        ['tide', '🌊 潮汐']];
       body.innerHTML =
         '<div class="wx-seg">' + PAGES.map(p =>
           '<button class="wx-segbtn' + (p[0] === this._as.page ? ' on' : '') +
@@ -1169,6 +1182,7 @@
       if (this._as.page === 'glow') { asGlow(pane, subW, c, d, now); return; }
       if (this._as.page === 'moon') { asMoon(pane, subW, c, now); return; }
       if (this._as.page === 'meteor') { asMeteor(pane, subW, c, now); return; }
+      if (this._as.page === 'tide') { asTide(pane, subW, c, now); return; }
       asStar(pane, subW, c, d, now);
     },
 
@@ -2043,6 +2057,141 @@
       '挑后半夜（辐射点最高），避开月光和城市灯光。<br>' +
       '当前月相 ' + mpNow.emoji + mpNow.name + '（照亮 ' + Math.round(mpNow.illum * 100) + '%）。</div>';
     pane.innerHTML = html;
+  }
+
+  /* ── ⑦ 潮汐 ──
+     这一页跟前六页**本质不同**：前六页都是"给一个经纬度就能现推"，这一页是
+     **查一张烘好的站表**（`web/data/tide.json`，16 个站）再用 `vendor/neaps-tide.js`
+     把 50 个分潮求和。所以"借的是哪个站、离本城多远"必须写在脸上 ——
+     隔几十公里，潮时就能差十几分钟到一小时。
+     真值与精度：见 `web/js/tide.js` 文件头（对着香港天文台官方预报验过，去基准面差
+     之后平均绝对差 3.6 厘米）。 */
+  function asTide(pane, sub, c, now) {
+    const TD = global.TIDEDATA;
+    if (!TD) { pane.innerHTML = '<div class="wx-load">tide.js 没加载出来</div>'; return; }
+    pane.innerHTML = '<div class="wx-load">正在算潮汐…</div>';
+    const SRC = '调和常数：<b>Neaps tide-database</b> 的 TICON-4 / NOAA（CC BY 4.0）· ' +
+      '分潮求和：@neaps/tide-predictor（MIT）· 全部在本地算，不联网。';
+    const DATUM_TXT = '水位相对<b>平均海平面</b>（不是相对理论最低潮面，所以低潮时是负数）';
+
+    TD.of(c.id != null ? c.id : '', c.lat, c.lon).then(function (rec) {
+      if (!rec) {
+        if (sub) sub.textContent = '这一带没有潮汐站';
+        pane.innerHTML =
+          '<div class="wx-as-lead"><span class="wx-as-big">—</span>' +
+          '<span class="wx-as-leadlab"><b>这一带没有潮汐站</b><br>' +
+          '能算潮汐的站只有沿海那 16 个，最近的也在 150 公里以外</span></div>' +
+          '<div class="wx-as-note">潮汐是<b>地方性</b>的东西：同一个海区，隔几十公里潮时就能差半小时。' +
+          '所以宁可不显示，也不拿几百公里外的站冒充本地。</div>' +
+          '<div class="wx-as-foot">' + SRC + '</div>';
+        return;
+      }
+      const st = rec.st;
+      const lv = TD.levelAt(rec, now);
+      const lvPrev = TD.levelAt(rec, now - 3600000);
+      const rate = (lv != null && lvPrev != null) ? (lv - lvPrev) : null;   // 米/小时
+      const ph = TD.phase(now);
+      const tl = TD.curve(rec, now - 6 * 3600000, now + 30 * 3600000) || [];
+      const ex = (TD.extremes(rec, now - 6 * 3600000, now + 66 * 3600000) || [])
+        .filter(e => e.time.getTime() >= now - 1800000);
+
+      /* 抬头那半句：站名 + 距离 + 大潮小潮。抬头由外层自动加「📍 城市名」前缀。 */
+      if (sub) {
+        sub.textContent = st.name + ' 站 · 距本城 ' + rec.km + ' km' + (ph ? ' · ' + ph.label : '');
+      }
+
+      let html = '';
+      /* ① 此刻 */
+      if (lv != null) {
+        const dir = rate == null ? '' : (rate > 0.005 ? '正在涨' : (rate < -0.005 ? '正在落' : '平潮'));
+        const arrow = rate == null ? '' : (rate > 0.005 ? '↑' : (rate < -0.005 ? '↓' : '→'));
+        html += '<div class="wx-as-lead">' +
+          '<span class="wx-as-big">' + lv.toFixed(2) + '</span>' +
+          '<span class="wx-as-leadlab"><b>米 · ' + esc(dir) + ' ' + arrow + '</b><br>' +
+          (rate == null ? '（算不出变化率）'
+            : '每小时 ' + (rate >= 0 ? '+' : '') + (rate * 100).toFixed(0) + ' 厘米') +
+          '　·　' + (ph ? ph.label : '') + '</span></div>' +
+          '<div class="wx-as-note">' + DATUM_TXT + '。</div>';
+      }
+
+      /* ② 未来 24 小时曲线（内联 SVG，不引图表库） */
+      if (tl.length > 2) {
+        const W = 320, H = 104, PL = 8, PR = 8, PT = 10, PB = 18;
+        let mn = Infinity, mx = -Infinity;
+        tl.forEach(p => { if (p.level < mn) mn = p.level; if (p.level > mx) mx = p.level; });
+        if (mn === mx) { mn -= 0.5; mx += 0.5; }
+        const pad = (mx - mn) * 0.12; mn -= pad; mx += pad;
+        const t0 = tl[0].time.getTime(), t1 = tl[tl.length - 1].time.getTime();
+        const X = t => PL + (t - t0) / (t1 - t0) * (W - PL - PR);
+        const Y = v => H - PB - (v - mn) / (mx - mn) * (H - PT - PB);
+        const line = tl.map(p => X(p.time.getTime()).toFixed(1) + ',' + Y(p.level).toFixed(1)).join(' ');
+        const area = PL + ',' + (H - PB) + ' ' + line + ' ' + (W - PR) + ',' + (H - PB);
+        let ax = '';
+        if (mn < 0 && mx > 0) ax += '<line x1="' + PL + '" y1="' + Y(0).toFixed(1) + '" x2="' + (W - PR) +
+          '" y2="' + Y(0).toFixed(1) + '" class="wx-as-tide-ax"/><text x="' + (W - PR) + '" y="' +
+          (Y(0) - 3).toFixed(1) + '" class="wx-as-tide-axl" text-anchor="end">0 平均海平面</text>';
+        const ticks = [];
+        for (let k = 0; k <= 4; k++) {
+          const t = t0 + (t1 - t0) * k / 4;
+          ticks.push('<line x1="' + X(t).toFixed(1) + '" y1="' + PT + '" x2="' + X(t).toFixed(1) +
+            '" y2="' + (H - PB) + '" class="wx-as-tide-tr"/>' +
+            '<text x="' + X(t).toFixed(1) + '" y="' + (H - 6) + '" class="wx-as-tide-tx" text-anchor="' +
+            (k === 0 ? 'start' : (k === 4 ? 'end' : 'middle')) + '">' + asHM(t) + '</text>');
+        }
+        const nowX = X(now);
+        html += '<div class="wx-as-h2">未来 24 小时</div>' +
+          '<svg class="wx-as-tide" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+          ticks.join('') + ax +
+          '<polygon points="' + area + '" class="wx-as-tide-fill"/>' +
+          '<polyline points="' + line + '" class="wx-as-tide-line"/>' +
+          '<line x1="' + nowX.toFixed(1) + '" y1="' + PT + '" x2="' + nowX.toFixed(1) + '" y2="' + (H - PB) +
+          '" class="wx-as-tide-now"/>' +
+          '<text x="' + nowX.toFixed(1) + '" y="' + (PT + 9) + '" class="wx-as-tide-nowt" text-anchor="middle">现在</text>' +
+          '</svg>' +
+          '<div class="wx-as-note">实线是潮位曲线，虚线是「现在」。' +
+          '曲线是<b>天文潮</b> —— 不含台风风暴增水和气压效应，所以天文大潮叠上台风时，' +
+          '实际水位会比它高一两米。</div>';
+      }
+
+      /* ③ 高平潮 / 低平潮时刻表 */
+      if (ex.length) {
+        html += '<div class="wx-as-h2">高平潮 · 低平潮</div><div class="wx-as-list">' +
+          ex.slice(0, 6).map(e => {
+            const d = e.time;
+            const day = (new Date(now).getDate() === d.getDate()) ? '' : ((d.getMonth() + 1) + '/' + d.getDate() + ' ');
+            return '<div class="wx-as-row2"><b>' + day + asHM(d) + '</b><span class="wx-as-cols">' +
+              '<i style="color:' + (e.high ? 'var(--accent)' : 'var(--dim)') + '">' +
+              (e.high ? '高平潮' : '低平潮') + '</i><i class="wc-t2">' + e.level.toFixed(2) + ' 米</i>' +
+              '</span></div>';
+          }).join('') + '</div>';
+      }
+
+      /* ④ 大潮 / 小潮 + 这句话很重要：为什么是天文潮 */
+      if (ph) {
+        html += '<div class="wx-as-h2">大潮还是小潮</div>' +
+          '<div class="wx-as-row2"><b>' + ph.label + '</b><span class="wx-as-cols">' +
+          '<i>' + esc(ph.why) + '</i></span></div>' +
+          '<div class="wx-as-note">' + ph.mp.emoji + ' 当前月相 ' + esc(ph.mp.name) +
+          '（照亮 ' + Math.round(ph.mp.illum * 100) + '%）。' +
+          '朔望（新月、满月）时日月引潮力叠加 → <b>大潮</b>，潮差最大；' +
+          '上下弦时互相抵消 → <b>小潮</b>。</div>';
+      }
+
+      /* ⑤ 页脚：必须写清"借站""天文潮""仅供参考" */
+      const dist = rec.km;
+      html += '<div class="wx-as-foot">' +
+        '参考站：<b>' + esc(st.name) + '</b>' + (st.region ? '（' + esc(st.region) + '）' : '') +
+        ' · 离本城约 <b>' + dist + ' km</b>' +
+        (dist > 25 ? '<br>⚠ 这不是本城的站 —— 隔这么远，<b>潮时可能差十几分钟到一小时</b>，潮差也会不同，请只当参考。' : '') +
+        (st.ep && st.ep.length ? '<br>调和常数观测期：' + esc(st.ep[0]) + ' ～ ' + esc(st.ep[1]) + '。' : '') +
+        '<br>这是<b>天文潮</b>：只由日月引潮力算出，<b>不含风暴增水、气压效应和河口径流</b>。' +
+        '台风天实际水位可能比它高一两米。<b>不可用于航海、施工或任何安全决策。</b>' +
+        '<br>' + SRC +
+        '</div>';
+      pane.innerHTML = html;
+    }).catch(function (e) {
+      pane.innerHTML = '<div class="wx-load">潮汐数据没加载出来（离线？）：' + esc(e && e.message) + '</div>';
+    });
   }
 
   /* 图片播放器：雷达 / 卫星 / 降水共用。

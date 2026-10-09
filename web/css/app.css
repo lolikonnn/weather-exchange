@@ -1389,3 +1389,21 @@ body.fullchart .mtabs{visibility:hidden}
   .wx-as-cols .wc-e{width:64px}
 }
 
+/* ── 🌊 潮汐（天文第 7 页，2026-10-09）──
+   曲线用**内联 SVG**，不引 ECharts：这一页只有一个 24 小时序列，
+   为了它去初始化一个图表实例（还要处理 resize、主题、销毁）不值当。
+   ⚠ `preserveAspectRatio="none"` + `viewBox` 让曲线随抽屉宽度拉伸 ——
+     代价是**线宽和字号也会跟着横向拉伸**，所以 stroke 用 `vector-effect:
+     non-scaling-stroke` 抵掉，文字则放在 SVG 外面（下面那排刻度也是 SVG 里的，
+     它们只需要"读得清"，轻微拉伸可接受）。 */
+.wx-as-tide{flex:none;display:block;width:100%;height:104px;margin:2px 0 4px;overflow:visible}
+.wx-as-tide-line{fill:none;stroke:var(--accent);stroke-width:1.8;vector-effect:non-scaling-stroke;
+  stroke-linejoin:round;stroke-linecap:round}
+.wx-as-tide-fill{fill:var(--accent);opacity:.12;stroke:none}
+.wx-as-tide-tr{stroke:var(--line2);stroke-width:1;vector-effect:non-scaling-stroke;opacity:.55}
+.wx-as-tide-ax{stroke:var(--dim2);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke;opacity:.8}
+.wx-as-tide-axl{fill:var(--dim2);font-size:9px;font-family:var(--mono)}
+.wx-as-tide-tx{fill:var(--dim2);font-size:9.5px;font-family:var(--mono)}
+.wx-as-tide-now{stroke:var(--txt-hi);stroke-width:1;stroke-dasharray:2 2;vector-effect:non-scaling-stroke;opacity:.7}
+.wx-as-tide-nowt{fill:var(--txt-hi);font-size:9.5px;font-family:var(--mono);opacity:.85}
+

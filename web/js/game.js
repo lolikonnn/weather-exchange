@@ -107,22 +107,38 @@
     QUAKE_K: 9.981,   // 地震：每高出 M0 一级、按距离衰减后的冲击点数
     TYPHOON_K: 33.269, // 台风：风速/30 × 距离衰减后的冲击点数
     FCST_K: 1.663,     // 预报偏离系数
-    /* ── 天文：月光与流星雨（2026-10-09 加）──
-       使用者问：「现在新添加了天文等模块，那么模拟游戏是否可以加入更多的变量使曲线变化
-       更加夸张具有戏剧性？」——可以，而且**正好补在模型记录在案的那个结构性缺口上**
-       （见上面那段：我们厚腰薄尾、真行情是薄腰厚尾）。
-       为什么这两项适合干这个：它们都是**真实的天文事件**，而且形态天然分两类 ——
-         · 月光   是慢变量（朔望月 29.5 天），给一局一个"这个月的性格"；
-         · 流星雨 极大是**一年只有九次、每次只旺一两夜**的突发事件 ——
-                  这正是"长时间极静 + 偶发暴动"里的那个"暴动"。
-       两项的真值全部来自 astro.js（观星页用的是同一套），**不引入任何新数据源**。 */
-    MOON_K: 3,         // 月光：满月当空压夜间体验，作为慢变量偏置（与 AIR_K 4.99 同量级）
-    METEOR_K: 40,      // 流星雨：最强那一夜（英仙/双子级 + 晴空 + 无月）的冲击点数。
-                       // 比台风（33）还高是有意的：一年只有**九次**、每次只旺一两夜，
-                       // 稀缺性就是它的定价。乘的 metArr 恒在 [0,1]，所以这是个硬上限。
-    METEOR_FLOW: 1.5,  // 极大夜里**成交放大**的倍数上限（事件到达率 ×(1+1.5)=2.5×）——
-                       // "热点天象 → 盘面活跃"的落点，也是唯一能只在这一夜抬高波动率的旋钮
+    /* ── 天文：天文模块的**全部变数**都进来了（2026-10-09）──
+       使用者原话：**「我想明白了模拟游戏要的不是真实而是戏剧性，要刺激」**。
+       所以这一组系数**不再按交易所分布标定，按"好不好看"标定**：
+       天象好的夜要能看见大阳线、流星雨极大要能砸出长针、超级月亮叠大潮要能走出
+       一段像样的趋势。真值仍然是真值（全部来自 astro.js 的解析式，零编造），
+       被放大的只是"这些真事件对盘面的影响"。
+
+       ⚠ 唯一不能破的纪律：任何**累加器**都必须带 `(1-decay)` 权重（见流星雨那段），
+         否则稳态是 `1/(1-decay)`、系数会变成你以为的 66 倍 —— 那是 bug，不是戏剧性。
+       ⚠ 新加进来的通道**一律 0~1 归一**再乘系数，这样"戏剧性"只由系数大小决定，
+         不会出现某个通道因为量纲不同偷偷主导整条曲线。 */
+    MOON_K: 8,          // 月光（满月当空 → 夜空被照亮）
+    METEOR_K: 80,       // 流星雨极大夜（一年九次、每次一两夜）
+    METEOR_FLOW: 2.5,   // 极大夜成交放大（事件到达率 ×3.5）
     METEOR_DECAY: 0.985, // 极大过去后的余波衰减（半衰期约 46 根 ≈ 11.5 小时）
+    SUPER_K: 70,        // 超级月亮（近地点 + 盈凸/满月）：一次**事件型**大冲击
+    GALAXY_K: 22,       // 银心高度（银河能否拍到，夏夜高、冬夜落）
+    STAR_K: 8,          // 头顶亮星/行星数量（此刻星空那页的东西）
+    NIGHT_K: 20,        // 天文夜占比（冬夜长）：**绝对口径**，0.5 = 春秋分
+    SPRING_K: 26,       // 大潮（朔望）—— 潮汐在这一组里只取"大潮/小潮"这个戏剧性最强的量
+    LP_K: 12,           // 城市光污染（1~9 级）：越暗的地方，天象对盘面越"通"
+    Kp_K: 45,           // 地磁暴（NOAA 实测 Kp，只有最近约 7 天有数据，更早的时段为 0）
+    /* ── 戏剧性总闸门 ──
+       `heat` 是上面这些通道的**加权合成（0~2）**，它不去动价格本身，而是去拧三个
+       "放大镜"：成交活跃度、混沌跳跃的**概率**与**幅度**。为什么要这么绕：
+       直接加一个"天象点数量"只会抬高水平；而拧这三个旋钮，能在天象好的夜里
+       做出**成片的、带长针的、连贯的**行情 —— 也就是"刺激"该有的样子。
+       HEAT_FLOW/HEAT_CHAOS 给得比真实大得多，是这一轮有意为之。 */
+    HEAT_FLOW: 3.0,     // 天象热度 → 事件到达率 ×(1+3×heat)（最高 ×7）
+    HEAT_CHAOS_P: 9.0,  // 天象热度 → 混沌跳跃概率 ×(1+9×heat)
+    HEAT_CHAOS_K: 1.5,  // 天象热度 → 混沌跳跃幅度 ×(1+1.5×heat)
+    HEAT_SPIKE: 6.0,    // 天象热度 → 插针概率 ×(1+6×heat)
     CITY_AMP_A: 0.19,  // 城市 → 波动放大倍数的幂次（见 cityAmp）
     CITY_K: 0.8389,     // 归一常数：让 dishScale = 1.0（地级市）那档的 cityAmp = 1.0
     /* ── 天气 → 指数（这两项决定"指数在说什么"）──
@@ -338,13 +354,18 @@
      基准仍然是 BASE = 1000。 */
 
 
-  /* ── 四个「真数据」压力源：空气质量 / 地震 / 台风 / 预报偏离 ──
-     这四个都是群里点名要的，而且**每一项都接了真实数据源**，没有一个是编的：
+  /* ── 五路「真数据」压力源：空气质量 / 地震 / 台风 / 预报偏离 / **天文家族** ──
+     前四个都是群里点名要的，第五路是 2026-10-09 那一轮加的
+     （使用者原话：「模拟游戏要的不是真实而是戏剧性，要刺激」）。
+     但**每一路都接真实数据**，没有一个是编的：
        空气  air   真数据：air-quality-api 的逐小时 PM2.5（小时级，按小时对齐回放窗口）
        地震  quake 真数据：USGS 按城市半径筛出的真实事件（时刻 / 震级 / 震源深度）
        台风  typh  真数据：中央气象台台风网的真实路径点（时刻 / 经纬度 / 风速 / 气压）
        预报  fcst  真数据：previous-runs 的「事后实测」减去「提前 24 小时发出的预报」
                      —— 也就是**当时那份预报错了多少**，报得越离谱行情越抖。
+       天文  astro 真数据：astro.js 的解析式（月相 / 月亮距离 / 银心高度 / 亮星与行星
+                     / 天文夜 / 大潮）+ 本站城市光污染表 + NOAA 实测 Kp，**九个通道**。
+                     真值全是真值，被放大的只是"它们对盘面的影响"（见 P 表那一段）。
      但要说清楚**哪部分是真、哪部分是建模**：
        · 事件的**时刻、强度、位置**全部来自上面的真数据源；
        · 「指数往上还是往下」是**建模决策** —— 游戏设定是"指数越高＝当地越糟"
@@ -1212,6 +1233,18 @@
     const metArr = new Array(n).fill(0);       // 流星雨强度（相对 ZHR 150 归一，已含余波衰减）
     const metRaw = new Array(n).fill(0);       // 衰减前的原始强度（给 biasedStart 挑窗口用）
     const metName = new Array(n).fill('');
+    /* ── 天文家族第二批（2026-10-09「戏剧性优先」那一轮）──
+       使用者原话：「模拟游戏要的不是真实而是戏剧性，要刺激」。
+       所以天文模块里**每一页的每一个变数**在这里都有一个通道，全部 0~1 归一。
+       先归一再乘系数（P 表那一段）是关键：这样"戏剧性"只由系数大小决定，
+       不会出现某个通道因为量纲不同偷偷主导整条曲线。 */
+    const supArr   = new Array(n).fill(0);   // 超级月亮（近地点 + 近满月）
+    const galArr   = new Array(n).fill(0);   // 银心高度（银河能拍多好）
+    const starArr  = new Array(n).fill(0);   // 头顶亮星 + 行星数量
+    const nightArr = new Array(n).fill(0);   // 天文夜占比（太阳低于 −18° 的比例）
+    const sprArr   = new Array(n).fill(0);   // 大潮（朔望）↔ 小潮（两弦）
+    const lpArr    = new Array(n).fill(0);   // 城市光污染 1~9 级 → 0~1
+    const kpArr    = new Array(n).fill(0);   // 地磁暴（NOAA 实测 Kp / 9）
     if (global.ASTRO && city && city.lat != null && city.lon != null && barT0) {
       const A = global.ASTRO;
       const localMs = (y, md) => new Date(y, md[0] - 1, md[1], 12, 0, 0).getTime();
@@ -1267,6 +1300,96 @@
         acc = acc * P.METEOR_DECAY + metArr[k] * (1 - P.METEOR_DECAY);
         metArr[k] = acc;
       }
+
+      /* ── 第二批天文通道：还是同一把 ASTRO 解析式，**零新数据源** ──
+         归一口径都写在这儿，以后改系数不用回头猜量纲：
+         · 超级月亮 — moonDistance 近地点 356 400 / 远地点 406 700 km。
+           (406700−d)/50300 取 **3 次方**：只有真贴近近地点才算"超级"，
+           否则一年里四五个月都在 0.5 以上，稀缺性就没了。
+           不是满月的近地点只是"大弦月"，肉眼没戏 → illum<0.9 打 0.25 折。
+         · 银心高度 — 银心 RA 17h45m ≈ 266.4°、Dec −29.01°（asSky 里也是这么内联的），
+           高度 / 60° 裁到 [0,1]。
+         · 星空热闹度 — brightStars(…,8°) 个数 / 12 + 可见行星（高度>8°）数 / 5。
+         · 天文夜占比 — 一根 K 线（15 分钟）切 5 段采样 sunAlt < −18° 的比例。
+         · 大潮 — |cos(π·age/14.765)|：age=0（朔）与 14.77（望）得 1、7.38（弦）得 0，
+           正好是"朔望大潮、两弦小潮"。
+         · 光污染 — extra.lp 是 1~9 级（async，取数阶段就取好塞进来），(v−1)/8。
+         · 地磁暴 — extra.kp 是 [{t, kp}]（NOAA 只有最近约 7 天），时间最近邻、kp/9。 */
+      const GC_RA = 266.4, GC_DEC = -29.01;
+      const kpAt = (function () {
+        const arr = (extra && extra.kp && extra.kp.length) ? extra.kp.slice() : null;
+        if (!arr) return function () { return 0; };
+        arr.sort(function (a, b) { return a.t - b.t; });
+        return function (t) {
+          /* ⚠ 数据窗口之外必须返回 **0**，不能"夹到首/末值"。
+             第一版写成 `t <= arr[0].t → arr[0].kp`，而 NOAA 只有最近约 7 天的 Kp，
+             一局有 37 天 —— 于是**前面 30 天全被安上了第一格那个 Kp**，
+             探针一眼看穿：地磁暴项 p50 与 max 都是 5.00（= Kp 1.0 × 5），
+             整条通道变成了一个编出来的常数。没有观测就是没有。 */
+          if (t < arr[0].t || t > arr[arr.length - 1].t) return 0;
+          const last = arr[arr.length - 1];
+          let lo = 0, hi = arr.length - 1;
+          while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (arr[mid].t <= t) lo = mid; else hi = mid; }
+          /* ⚠ 最近邻而不是线性插值：Kp 是**三小时一格**的等级量，
+             插值会造出 5.5 这种并不存在的等级，也会把一场 7 级暴抹成缓坡。 */
+          const pick = (t - arr[lo].t) <= (arr[hi].t - t) ? arr[lo] : arr[hi];
+          return Math.max(0, Math.min(1, pick.kp / 9));
+        };
+      })();
+      /* 光污染是"这座城市"的属性（整局不变），所以只铺一个常数。
+         ⚠ `LP.of()` 返回的是**记录**不是数字：{z:'7a', zMin, zMax, …}，
+           `z` 的**首位数字**才是 1~9 级。直接 `+(extra.lp)` 会得 NaN，
+           而 NaN 一旦进了 bias，整条曲线会全变 NaN —— 所以这里只认得出 1~9 才铺。 */
+      if (extra && extra.lp) {
+        const g = parseInt(String(extra.lp.z || ''), 10);
+        if (g >= 1 && g <= 9) for (let k = 0; k < n; k++) lpArr[k] = (g - 1) / 8;
+      }
+      for (let k = 0; k < n; k++) {
+        const t = barT0 + k * BAR_MS;
+        const ph2 = A.moonPhase(t);
+        const il2 = ph2.illum || 0;
+        const md = A.moonDistance ? A.moonDistance(t) : null;
+        if (md) {
+          const near = Math.max(0, Math.min(1, (406700 - md) / (406700 - 356400)));
+          /* 4 次方而不是 3 次方：月亮每 27.5 天就走一趟近地点，3 次方会让
+             "近地点"占掉大半个月，只有 4 次方才把它压成"真的贴上去那几天"。 */
+          supArr[k] = Math.pow(near, 4) * (il2 >= 0.9 ? 1 : 0.2);
+        }
+        const gc = A.azOf ? A.azOf(GC_RA, GC_DEC, t, city.lat, city.lon) : null;
+        galArr[k] = gc ? Math.max(0, Math.min(1, (gc.alt || 0) / 60)) : 0;
+        const bs = A.brightStars ? A.brightStars(t, city.lat, city.lon, 8) : [];
+        const pl = A.planets ? A.planets(t, city.lat, city.lon) : [];
+        let nPl = 0;
+        for (const p of pl) if (p && ((p.up != null && p.up) || (p.alt != null && p.alt > 8))) nPl++;
+        /* ⚠ 分母别给太小：第一版用 /12 与 /5，厦门这种纬度**每一根都撞到上限 1.0**，
+           于是"星空点数" 8 局里 min = p50 = max = 3.00 —— 一个常数通道。
+           探针里最该抓的就是这种"看着有、其实不动"的项。
+           现在改成**加权和**（亮星 0.6 + 行星 0.4）而不是简单相加，
+           这样两项各自留出余量，通道才会真的随夜变化。 */
+        starArr[k] = Math.max(0, Math.min(1,
+          (bs.length / 20) * 0.6 + (nPl / 6) * 0.4));
+        let darkN = 0;
+        for (let s5 = 0; s5 < 5; s5++) if (A.sunAlt(t + s5 * (BAR_MS / 5), city.lat, city.lon) < -18) darkN++;
+        nightArr[k] = darkN / 5;
+        sprArr[k] = Math.abs(Math.cos(Math.PI * (ph2.age || 0) / 14.765));
+        kpArr[k] = kpAt(t);
+      }
+      /* 「天文夜占比」必须**平滑成季节量**再进模型：逐根的 0/1 是昼夜交替，
+         不是"夜变长了"。不滑的话 nightTerm 每天穿两次阈值，播报会变成
+         "长夜将至 ×37 次一局"（第一版实测就是 37 次）。
+         24 小时（96 根）滑动平均之后它才是"这段日子夜里有多长"。 */
+      {
+        const W24 = 96, half = W24 >> 1;
+        const raw = nightArr.slice();
+        for (let k = 0; k < n; k++) {
+          let s = 0, c = 0;
+          for (let j = k - half; j <= k + half; j++) {
+            const jj = (j < 0) ? 0 : (j >= n ? n - 1 : j);
+            s += raw[jj]; c++;
+          }
+          nightArr[k] = s / c;
+        }
+      }
     }
 
     // ④ 预报偏离：实测气温 − 提前 24 小时发出的预报。报得越离谱，这根 K 线越"意外"。
@@ -1311,7 +1434,8 @@
            流星雨按 8 倍计入 —— 一场英仙座/双子座极大（metRaw ≈ 1）折成 8 分，
            与一记小震（|qArr| ≈ 10）同量级，"挑事件最多那十天"因此也会挑到流星雨夜。 */
         for (let j = 0; j < need; j += 4) {
-          sc += Math.abs(qArr[c + j]) + Math.abs(tArr[c + j]) + metRaw[c + j] * 20;
+          sc += Math.abs(qArr[c + j]) + Math.abs(tArr[c + j]) + metRaw[c + j] * 20 +
+            Math.abs(kpArr[c + j]) * 2;
         }
         if (sc > bestSc) { bestSc = sc; best = c; }
       }
@@ -1343,6 +1467,15 @@
       /* 月光也按**本局窗口中位**居中（跟 cfMed 一个道理）：
          不居中的话，一局刚好落在满月那几天，指数就被整体压低，语义就飘了。 */
       const moMed = median(moonArr.slice(s2, s2 + need));
+      /* 银河高度与天文夜占比也居中，理由同 moMed：它俩有**季节性**
+         （银心夏夜高、冬夜沉；冬夜长、夏夜短）。不居中就会出现
+         "冬天整局偏高 / 夏天整局偏低"的漂移，而我们要的是
+         "这一局里它相对自己算高还是低"。 */
+      const galMed = median(galArr.slice(s2, s2 + need));
+      /* ⚠ 天文夜占比**故意不居中**（不跟 moMed/galMed 一路）：平滑之后它在一局里
+         几乎不变（37 天的夜里长度只差十几分钟），居中等于把它减成一个 0。
+         它天生长得像"这座城市这个季节的性格"，所以按**绝对口径**（0.5 = 春秋分）
+         用 —— 冬夜长就是加分、夏夜短就是减分，跟光污染那项一个待遇。 */
       const series = [];
       const seeds = [];
       const regLine = [];          // 画在副图上的"大盘"（跟主图同一根数）
@@ -1420,9 +1553,32 @@
         const typhTerm = tArr[k2];
         const fcstTerm = fN ? fN[k2] * P.FCST_K : 0;
 
-        /* ⑤ 天文两项（真值，来历见上面那段注释）。 */
-        const moonTerm = -(moonArr[k2] - moMed) * P.MOON_K;
+        /* ⑤ 天文家族：天文模块里的**每一个变数**都进来了
+           （真值来自 astro.js 的解析式 + NOAA 实测，零编造；放大的只是"影响"）。
+           符号统一约定成「**看点多 → 涨**」：月光把夜空照亮是减分，
+           流星雨 / 超级月亮 / 银河 / 星空热闹 / 长夜 / 大潮 / 暗天空 / 地磁暴都是加分。
+           把地磁暴也定成正号是这一轮**有意**的：使用者要的是刺激不是真实，
+           一场 Kp 7 的暴就是"天上的大新闻"，该砸出方向明确的行情。
+
+           ⚠ 慢变量（银河高度、天文夜占比）按**本局窗口中位**居中，事件型的
+             （流星雨、超级月亮）不居中 —— 居中的目的是让"1000 = 天气一般"这个
+             语义稳住；事件本来就该整体抬起来，不该被中位减掉。 */
+        const moonTerm   = -(moonArr[k2] - moMed) * P.MOON_K;
         const meteorTerm = metArr[k2] * P.METEOR_K;
+        const superTerm  = supArr[k2] * P.SUPER_K;
+        const galaxyTerm = (galArr[k2] - galMed) * P.GALAXY_K;
+        const starTerm   = (starArr[k2] - 0.5) * P.STAR_K;
+        const nightTerm  = (nightArr[k2] - 0.5) * P.NIGHT_K;
+        const springTerm = (sprArr[k2] - 0.5) * P.SPRING_K;
+        const lpTerm     = (0.5 - lpArr[k2]) * P.LP_K;
+        const kpTerm     = kpArr[k2] * P.Kp_K;
+        /* 天象热度 skyHeat（0~2）：这一根 K 线"天上的东西有多少"的合成指标。
+           它**不是价格项** —— 它是三个放大镜的旋钮（成交活跃度、混沌跳跃概率、
+           插针概率），所以它不进 bias，只进下面的 HEAT_*。除以 100 是让
+           "所有通道同时拉满"≈2（各项系数绝对值的上限之和 ≈ 206）。 */
+        const skyHeat = (Math.abs(moonTerm) + meteorTerm + superTerm +
+                         Math.abs(galaxyTerm) + Math.abs(starTerm) + Math.abs(nightTerm) +
+                         Math.abs(springTerm) + Math.abs(lpTerm) + kpTerm) / 100;
 
         /* ══ 天气 → 指数 ══
            指数在语义上就是**当地天气的好坏程度**，所以先有一条"基本面"：
@@ -1475,8 +1631,10 @@
            它对应的正是"热点消息 → 成交放大"，也是本模型里唯一能**只在这一夜**
            抬高波动率的旋钮（全局 NOISE_AMP 不能动 —— 那会一次性改掉所有分位，
            就不是"偶发暴动"而是"整体更吵"了）。 */
+        /* 天象热度 skyHeat 还拧**成交活跃度**这一档：天文模块热闹的夜里，
+           盘面本身就该比平时活跃（这就是"热点消息 → 成交放大"的落点）。 */
         const arrival = P.FLOW_RATE * (1 + Math.min(6, flow)) * (1 + calm / 30) *
-          (1 + metArr[k2] * P.METEOR_FLOW);
+          (1 + metArr[k2] * P.METEOR_FLOW) * (1 + skyHeat * P.HEAT_FLOW);
         const nEvents = arrival > 3
           ? Math.floor(arrival) + (Math.random() < (arrival % 1) ? 1 : 0)
           : (Math.random() < arrival ? 1 : 0);               // 泊松近似
@@ -1486,7 +1644,9 @@
              方向由天气与盘面的快分量决定（这就是"天气好 → 买盘多"的落点）；
              幅度用幂律尾巴 —— `pow(rand,3)*4.5` 让它绝大多数很小、偶尔极大。 */
           const bias = (noiseTerm + carry + regFast + dnorm * P.DEW_K + dish + micro
-                        + airTerm + quakeTerm + typhTerm + fcstTerm + moonTerm + meteorTerm) * amp * P.NOISE_AMP;
+                        + airTerm + quakeTerm + typhTerm + fcstTerm
+                        + moonTerm + meteorTerm + superTerm + galaxyTerm + starTerm
+                        + nightTerm + springTerm + lpTerm + kpTerm) * amp * P.NOISE_AMP;
           const mag = BASE * P.EVENT_K * (Math.pow(Math.random(), 3) * 4.5 + 0.05) * amp;
           evSum += (bias >= 0 ? 1 : -1) * mag + bias * 0.35;
         }
@@ -1496,9 +1656,11 @@
         const heat = Math.abs(pxPrev - prevPx) / BASE;
         heatEma = heatEma * 0.94 + heat * 0.06;
         calm = (heat < 0.0008) ? Math.min(60, calm + 1) : 0;
-        if (Math.random() < P.CHAOS_P * (1 + calm / 25) * (1 + heatEma * 400)) {
+        if (Math.random() < P.CHAOS_P * (1 + calm / 25) * (1 + heatEma * 400) *
+                            (1 + skyHeat * P.HEAT_CHAOS_P)) {
           const tailv = Math.pow(Math.random(), 3) * 5.5 + 0.08;
-          evSum += (Math.random() < 0.5 ? -1 : 1) * BASE * P.CHAOS_K * tailv * amp;
+          evSum += (Math.random() < 0.5 ? -1 : 1) * BASE * P.CHAOS_K * tailv * amp *
+                   (1 + skyHeat * P.HEAT_CHAOS_K);
           calm = 0;
         }
         prevPx = pxPrev;
@@ -1546,7 +1708,20 @@
              一个是给探针用（量化"这一局天文有没有戏"）。 */
           moon: +moonArr[k2].toFixed(3),
           meteor: +meteorTerm.toFixed(2),
-          mname: metName[k2] || ''
+          mname: metName[k2] || '',
+          /* 天文第二批也进 seeds：一是给播报用（超级月亮/银心/长夜/地磁暴都要报），
+             二是给探针用（探针要能量出"这一局天文到底有没有戏"）。
+             `sky` 就是天象热度 skyHeat —— 插针那一段是**另一个循环**，
+             拿不到主循环里的 skyHeat 局部变量，只能从 seeds 里取（见 HEAT_SPIKE）。 */
+          super: +superTerm.toFixed(2),
+          galaxy: +galaxyTerm.toFixed(2),
+          stars: +starTerm.toFixed(2),
+          night: +nightTerm.toFixed(2),
+          spring: +springTerm.toFixed(2),
+          lpm: +lpTerm.toFixed(2),
+          kpraw: kpArr[k2],
+          kp: +kpTerm.toFixed(2),
+          sky: +skyHeat.toFixed(3)
         });
       }
       /* ── 立靶子：把多维压力表要用的数据一并算好存进 seeds ──
@@ -1613,7 +1788,8 @@
         const body = Math.abs(c - o);
         let w = body * WICK_K;
         const act = Math.min(3, volOf(seeds[j]) / 4);          // 活跃度 → 约 [0,3]
-        if (Math.random() < P.SPIKE_P * (0.5 + act) * spikeMul()) {
+        if (Math.random() < P.SPIKE_P * (0.5 + act) * spikeMul() *
+                            (1 + (seeds[j].sky || 0) * P.HEAT_SPIKE)) {
           /* 插针幅度：基准 = 价格 × SPIKE_DEPTH ÷ 盘子厚度，再乘一个**幂律尾巴**。
              ⚠ 第一版用 `(0.25 + rand*0.85)` 均匀分布 → 每根针差不多深，
                看着像规律锯齿而不是"突然的针"。
@@ -1997,6 +2173,27 @@
       return { k: 'meteor', t: '🌠 流星雨' + (s.mname ? ' · ' + s.mname : ''),
                v: (s.moon > 0 ? '月光 ' + Math.round(s.moon * 100) + '%' : '无月') +
                   ' · 冲击 +' + n1(s.meteor) };
+    }
+    /* ── 天文家族其余通道的播报（2026-10-09「戏剧性」那一轮）──
+       阈值都取"这一项真的突出"的档位（不是随便 >0），并且一律走 rise()/fall()：
+       同一件事**只播一次**，否则满月那一夜会连播几十根，消息面板就没法看了。 */
+    if (rise('super', 10)) {
+      return { k: 'super', t: '🌕 超级月亮', v: '近地点满月 · 冲击 +' + n1(s.super) };
+    }
+    if (rise('galaxy', 6)) {
+      return { k: 'galaxy', t: '🌌 银心当空', v: '银河最好拍的时段 · 冲击 +' + n1(s.galaxy) };
+    }
+    if (rise('night', 0.3)) {
+      return { k: 'night', t: '🌃 长夜将至', v: '天文夜变长 · 冲击 +' + n1(s.night) };
+    }
+    if (rise('spring', 7)) {
+      return { k: 'spring', t: '🌊 大潮', v: '朔望引得 · 冲击 +' + n1(s.spring) };
+    }
+    /* 地磁暴：Kp 是全世界的同一场暴，所以它是"天上的大新闻"，值得单独报。
+       门槛 0.556 = Kp 5（G1 级小暴）。⚠ 只有最近约 7 天有 NOAA 实测值，
+       更早的时段 kpraw 恒为 0，它永远不会触发 —— 这是不编数据的代价，如实。 */
+    if (rise('kpraw', 0.556)) {
+      return { k: 'kp', t: '🧲 地磁暴', v: 'Kp ' + Math.round(s.kpraw * 9) + ' · 冲击 +' + n1(s.kp) };
     }
     if (Math.abs(s.fcst) >= 6 && Math.abs(prev ? prev.fcst : 0) < 6) {
       return s.fcst > 0
@@ -2867,7 +3064,7 @@
     // 六个源并发取（本地 15 分钟行情 / 同省大盘 / 空气 / 地震 / 台风 / 预报偏离）。
     // 除了本地行情，其余**任何一个拿不到都只是那一项退化成 0**，不影响开局。
     let mn = null, reg = null;
-    const extra = { air: null, quake: null, typh: null, fcst: null };
+    const extra = { air: null, quake: null, typh: null, fcst: null, lp: null, kp: null };
     try {
       const all = await Promise.all([
         API.OpenMeteo.minutely(city.lat, city.lon).catch(() => null),
@@ -2875,10 +3072,17 @@
         API.OpenMeteo.airHistory(city.lat, city.lon).catch(() => null),
         API.OpenMeteo.quakes(city.lat, city.lon).catch(() => null),
         API.OpenMeteo.typhoons().catch(() => null),
-        API.OpenMeteo.previousRuns(city.lat, city.lon).catch(() => null)
+        API.OpenMeteo.previousRuns(city.lat, city.lon).catch(() => null),
+        /* 光污染（本地 JSON + PNG，几乎零成本）与 NOAA 的地磁暴 Kp。
+           ⚠ 两个都必须在这里就 await 好塞进 extra —— `LP.of()` 是 async，
+             而 `pickSeries()` 是**同步**的（它被 try 包着、还要给渲染让路），
+             同步函数里 await 不了，只能提前取。 */
+        (API.LP && API.LP.of) ? API.LP.of(city.id != null ? city.id : '').catch(() => null) : null,
+        (API.SWPC && API.SWPC.kpSeries) ? API.SWPC.kpSeries().catch(() => null) : null
       ]);
       mn = all[0]; reg = all[1];
       extra.air = all[2]; extra.quake = all[3]; extra.typh = all[4]; extra.fcst = all[5];
+      extra.lp = all[6]; extra.kp = all[7];
     } catch (e) { mn = null; reg = null; }
 
     const picked = mn && pickSeries(mn, reg, city, extra);
@@ -3521,8 +3725,9 @@
       '<dt>你在赌一段天气的好坏</dt>' +
       '<dd>系统把 <b>' + cn + '</b> 的天气数据（对流能量、阵风、降水、露点、空气质量）压成一个数字，' +
       '叫 <b>WXI 天气指数</b>，再用它画出一张像股票一样的图。天气变差 → 指数往上走；天气转好 → 指数往下走。' +
-      '盘面还会被几路<b>真实事件</b>推动：地震、台风、预报失准，以及<b>天文</b>——' +
-      '月光（朔望月）与<b>流星雨极大</b>（一年九次、每次只旺一两夜），跟观星页用的是同一份真值。</dd>' +
+      '盘面还会被几路<b>真实事件</b>推动：地震、台风、预报失准，以及<b>一整套天文</b>——' +
+      '月光、流星雨极大、超级月亮、银河中心高度、头顶亮星与行星、天文夜长短、大潮小潮、' +
+      '本城光污染、地磁暴，跟观星页用的是同一份真值（天象越热闹，行情越猛）。</dd>' +
       '<dt>你不是在跟别人对赌</dt>' +
       '<dd>盘面只有你一个人，对手是天气本身。没有庄家，只有你猜得准不准、仓位管得好不好。</dd>' +
       '</dl>' +
