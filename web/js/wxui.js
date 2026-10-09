@@ -1846,13 +1846,20 @@
         html += '<div class="wx-as-h2">未来 3 天（每 3 小时一档）</div><div class="wx-as-kp">' +
           fut.slice(0, 24).map(x => {
             const s2 = A.kpScale(x.kp);
-            return '<i title="' + esc(asHM(x.t) + '  Kp ' + x.kp.toFixed(1) + '  ' + s2.text) +
+            return '<i title="' + esc(asHM(x.t) + '  Kp ' + x.kp.toFixed(1) + '  ' +
+              (s2.g ? s2.g + ' ' : '') + s2.text) +
               '" style="height:' + Math.max(3, Math.round(x.kp / 9 * 100)) + '%;background:' + s2.color +
               (x.kind === 'predicted' ? ';opacity:.5' : '') + '"></i>';
           }).join('') + '</div>' +
           '<div class="wx-as-axis"><span>现在</span><span>+1 天</span><span>+2 天</span><span>+3 天</span></div>' +
+          /* 峰值这一行原来只写文本（"中等地磁暴"），把 G 指数漏了 —— 而头条那行
+             （`kpScale().g`）在 Kp≥5 时是会写「G2 中等地磁暴」的，两处不一致。
+             使用者问「需要把地磁暴指数直接写出来吗」，答案是"要，而且本来就该一致"。
+             顺手把 5 级的对应关系写进页脚，免得只看到一个 G2 不知道有多严重。 */
           '<div class="wx-as-note">未来三天峰值 <b>Kp ' + (peak.kp >= 0 ? peak.kp.toFixed(1) : '--') + '</b>' +
-          '（' + pk.text + '）· 不透明＝实测/估计，半透明＝预报</div>';
+          '（' + (pk.g ? pk.g + ' ' : '') + pk.text + '）· 不透明＝实测/估计，半透明＝预报<br>' +
+          '地磁暴按 Kp 分五级：<b>G1</b>=5 · <b>G2</b>=6 · <b>G3</b>=7 · <b>G4</b>=8 · <b>G5</b>=9。' +
+          'Kp 是<b>全球</b>量，能不能看到极光还要看你头顶那格的概率（下面那段）。</div>';
       }
 
       html += '<div class="wx-as-h2">在你这个纬度看得到吗</div>';
@@ -1897,8 +1904,12 @@
     // 每一条都是"从一个时刻到另一个时刻"的时段；缺一头就显示 --。
     const WIN = [
       ['日出 → 日落', at(se, 'sunrise'), at(se, 'sunset')],
-      ['清晨黄金时刻', at(se, 'blue-end'), at(se, 'golden-end')],
+      /* ⚠ 清晨这两行**必须蓝调在前**：日出前太阳是从 -6° 爬到 -4°（蓝调）、
+         再爬到 +6°（黄金），所以蓝调**早于**黄金；而傍晚正好反过来（黄金先、蓝调后）。
+         原来写成"黄金在前"，于是清晨那两行时间倒着排（06:10 在 06:01 上面），
+         使用者一眼看出来并要求对调。对调后每一块内部都按时间顺序。 */
       ['清晨蓝调时刻', at(se, 'dawn'), at(se, 'blue-end')],
+      ['清晨黄金时刻', at(se, 'blue-end'), at(se, 'golden-end')],
       ['傍晚黄金时刻', at(se, 'golden'), at(se, 'blue')],
       ['傍晚蓝调时刻', at(se, 'blue'), at(se, 'dark')],
       ['天全黑（天文夜）', at(se, 'dark'), at(se, 'dawn')],
