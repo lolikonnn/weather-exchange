@@ -1344,6 +1344,15 @@
       '<i class="wc-rc">' + (sep || '→') + '</i>' +
       '<i class="wc-r2">' + (b == null ? '--' : asHM(b)) + '</i>';
   }
+  /** 「月/日」这种 **用「/」连接的两个数**，同样**以「/」为基准对齐**。
+   *  ⚠ 新规（2026-10-09 使用者原话）：「当『/』连接两个数时，请以『/』为基准对齐」——
+   *    跟箭头「→」「～」那条同源：**对齐不变的连接符那一侧**。
+   *  月份右对齐贴着「/」、日子左对齐贴着「/」，于是 `10/9` 与 `10/10` 的斜杠落在同一列
+   *  （原来整串左对齐时，`10/9` 的斜杠会比 `10/10` 的靠左一个字宽）。
+   *  用在潮汐页两张表、霞页标题、流星雨卡片的活动期。 */
+  function datePair(m, d) {
+    return '<i class="wc-dm">' + m + '</i><i class="wc-ds">/</i><i class="wc-dd">' + d + '</i>';
+  }
   /** 毫秒 → HH:MMZ。空间天气是全球量，报 UTC 比报本地时间更没有歧义。 */
   function asUTC(t) {
     const d = (t instanceof Date) ? t : new Date(t);
@@ -1498,10 +1507,15 @@
         '<div class="wx-as-row">' + '<b>' + asHM(r.t) + '</b>' + asBar(r.sc.score, r.sc.color) +
         '<span style="color:' + r.sc.color + '">' + r.sc.score + ' ' + r.sc.label + '</span>' +
         // 有分层就给「低/中高」，没有就退回总云量 —— 别显示 --/--，那等于什么都没说
-        '<em title="' + (r.low == null ? '总云量' : '低云 / 中高云') + '">云 ' +
+        /* ⚠ 这一列**拆成三格**，按"贴近不变的那一侧"对齐（分隔符「/」是不变的那侧）：
+           原来是一格 `width:52px;text-align:right`，`云 4/78` 比它宽 ⇒ 溢出、右对齐失效，
+           使用者看到的就是"云那一列的云没有纵对齐"。细节见 app.css 里 `.wx-as-cloud` 的注释。 */
+        '<em class="wx-as-cloud" title="' + (r.low == null ? '总云量' : '低云 / 中高云') + '">云 ' +
         (r.low == null
-          ? (r.total == null ? '--' : Math.round(r.total) + '%')
-          : Math.round(r.low) + '/' + (r.high == null ? '--' : Math.round(r.high))) +
+          ? (r.total == null ? '<i class="wc-ct">--</i>'
+            : '<i class="wc-ct">' + Math.round(r.total) + '%</i>')
+          : '<i class="wc-c1">' + Math.round(r.low) + '</i><i class="wc-cc">/</i><i class="wc-c2">' +
+            (r.high == null ? '--' : Math.round(r.high)) + '</i>') +
         '</em></div>').join('') + '</div>';
     }
     /* ── 全年气候（近 10 年）──
@@ -1607,7 +1621,8 @@
       cards.push({
         nm: nm, t: e.t,
         hm: asHM(e.t) ,
-        d: (dd.getMonth() + 1) + '/' + dd.getDate(),
+        // 「月/日」拆开存，渲染时交给 datePair 按「/」对齐（见 datePair 的注释）
+        m: dd.getMonth() + 1, dy: dd.getDate(),
         g: g
       });
     });
@@ -1623,13 +1638,13 @@
       html += '<div class="wx-as-lead">' +
         '<span class="wx-as-big" style="color:' + focus.g.color + '">' + focus.g.score + '</span>' +
         '<span class="wx-as-leadlab"><b>' + esc(focus.nm) + ' ' + esc(focus.g.label) + '</b><br>' +
-        esc(focus.d + ' ' + focus.hm) + ' 前后往西/东边看</span></div>';
+        datePair(focus.m, focus.dy) + ' ' + esc(focus.hm) + ' 前后往西/东边看</span></div>';
       if (focus.g.why.length) html += '<div class="wx-as-note">' + esc(focus.g.why.join(' · ')) + '</div>';
     }
     cards.forEach(cd => {
       const g = cd.g;
       const fire = g.fire ? '<span class="wx-as-fire">🔥 可能烧起来</span>' : '<span class="wx-as-nofire">无火烧云</span>';
-      html += '<div class="wx-as-h2">' + esc(cd.nm) + ' · ' + esc(cd.d + ' ' + cd.hm) + '</div>' +
+      html += '<div class="wx-as-h2">' + esc(cd.nm) + ' · ' + datePair(cd.m, cd.dy) + ' ' + esc(cd.hm) + '</div>' +
         '<div class="wx-as-row">' + (g.score == null ? '<span>数据不足</span>' :
           asBar(g.score, g.color) + '<span style="color:' + g.color + '">' + g.score + ' ' + esc(g.label) + '</span>') +
         fire + '</div>' +
@@ -2075,7 +2090,8 @@
         '　·　' + when + '</div>' +
         '<div class="wx-as-meta">ZHR ' + s.zhr + ' 颗/时（常年参考值）　·　辐射点 ' + esc(s.radiant) +
         '　·　母体 ' + esc(s.parent) + '</div>' +
-        '<div class="wx-as-meta">活动期 ' + s.from[0] + '/' + s.from[1] + ' ～ ' + s.to[0] + '/' + s.to[1] +
+        '<div class="wx-as-meta">活动期 ' + datePair(s.from[0], s.from[1]) + '<i class="wc-rr">～</i>' +
+        datePair(s.to[0], s.to[1]) +
         '　·　极大夜月相 ' + mp.emoji + mp.name + '：' + moonPen + '</div>' +
         '</div>';
     }).join('') + '</div>';
@@ -2214,7 +2230,8 @@
         html += '<div class="wx-as-h2">高平潮 · 低平潮</div><div class="wx-as-list">' +
           ex.slice(0, 8).map(e => {
             const d = e.time;
-            const day = (new Date(now).getDate() === d.getDate()) ? '' : ((d.getMonth() + 1) + '/' + d.getDate() + ' ');
+            const day = (new Date(now).getDate() === d.getDate())
+              ? '' : (datePair(d.getMonth() + 1, d.getDate()) + ' ');
             return '<div class="wx-as-row2"><b>' + day + asHM(d) + '</b><span class="wx-as-cols">' +
               '<i class="wc-tl" style="color:' + (e.high ? 'var(--accent)' : 'var(--dim)') + '">' +
               (e.high ? '高平潮' : '低平潮') + '</i><i class="wc-tv">' + e.level.toFixed(2) + ' 米</i>' +
@@ -2241,7 +2258,7 @@
         const rng = days.map(d => d.mx - d.mn);
         const maxR = Math.max.apply(null, rng);
         html += '<div class="wx-as-h2">未来 7 天</div><div class="wx-as-list">' +
-          days.map((d, i) => '<div class="wx-as-row2"><b>' + (d.t.getMonth() + 1) + '/' + d.t.getDate() +
+          days.map((d, i) => '<div class="wx-as-row2"><b>' + datePair(d.t.getMonth() + 1, d.t.getDate()) +
             ' ' + (d.hi ? asHM(d.hi) : '—') + '</b><span class="wx-as-cols">' +
             '<i class="wc-tv">潮差 ' + rng[i].toFixed(2) + ' 米</i>' +
             '<i class="wc-tn">' + (rng[i] >= maxR - 0.05 ? '本周最大' : '') + '</i>' +

@@ -1019,6 +1019,19 @@ body{
    内容比它宽时自己长出去，条形图那边跟着缩。 */
 .wx-as-row>span{flex:none;min-width:76px;text-align:right;white-space:nowrap}
 .wx-as-row>em{flex:none;width:52px;text-align:right;color:var(--dim2);font-style:normal}
+/* 「今晚逐小时」最右边那一列「云 低/中高」。
+   ⚠ 使用者 2026-10-09 截图："云那一列的云没有纵对齐"。根因有两层：
+   ① 那一列只有**一格** `width:52px;text-align:right`，而 `云 4/78` 比 52px 还宽 ⇒
+      超出的部分从右边缘溢出去，`text-align:right` 等于失效，整格看起来是**左对齐**；
+   ② 就算宽度够，"4/78" 和 "0/1" 这两个数的宽度本来就不同 —— 右对齐也只对得齐最后一个数字。
+   按本项目定的对齐原则（**贴近不变的那一侧**）：这里不变的是分隔符「/」，
+   所以拆成三格 —— 左边的数右对齐贴着「/」、右边的数左对齐贴着「/」，两个数跨行都能直接比。
+   总云量（没有分层数据时的退路）用中间那格居中，占满同一个 51px 区间。 */
+.wx-as-row>em.wx-as-cloud{width:auto;text-align:left}
+.wx-as-cloud .wc-c1{display:inline-block;width:20px;text-align:right;font-style:normal}
+.wx-as-cloud .wc-cc{display:inline-block;width:7px;text-align:center;color:var(--dim2);font-style:normal}
+.wx-as-cloud .wc-c2{display:inline-block;width:24px;text-align:left;font-style:normal}
+.wx-as-cloud .wc-ct{display:inline-block;width:51px;text-align:center;font-style:normal}
 .wx-as-bar{flex:1 1 auto;display:block;height:9px;background:var(--panel3);border-radius:2px;overflow:hidden}
 .wx-as-bar>b{display:block;height:100%;border-radius:2px}
 
@@ -1436,6 +1449,15 @@ body.fullchart .mtabs{visibility:hidden}
 .wx-as-cols .wc-r2{display:inline-block;width:40px;text-align:left}
 /* 同一行里有多个窗口时的分隔符（`a→b · c→d`），跟箭头同色 */
 .wx-as-cols .wc-rs{display:inline-block;width:14px;text-align:center;color:var(--dim2)}
+/* 「/」连接的两个数：**以「/」为基准对齐**（2026-10-09 新规，跟箭头那条同源）。
+   月份右对齐贴着「/」、日子左对齐贴着「/」⇒ `10/9` 与 `10/10` 的斜杠落在同一列。
+   ⚠ 这里用 **px 定宽而不是 `ch`**：用它的地方（潮汐两张表的日期列、霞页标题、
+   流星雨卡片）都是**比例字体**，`ch` 只在等宽字体下才等于一个数字宽。 */
+.wc-dm{display:inline-block;width:15px;text-align:right}
+.wc-ds{display:inline-block;width:7px;text-align:center;color:var(--dim2)}
+.wc-dd{display:inline-block;width:15px;text-align:left}
+/* 两个「月/日」之间的「～」定宽 —— 这样第二个日期的起点也是固定的 */
+.wc-rr{display:inline-block;width:18px;text-align:center;color:var(--dim2)}
 /* ⚠ `display:inline-block` 不是可选的：这三格**有两种用法** ——
    在「日月」页它们是 `.wx-as-cols` 的直接子元素（flex item，宽度天然生效）；
    在「此刻星空」页它们嵌在 `.wc-w` 里的 `<span class="nb">` 内部，那里是**行内上下文**，
