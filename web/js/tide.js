@@ -168,9 +168,60 @@
     return { src: S.db.src, db: S.db.db, lic: S.db.lic, bbox: S.db.bbox, maxKm: S.db.maxCityKm, n: S.db.stations.length };
   }
 
+  /** 分潮振幅（按名字取，单位米）。站表里没有这个分潮就返回 0。 */
+  function ampOf(rec, name) {
+    var db = S.db;
+    if (!db) return 0;
+    var want = -1;
+    for (var i = 0; i < db.names.length; i++) if (db.names[i] === name) { want = i; break; }
+    if (want < 0) return 0;
+    for (var j = 0; j < rec.st.c.length; j++) if (rec.st.c[j][0] === want) return rec.st.c[j][1];
+    return 0;
+  }
+
+  /** 潮汐类型：用**调和常数**算形状因子 F = (K1 + O1) / (M2 + S2)（海洋学通用口径）。
+   *  F < 0.25 半日潮（一天两次高潮、两次低潮，且两次差不多高）
+   *  0.25 ~ 1.5 混合潮，以半日为主（两次高潮不等高，中国沿海多属这一类）
+   *  1.5 ~ 3.0 混合潮，以全日为主       F > 3 全日潮（一天只一次高潮）
+   *  这是**从本站自己的常数算出来的**，不是查表抄的 —— 所以每站都可能不一样。 */
+  function formFactor(rec) {
+    const m2 = ampOf(rec, 'M2'), s2 = ampOf(rec, 'S2');
+    const k1 = ampOf(rec, 'K1'), o1 = ampOf(rec, 'O1');
+    const den = m2 + s2;
+    if (!(den > 0)) return null;
+    const F = (k1 + o1) / den;
+    const kind = F < 0.25 ? '半日潮' : F < 1.5 ? '混合潮（半日为主）'
+      : F < 3.0 ? '混合潮（全日为主）' : '全日潮';
+    const note = F < 0.25 ? '一天两次高潮、两次低潮，两次高度差不多'
+      : F < 1.5 ? '一天两次高潮，但两次不一样高，我国的黄海、东海、南海大多如此'
+        : F < 3.0 ? '两次高潮里有一次明显更高，另一次几乎看不出来' : '一天只有一次明显的高潮';
+    return { F: F, kind: kind, note: note, parts: { M2: m2, S2: s2, K1: k1, O1: o1 } };
+  }
+
+  /** 月亮过中天（上中天＝月亮在子午线上最高时）。用 `moonAlt` 的**极大值**扫出来 ——
+   *  比"方位角过 180°"稳：月亮赤纬会超过纬度，那方位角就跑到正北去了。
+   *  高潮通常出现在月中天前后（差多少是各港口的"潮汐间隙"），所以这个时刻有实用价值。 */
+  function transits(lat, lon, t0) {
+    var A = global.ASTRO;
+    if (!A || !A.moonAlt) return null;
+    var out = [];
+    var step = 4 * 60000, span = 36 * 3600000;
+    var prev2 = null, prev1 = null;
+    for (var t = t0 - 12 * 3600000; t <= t0 + span; t += step) {
+      var a = A.moonAlt(t, lat, lon);
+      if (prev2 != null && prev1 != null) {
+        if (prev1 > prev2 && prev1 >= a) out.push({ t: t - step, alt: prev1, up: true });
+        else if (prev1 < prev2 && prev1 <= a) out.push({ t: t - step, alt: prev1, up: false });
+      }
+      prev2 = prev1; prev1 = a;
+    }
+    return out;
+  }
+
   global.TIDEDATA = {
     load: load, of: of, at: at, curve: curve, extremes: extremes,
     levelAt: levelAt, phase: phase, meta: meta, km: km,
+    ampOf: ampOf, formFactor: formFactor, transits: transits,
     DATUM: DATUM, MAX_KM: MAX_KM
   };
 })(window);

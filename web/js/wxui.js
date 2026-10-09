@@ -1534,7 +1534,7 @@
       '「天文夜」＝太阳低于 -6°、天真正黑透的那一段。<br>' +
       '「全年气候」是<b>近似</b>：拿近 10 年的全天平均云量算的，看不见夜里那一段 —— ' +
       '会<b>低估</b>真正的晴夜数（白天有云、夜里放晴的日子被算掉了）。' +
-      '比"哪个月更值得来"够用，别当精确统计。</div>';
+      '它适合用来比较"哪个月更值得来"。</div>';
     pane.innerHTML = html;
   }
 
@@ -1630,7 +1630,7 @@
     html += '<div class="wx-as-foot">' +
       '<b>这是本站自拟的启发式，不是权威预报。</b>它只看三件事：中高云够不够当"画布"、' +
       '低云会不会把地平线挡死、气溶胶够不够浓。<br>' +
-      '现实里还有太多它看不见的（远处的山、云的具体形状、飞机拉线）—— <b>当参考，别当承诺</b>。</div>';
+      '现实里还有太多它看不见的（远处的山、云的具体形状、飞机拉线）。</div>';
     pane.innerHTML = html;
   }
 
@@ -2087,14 +2087,25 @@
 
     TD.of(c.id != null ? c.id : '', c.lat, c.lon).then(function (rec) {
       if (!rec) {
-        if (sub) sub.textContent = '这一带没有潮汐站';
+        if (sub) sub.textContent = '本城附近没有潮汐站';
+        /* ⚠ 这里原来写的是「潮汐是地方性的东西……所以宁可不显示，也不拿几百公里外的站
+           冒充本地」。使用者一句话打回：**「别再说什么宁可空着这种话了，用户又不是傻子」**。
+           现在改成「说事实 + 给路子」：大潮小潮是全球同一天象（不需要本地站），照常画；
+           再告诉他去哪儿能看到具体的潮位与潮时 —— 不做自我辩解。 */
+        const ph0 = TD.phase(now);
         pane.innerHTML =
           '<div class="wx-as-lead"><span class="wx-as-big">—</span>' +
-          '<span class="wx-as-leadlab"><b>这一带没有潮汐站</b><br>' +
-          '能算潮汐的站只有沿海那 16 个，最近的也在 150 公里以外</span></div>' +
-          '<div class="wx-as-note">潮汐是<b>地方性</b>的东西：同一个海区，隔几十公里潮时就能差半小时。' +
-          '所以宁可不显示，也不拿几百公里外的站冒充本地。</div>' +
-          '<div class="wx-as-foot">' + SRC + '</div>';
+          '<span class="wx-as-leadlab"><b>本城附近没有潮汐站</b><br>' +
+          '潮汐数据只覆盖沿海：全国 16 个站，都在离海 150 公里以内</span></div>' +
+          (ph0 ? '<div class="wx-as-h2">天文大潮是全球同一天象</div>' +
+            '<div class="wx-as-row2"><b>' + ph0.label + '</b><span class="wx-as-cols"><i>' +
+            esc(ph0.why) + '</i></span></div>' +
+            '<div class="wx-as-note">' + ph0.mp.emoji + ' 当前月相 ' + esc(ph0.mp.name) +
+            '（照亮 ' + Math.round(ph0.mp.illum * 100) + '%）。' +
+            '朔望（新月、满月）时日月引潮力叠加 → <b>大潮</b>；上下弦互相抵消 → <b>小潮</b>。' +
+            '想看具体水位和潮时，把城市切到沿海的就行。</div>' : '') +
+          '<div class="wx-as-foot">有潮汐站的城市举例：厦门 · 大连 · 海口 · 北海 · 连云港 · 日照 · ' +
+          '汕尾 · 香港 · 澳门 · 高雄。<br>' + SRC + '</div>';
         return;
       }
       const st = rec.st;
@@ -2167,7 +2178,7 @@
       /* ③ 高平潮 / 低平潮时刻表 */
       if (ex.length) {
         html += '<div class="wx-as-h2">高平潮 · 低平潮</div><div class="wx-as-list">' +
-          ex.slice(0, 6).map(e => {
+          ex.slice(0, 8).map(e => {
             const d = e.time;
             const day = (new Date(now).getDate() === d.getDate()) ? '' : ((d.getMonth() + 1) + '/' + d.getDate() + ' ');
             return '<div class="wx-as-row2"><b>' + day + asHM(d) + '</b><span class="wx-as-cols">' +
@@ -2175,6 +2186,78 @@
               (e.high ? '高平潮' : '低平潮') + '</i><i class="wc-t2">' + e.level.toFixed(2) + ' 米</i>' +
               '</span></div>';
           }).join('') + '</div>';
+      }
+
+      /* ④ 未来 7 天：每天一行（第一次高潮时刻 + 当天潮差）—— 使用者说"东西有点少"，
+         这一块是补的第一样：把视角从"今天"拉到"这一周"，能看出潮差怎么随朔望起落。 */
+      const ex7 = TD.extremes(rec, now, now + 7 * 86400000) || [];
+      if (ex7.length) {
+        const days = [], seen = {};
+        ex7.forEach(e => {
+          const k = e.time.getFullYear() + '-' + e.time.getMonth() + '-' + e.time.getDate();
+          if (!seen[k]) {
+            seen[k] = { t: new Date(e.time.getFullYear(), e.time.getMonth(), e.time.getDate()), hi: null, mx: -99, mn: 99 };
+            days.push(seen[k]);
+          }
+          const d = seen[k];
+          if (e.high && !d.hi) d.hi = e.time;
+          if (e.level > d.mx) d.mx = e.level;
+          if (e.level < d.mn) d.mn = e.level;
+        });
+        const rng = days.map(d => d.mx - d.mn);
+        const maxR = Math.max.apply(null, rng);
+        html += '<div class="wx-as-h2">未来 7 天</div><div class="wx-as-list">' +
+          days.map((d, i) => '<div class="wx-as-row2"><b>' + (d.t.getMonth() + 1) + '/' + d.t.getDate() +
+            '　' + (d.hi ? asHM(d.hi) + ' 首次高潮' : '—') + '</b><span class="wx-as-cols">' +
+            '<i class="wc-t2">潮差 ' + rng[i].toFixed(2) + ' 米</i>' +
+            (rng[i] >= maxR - 0.05 ? '<i style="color:var(--accent)">本周最大</i>' : '') +
+            '</span></div>').join('') + '</div>' +
+          '<div class="wx-as-note">「潮差」＝当天最高减最低。高潮时刻每天比前一天<b>晚约 50 分钟</b>' +
+          '（月亮每天晚约 50 分钟回到同一位置），潮差则随朔望起落 —— 朔望那几天最大。</div>';
+      }
+
+      /* ⑤ 潮汐类型 + 月亮过中天 + 本站潮汐间隙
+         这三样都是**从调和常数/本地几何算出来的**，不是抄的：
+         · 形状因子 F=(K1+O1)/(M2+S2) 决定这个港是半日潮还是全日潮；
+         · 月亮上中天用 moonAlt 的极大值扫出来；
+         · 高潮间隙＝高潮时刻减去最近一次上中天（对太阴半日 12h25m 取模）—— 这就是
+           各港口不同的"潮汐间隙"，也是"为什么这个地方的高潮在月中天之后几小时"。 */
+      const ff = TD.formFactor(rec);
+      const tr = TD.transits(c.lat, c.lon, now);
+      const ups = tr ? tr.filter(x => x.up) : [];
+      if (ff || ups.length) {
+        html += '<div class="wx-as-h2">这里是什么潮</div>';
+        if (ff) {
+          html += '<div class="wx-as-row2"><b>' + esc(ff.kind) + '</b><span class="wx-as-cols">' +
+            '<i class="wc-t2">F = ' + ff.F.toFixed(2) + '</i></span></div>' +
+            '<div class="wx-as-note">' + esc(ff.note) + '。' +
+            '形状因子 <b>F = (K1 + O1) ÷ (M2 + S2)</b> ＝ ' +
+            '(' + ff.parts.K1.toFixed(2) + ' + ' + ff.parts.O1.toFixed(2) + ') ÷ (' +
+            ff.parts.M2.toFixed(2) + ' + ' + ff.parts.S2.toFixed(2) + ')，' +
+            '用本站自己的分潮振幅算的 —— F < 0.25 半日潮、0.25~1.5 混合潮、> 3 全日潮。</div>';
+        }
+        const upNext = ups.filter(x => x.t >= now - 3600000).slice(0, 2);
+        const lags = [];
+        (ex || []).forEach(e => {
+          if (!e.high) return;
+          let best = null;
+          ups.forEach(x => {
+            const d = (e.time.getTime() - x.t) / 60000;
+            if (d >= -30 && (best == null || d < best)) best = d;
+          });
+          if (best != null) lags.push(((best % 745) + 745) % 745);
+        });
+        lags.sort((a, b) => a - b);
+        const lag = lags.length ? lags[Math.floor(lags.length / 2)] : null;
+        if (upNext.length) {
+          html += '<div class="wx-as-row2"><b>月亮上中天</b><span class="wx-as-cols">' +
+            upNext.map(x => '<i class="wc-t2">' + asHM(x.t) + '</i>').join('') +
+            (lag != null ? '<i style="color:var(--accent)">高潮在它之后约 ' + Math.floor(lag / 60) + ' 小时 ' +
+              pad2(Math.round(lag % 60)) + ' 分</i>' : '') + '</span></div>' +
+            '<div class="wx-as-note">月亮过中天（升到最高）时引潮力最强，但海水要过一会儿才涨到顶 —— ' +
+            '这个"过一会儿"就是各港口不同的<b>高潮间隙</b>，上面那个数是拿本站未来几次高潮' +
+            '与月中天配对算出来的。下中天（月亮在正对面）也会带来一次高潮。</div>';
+        }
       }
 
       /* ④ 大潮 / 小潮 + 这句话很重要：为什么是天文潮 */

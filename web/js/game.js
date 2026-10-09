@@ -3703,7 +3703,7 @@
       '速度是"每秒推进多少天气时间"，所以跟 K 线周期无关 —— 挑 1 分钟只是看得更细，不会玩得更久。</li>' +
       '<li><b>中途退出不会作废</b>：选「保留进度」下次回来接着玩，而且你不在的时候<b>行情照走</b>。</li>' +
       '</ul>' +
-      '<p class="dim" style="font-size:12px">纯娱乐，和真实气象服务无关，也别拿这套路去真赌天气。</p>' +
+      '<p class="dim" style="font-size:12px">纯娱乐：价格波动是模拟的，和真实气象服务无关。</p>' +
       '<div class="gg-btns"><button class="gg-long" id="ggAgain">开始操盘</button>' +
       '<button class="gg-short" id="ggQuit">算了</button></div>' +
       '</div>');
@@ -3772,8 +3772,8 @@
       '结束的话这一局的进度就清掉了。</dd>' +
       '</dl>' +
 
-      '<p class="gg-guide-warn"><b>先说清楚：</b>这里用的是真实气象数据，但价格波动是模拟出来的，' +
-      '和真实气象服务没有任何关系。它是个看图下注的小游戏，不是投资工具，也别拿这套路去真赌天气。</p>' +
+      '<p class="gg-guide-warn">这里用的是真实气象数据，但价格波动是模拟出来的，' +
+      '和真实气象服务没有任何关系 —— 它是个看图下注的小游戏，不是投资工具。</p>' +
 
       '</div>' +
       '<div class="gg-btns"><button class="gg-long" id="ggGuideOk">看完了</button></div>' +
