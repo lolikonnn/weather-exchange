@@ -260,6 +260,10 @@
      气温有昼夜循环和季节趋势，抱着不动就能赢，盘感无从谈起。
      现在拿**对流**当波动源：CAPE 能从 0 冲到 5000、阵风能从 2 冲到 60 m/s、
      降水绝大多数时刻是 0。打雷下雨 = 拉升，天气转好 = 回落。
+     除了天气，还有四路真数据压力源（地震 / 台风 / 预报偏离 / 空气质量），
+     以及 2026-10-09 加进来的**天文两项**：月光（朔望月慢变量）与**流星雨极大**
+     （一年九次、每次只旺一两夜）—— 真值同样来自 astro.js，观星页用的是同一套，
+     没有引入新数据源。天文事件是模型里"偶发暴动"那一半。
      数据是 Open-Meteo 的 minutely_15（15 分钟一个点，92 天历史），
      先白送 1 周（7 天）历史 K 线（只看不交易），从第 8 天开始交易 30 天 = 2880 根 15 分钟 K 线；
      K 线周期可在 1/5/15/30/60/240/1440 分钟（1 分 / 5 分 / 15 分 / 30 分 / 1 时 / 4 时 / 1 日）之间切。
@@ -723,8 +727,8 @@ window.__TJS_LOCAL__ = /^(127\.0\.0\.1|localhost|\[::1\]|tjs\.local)$/.test(loca
 <script src="js/chart.js?v=a022e87e"></script>
 <script src="js/weather.js?v=efe47d62"></script>
 <script src="js/astro.js?v=cb2e6291"></script>
-<script src="js/wxui.js?v=41ac6ea7"></script>
-<script src="js/app.js?v=5cb2b71b"></script>
-<script src="js/game.js?v=3f1686fa"></script>
+<script src="js/wxui.js?v=c5e1a29a"></script>
+<script src="js/app.js?v=74706d53"></script>
+<script src="js/game.js?v=9465565e"></script>
 </body>
 </html>

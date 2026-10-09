@@ -46,6 +46,19 @@
    ⑥ **只画最近一屏**。一局 672 根（15 分钟档、7 天），全塞进 1300px 的话一根才 1.9px，
       蜡烛会糊成一条线。所以按容器宽度算可视根数并跟着行情自动滑动 ——
       真实的操盘软件也是这么做的。
+
+   ⑦ **天文变量：月光 + 流星雨**（2026-10-09 加）。
+      使用者问「现在新添加了天文等模块，那么模拟游戏是否可以加入更多的变量使曲线变化
+      更加夸张具有戏剧性？」——可以，而且正好补在这个模型记录在案的那条缺口上：
+      我们的分布是"厚腰薄尾"，而真行情是"薄腰厚尾"（长时间极静 + 偶发暴动）。
+      天文事件天然就是**偶发暴动**：
+        · 月光   是慢变量（朔望月 29.5 天）→ 给一局一个"这个月的性格"；
+        · 流星雨 极大一年只有**九次**、每次只旺一两夜 → 真正的突发事件。
+      真值全部来自 `astro.js`（观星页用的是同一套），**不引入任何新数据源**：
+      月相与月亮高度是解析式；流星雨用那张 IMO 九场表 + 三个真实可见度因子
+      （天文夜 / 晴空 / 无月）。**辐射点高度不建模** —— 表里只有星座名、没有赤经赤纬，
+      凭空补一组坐标就是编数据（真实流量还要乘 sin(辐射点高度)，这里拿天文夜近似，
+      是保守而不是造假）。效果量化见 `tools/probe_astro.js`。
 */
 (function (global) {
   'use strict';
@@ -94,6 +107,22 @@
     QUAKE_K: 9.981,   // 地震：每高出 M0 一级、按距离衰减后的冲击点数
     TYPHOON_K: 33.269, // 台风：风速/30 × 距离衰减后的冲击点数
     FCST_K: 1.663,     // 预报偏离系数
+    /* ── 天文：月光与流星雨（2026-10-09 加）──
+       使用者问：「现在新添加了天文等模块，那么模拟游戏是否可以加入更多的变量使曲线变化
+       更加夸张具有戏剧性？」——可以，而且**正好补在模型记录在案的那个结构性缺口上**
+       （见上面那段：我们厚腰薄尾、真行情是薄腰厚尾）。
+       为什么这两项适合干这个：它们都是**真实的天文事件**，而且形态天然分两类 ——
+         · 月光   是慢变量（朔望月 29.5 天），给一局一个"这个月的性格"；
+         · 流星雨 极大是**一年只有九次、每次只旺一两夜**的突发事件 ——
+                  这正是"长时间极静 + 偶发暴动"里的那个"暴动"。
+       两项的真值全部来自 astro.js（观星页用的是同一套），**不引入任何新数据源**。 */
+    MOON_K: 3,         // 月光：满月当空压夜间体验，作为慢变量偏置（与 AIR_K 4.99 同量级）
+    METEOR_K: 40,      // 流星雨：最强那一夜（英仙/双子级 + 晴空 + 无月）的冲击点数。
+                       // 比台风（33）还高是有意的：一年只有**九次**、每次只旺一两夜，
+                       // 稀缺性就是它的定价。乘的 metArr 恒在 [0,1]，所以这是个硬上限。
+    METEOR_FLOW: 1.5,  // 极大夜里**成交放大**的倍数上限（事件到达率 ×(1+1.5)=2.5×）——
+                       // "热点天象 → 盘面活跃"的落点，也是唯一能只在这一夜抬高波动率的旋钮
+    METEOR_DECAY: 0.985, // 极大过去后的余波衰减（半衰期约 46 根 ≈ 11.5 小时）
     CITY_AMP_A: 0.19,  // 城市 → 波动放大倍数的幂次（见 cityAmp）
     CITY_K: 0.8389,     // 归一常数：让 dishScale = 1.0（地级市）那档的 cityAmp = 1.0
     /* ── 天气 → 指数（这两项决定"指数在说什么"）──
@@ -1169,6 +1198,77 @@
       }
     }
 
+    /* ⑤ 天文：月光与流星雨 —— 真值，全部本地推算、不联网（观星页那同一套 astro.js）
+       ⚠ 口径必须说清楚，别让人以为这是编出来的剧情：
+         · 月光 = 月相照明比 × 月亮是否在地平线上（`ASTRO.moonPhase` / `ASTRO.moonAlt`）。
+         · 流星雨 = `ASTRO.showers` 那张 IMO 九场主要流星雨表（活动期 from/peak/to + ZHR），
+           按峰值附近的高斯包络折成"相对强度"，再乘三个**真实可见度因子**：
+             天文夜（太阳高度 < −18°）、晴空（无降水且不是阴/雾/雨雪）、无月（月亮落下或很细）。
+         · **明确不建模辐射点高度** —— 那张表只有星座名、没有赤经赤纬，
+           凭空补一组坐标就是编数据。真实每小时流量还要乘 sin(辐射点高度)，
+           这里拿"天文夜"当近似：代价是后半夜权重偏低（多数流星雨辐射点后半夜最高），
+           是保守，不是造假。 */
+    const moonArr = new Array(n).fill(0);      // 月光强度 0~1（满月当空 = 1，月亮在地平线下 = 0）
+    const metArr = new Array(n).fill(0);       // 流星雨强度（相对 ZHR 150 归一，已含余波衰减）
+    const metRaw = new Array(n).fill(0);       // 衰减前的原始强度（给 biasedStart 挑窗口用）
+    const metName = new Array(n).fill('');
+    if (global.ASTRO && city && city.lat != null && city.lon != null && barT0) {
+      const A = global.ASTRO;
+      const localMs = (y, md) => new Date(y, md[0] - 1, md[1], 12, 0, 0).getTime();
+      const baseYear = new Date(barT0).getFullYear();
+      const spans = [];
+      for (const sh of (A.showers || [])) {
+        for (const base of [baseYear - 1, baseYear, baseYear + 1]) {
+          /* 活动期可能**跨年**（象限仪座 from 12/28 → peak 1/3 → to 1/12）。
+             所以三端要各自校正：峰值早于起点说明起点在上一年，结束早于峰值说明结束在下一年。 */
+          let from = localMs(base, sh.from), peak = localMs(base, sh.peak), to = localMs(base, sh.to);
+          if (peak < from) peak = localMs(base + 1, sh.peak);
+          if (to < peak) to = localMs(base + 1, sh.to);
+          if (from > peak) from = localMs(base - 1, sh.from);
+          spans.push({ nm: sh.name, zhr: sh.zhr || 10, from: from, peak: peak, to: to });
+        }
+      }
+      for (let k = 0; k < n; k++) {
+        const t = barT0 + k * BAR_MS;
+        const mAlt = A.moonAlt(t, city.lat, city.lon);
+        const illum = A.moonPhase(t).illum || 0;
+        const moonUp = mAlt > 0;
+        moonArr[k] = moonUp ? illum : 0;
+        if (A.sunAlt(t, city.lat, city.lon) >= -18) continue;   // 不是天文夜
+        const wcv = mn.wcode[k] | 0, pv = +(mn.precip[k] || 0);
+        const sky = pv > 0 ? 0 : (wcv <= 1 ? 1 : wcv === 2 ? 0.75 : wcv === 3 ? 0.35 : 0);
+        if (sky <= 0) continue;                                  // 阴/雾/雨雪 → 看不见流星
+        const moonGate = moonUp ? Math.max(0, 1 - illum) : 1;    // 满月当空基本看不到暗流星
+        let best = 0, bestNm = '';
+        for (const sp of spans) {
+          if (t < sp.from || t > sp.to) continue;
+          /* 包络用**固定 σ = 1.2 天**的正态：真实主要流星雨的核心就是一两夜，
+             用"活动期一半 × 0.45"当 σ 会宽到两周（英仙座活动期 7/17~8/24），
+             那样峰值夜和平淡夜差不多高，就没有"突发事件"可言了。
+             只在活动期内非零（`sp.from ~ sp.to`），零点不连续但那是包的边界，无所谓。 */
+          const env = Math.exp(-Math.pow(((t - sp.peak) / 86400000) / 1.2, 2));
+          const v = (sp.zhr / 150) * env;
+          if (v > best) { best = v; bestNm = sp.nm; }
+        }
+        if (best > 0) {
+          metRaw[k] = best * sky * moonGate;
+          metArr[k] = metRaw[k];
+          metName[k] = bestNm;
+        }
+      }
+      /* 余波：极大夜过去后行情还会回味一阵（跟地震那条 "砸一记再衰减" 同一个思路）。
+         ⚠ 乘 `(1 - METEOR_DECAY)` —— 这是把"累加器"变成"加权平均"的关键一步。
+           写成 `acc = acc*decay + metRaw[k]` 的话，输入持续为 1 时稳态是 1/(1-decay) = 66，
+           于是 METEOR_K 16 会变成 361 点的项，直接把台风（33）和整条模型压过去。
+           乘上之后 metArr 恒在 [0, 1]，`METEOR_K` 就是"最强那一夜的冲击点数"的字面意思。
+           （这个是探针量出来的：第一版 meteor 峰值 361.34。） */
+      let acc = 0;
+      for (let k = 0; k < n; k++) {
+        acc = acc * P.METEOR_DECAY + metArr[k] * (1 - P.METEOR_DECAY);
+        metArr[k] = acc;
+      }
+    }
+
     // ④ 预报偏离：实测气温 − 提前 24 小时发出的预报。报得越离谱，这根 K 线越"意外"。
     let fN = null;
     if (extra && extra.fcst && extra.fcst.time && extra.fcst.time.length) {
@@ -1195,7 +1295,7 @@
        于是这几个压力源常年看不见（实测北京/广州十局里台风项 0 覆盖）。
        这里**不改成"每局必有事件"**（那就成安排好的剧情了，也就没有"你不知道这段是哪年月"），
        而是：一半的局挑"事件分最高"的那十天，另一半纯随机。
-       事件分 = 这一窗里地震项 + 台风项贡献的总量。 */
+       事件分 = 这一窗里地震项 + 台风项 + **流星雨项**贡献的总量。 */
     function biasedStart(s, limit) {
       if (Math.random() >= 0.5) return s;
       let best = -1, bestSc = -1;
@@ -1207,7 +1307,12 @@
         }
         if (!ok) continue;
         let sc = 0;
-        for (let j = 0; j < need; j += 4) sc += Math.abs(qArr[c + j]) + Math.abs(tArr[c + j]);
+        /* 事件分：地震 + 台风 + **流星雨**（2026-10-09 加）。
+           流星雨按 8 倍计入 —— 一场英仙座/双子座极大（metRaw ≈ 1）折成 8 分，
+           与一记小震（|qArr| ≈ 10）同量级，"挑事件最多那十天"因此也会挑到流星雨夜。 */
+        for (let j = 0; j < need; j += 4) {
+          sc += Math.abs(qArr[c + j]) + Math.abs(tArr[c + j]) + metRaw[c + j] * 20;
+        }
         if (sc > bestSc) { bestSc = sc; best = c; }
       }
       // 没找到更好的（或者全都是 0）就退回原来那个
@@ -1235,6 +1340,9 @@
                    "1000 代表天气一般"这个语义就没了。 */
       const cfSlow = ema(cf, 1 - Math.pow(0.5, 1 / 48));
       const cfMed = median(cfSlow.slice(s2, s2 + need));
+      /* 月光也按**本局窗口中位**居中（跟 cfMed 一个道理）：
+         不居中的话，一局刚好落在满月那几天，指数就被整体压低，语义就飘了。 */
+      const moMed = median(moonArr.slice(s2, s2 + need));
       const series = [];
       const seeds = [];
       const regLine = [];          // 画在副图上的"大盘"（跟主图同一根数）
@@ -1312,6 +1420,10 @@
         const typhTerm = tArr[k2];
         const fcstTerm = fN ? fN[k2] * P.FCST_K : 0;
 
+        /* ⑤ 天文两项（真值，来历见上面那段注释）。 */
+        const moonTerm = -(moonArr[k2] - moMed) * P.MOON_K;
+        const meteorTerm = metArr[k2] * P.METEOR_K;
+
         /* ══ 天气 → 指数 ══
            指数在语义上就是**当地天气的好坏程度**，所以先有一条"基本面"：
 
@@ -1359,7 +1471,12 @@
              · **肥尾**：单笔冲击的幅度用幂律尾巴，多数小、偶尔一次清算瀑布。 */
         const flowRet = impactState / BASE;                   // 当前未衰减完的冲击（→ 自激强度）
         flow = flow * P.FLOW_DECAY + Math.abs(flowRet) * 60;
-        const arrival = P.FLOW_RATE * (1 + Math.min(6, flow)) * (1 + calm / 30);
+        /* 流星雨极大夜还会**带热成交**：一年就九次的天象，盘面本身就该比平时活跃。
+           它对应的正是"热点消息 → 成交放大"，也是本模型里唯一能**只在这一夜**
+           抬高波动率的旋钮（全局 NOISE_AMP 不能动 —— 那会一次性改掉所有分位，
+           就不是"偶发暴动"而是"整体更吵"了）。 */
+        const arrival = P.FLOW_RATE * (1 + Math.min(6, flow)) * (1 + calm / 30) *
+          (1 + metArr[k2] * P.METEOR_FLOW);
         const nEvents = arrival > 3
           ? Math.floor(arrival) + (Math.random() < (arrival % 1) ? 1 : 0)
           : (Math.random() < arrival ? 1 : 0);               // 泊松近似
@@ -1369,7 +1486,7 @@
              方向由天气与盘面的快分量决定（这就是"天气好 → 买盘多"的落点）；
              幅度用幂律尾巴 —— `pow(rand,3)*4.5` 让它绝大多数很小、偶尔极大。 */
           const bias = (noiseTerm + carry + regFast + dnorm * P.DEW_K + dish + micro
-                        + airTerm + quakeTerm + typhTerm + fcstTerm) * amp * P.NOISE_AMP;
+                        + airTerm + quakeTerm + typhTerm + fcstTerm + moonTerm + meteorTerm) * amp * P.NOISE_AMP;
           const mag = BASE * P.EVENT_K * (Math.pow(Math.random(), 3) * 4.5 + 0.05) * amp;
           evSum += (bias >= 0 ? 1 : -1) * mag + bias * 0.35;
         }
@@ -1407,7 +1524,7 @@
         series.push({ t: mn.time[k2], c: px });
         // 标定用：把每一项单独记下来。开关关着时只是往一个数组 push 一次，
         // 没有性能影响；开着就能量出"是哪一项在主导波动"（见 tools/probe_components.js）。
-        if (DBG_COMP) dbgComp.push({ noise: noiseTerm * amp, carry: carry * amp, reg: regFast * amp, dew: dnorm * P.DEW_K * amp, dish: dish * amp, micro: micro * amp, air: airTerm * amp, quake: quakeTerm * amp, typh: typhTerm * amp, fcst: fcstTerm * amp, anchor: anchor - BASE, revertPx: pxPrev - anchor });
+        if (DBG_COMP) dbgComp.push({ noise: noiseTerm * amp, carry: carry * amp, reg: regFast * amp, dew: dnorm * P.DEW_K * amp, dish: dish * amp, micro: micro * amp, air: airTerm * amp, quake: quakeTerm * amp, typh: typhTerm * amp, fcst: fcstTerm * amp, moon: moonTerm * amp, meteor: meteorTerm * amp, anchor: anchor - BASE, revertPx: pxPrev - anchor });
         regLine.push(BASE + regFast * 3 + dish * 0.2);
         seeds.push({
           cape: mn.cape[k2] | 0,
@@ -1424,7 +1541,12 @@
           typh: +typhTerm.toFixed(2),
           tname: tName[k2] || '',
           tdist: tDist[k2] || 0,
-          fcst: +fcstTerm.toFixed(2)
+          fcst: +fcstTerm.toFixed(2),
+          /* 天文两项也进 seeds：一个是给播报用（流星雨要报雨名与月光），
+             一个是给探针用（量化"这一局天文有没有戏"）。 */
+          moon: +moonArr[k2].toFixed(3),
+          meteor: +meteorTerm.toFixed(2),
+          mname: metName[k2] || ''
         });
       }
       /* ── 立靶子：把多维压力表要用的数据一并算好存进 seeds ──
@@ -1868,6 +1990,13 @@
     if (rise('typh', 6)) {
       return { k: 'typhoon', t: '🌀 台风' + (s.tname ? ' ' + s.tname : ''),
                v: (s.tdist ? s.tdist + ' 公里外' : '影响中') + ' · 冲击 +' + n1(s.typh) };
+    }
+    /* 流星雨：一年只有九次、每次只旺一两夜，所以排在地震/台风之后、其余之前。
+       播报要报**雨名与月光** —— 这两样决定了它到底看不看得见（无月的极大夜才是真的）。 */
+    if (rise('meteor', 4)) {
+      return { k: 'meteor', t: '🌠 流星雨' + (s.mname ? ' · ' + s.mname : ''),
+               v: (s.moon > 0 ? '月光 ' + Math.round(s.moon * 100) + '%' : '无月') +
+                  ' · 冲击 +' + n1(s.meteor) };
     }
     if (Math.abs(s.fcst) >= 6 && Math.abs(prev ? prev.fcst : 0) < 6) {
       return s.fcst > 0
@@ -3391,7 +3520,9 @@
       '<dl>' +
       '<dt>你在赌一段天气的好坏</dt>' +
       '<dd>系统把 <b>' + cn + '</b> 的天气数据（对流能量、阵风、降水、露点、空气质量）压成一个数字，' +
-      '叫 <b>WXI 天气指数</b>，再用它画出一张像股票一样的图。天气变差 → 指数往上走；天气转好 → 指数往下走。</dd>' +
+      '叫 <b>WXI 天气指数</b>，再用它画出一张像股票一样的图。天气变差 → 指数往上走；天气转好 → 指数往下走。' +
+      '盘面还会被几路<b>真实事件</b>推动：地震、台风、预报失准，以及<b>天文</b>——' +
+      '月光（朔望月）与<b>流星雨极大</b>（一年九次、每次只旺一两夜），跟观星页用的是同一份真值。</dd>' +
       '<dt>你不是在跟别人对赌</dt>' +
       '<dd>盘面只有你一个人，对手是天气本身。没有庄家，只有你猜得准不准、仓位管得好不好。</dd>' +
       '</dl>' +

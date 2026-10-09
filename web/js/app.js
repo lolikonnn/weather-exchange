@@ -40,10 +40,20 @@
     overlay: false,
     geo: null, geoBusy: false, geoErr: '',
     loading: false, timer: null, lastQuoteAt: 0, lastFullAt: 0, tick: 0,
+    /* ── 切城市改成"抢占式"之后要用的三个 ──
+       loadSeq  ：每次 selectCity 领一个号；一次加载里**所有 await 之后**写状态/重绘
+                  之前，都要先问一句"我还是当前这次吗"，不是就静默退出（见 selectCity）。
+       loadingId：当前正在加载的那座城 —— 被抢占时把它扔进 orphans。
+       orphans  ：被抢占、数据还没取完的城市。等当前这座显示完，再在**后台**补完。 */
+    loadSeq: 0, loadingId: null, orphans: [],
     /* 实况自己的节拍（obsAt）与行情轮询的到期时刻（refreshDue）——
        两者解耦，理由见 scheduleRefresh() 上面那段注释 */
     obsAt: 0, refreshDue: 0, polls: 0, beating: false
   };
+
+  /* 每座城此刻"在飞"的那次 loadCity。抢占时靠它判断要不要后台补完 ——
+     已经在飞的就别再发一遍（一次 loadCity 是**七路请求**，额度按 IP 计，重复发会打爆）。 */
+  const inflight = {};
 
   /** 副图口径的中文名（给提示语和叠加按钮的 tooltip 用） */
   const IND_CN = { vol: '温差', precip: '降水', wind: '风', cloud: '云量', air: '空气' };
@@ -454,10 +464,11 @@
     return g;
   }
 
-  /** 等当前那次加载结束再切城市 —— 否则会和启动时的 selectCity 撞上 S.loading 守卫被静默吞掉 */
-  function selectWhenIdle(id, tries) {
-    if (tries == null) tries = 40;
-    if (S.loading && tries > 0) { setTimeout(() => selectWhenIdle(id, tries - 1), 250); return; }
+  /** 切城市。
+      原来是"排队等前一次加载结束再切"（`if (S.loading) { S.pendingCity = id; ... }`），
+      现在 selectCity 自己会**作废**前一次加载（见那里的 loadSeq），所以直接切就行，
+      不用再等。函数名留着是因为开机时定位那条路（`geoP.then`）还在用它。 */
+  function selectWhenIdle(id) {
     if (S.cur && S.cur.id === id) return;
     selectCity(id);
   }
@@ -1269,15 +1280,19 @@
   async function selectCity(id) {
     const c = API.Cities.get(id);
     if (!c) { toast('未找到城市 ' + id); return; }
-    if (S.loading) {
-      // ⚠ 不能直接 `return` 把点击丢掉：额度用尽时一次加载要等六路请求，
-      // 这期间点谁都没反应 —— 使用者以为"点了双江不滚动"，实际是**根本没切过去**。
-      // 记下来，等这次加载收尾时自动补切（见 selectCity 末尾的 finally）。
-      S.pendingCity = id;
-      $('#statusLeft').textContent = '正在加载上一座城市…加载完自动切到 ' + c.name;
-      toast('正在加载上一座城市，稍后自动切到 ' + c.name);
-      return;
-    }
+    /* ── 抢占 ──────────────────────────────────────────────────────────
+       使用者报的：「快速切换收藏城市时，会显示正在加载上一座城市，加载完毕后自动切到
+       xxx。能不能改成我点哪座城市的时候，就先切断之前城市的加载，优先加载我现在点击
+       的这座城市？等到我切到这座城市之后再继续完成被中断的加载」。
+       所以不再排队等（原来 `if (S.loading) { S.pendingCity = id; ... toast(...); return; }`），
+       而是**领一个新号**：上一座城那次加载在它自己的 `await` 之后会发现
+       `seq !== S.loadSeq`，于是只是安静收尾 —— 数据照样进 Store 的城市缓存（下次点它
+       立刻就能出图），但**一个像素的界面都不许写**；它同时被记进 orphans，
+       等当前这座显示完再补完。 */
+    const seq = ++S.loadSeq;
+    const prev = S.loadingId;
+    if (prev && prev !== id) S.orphans.push(prev);
+    S.loadingId = id;
     S.loading = true;
     S.cur = c;
     S.data = null;
@@ -1322,7 +1337,9 @@
     }
 
     try {
-      let d = await API.Store.loadCity(c, (m) => {
+      const loadP = API.Store.loadCity(c, (m) => {
+        // ⚠ 一旦被抢占（使用者又点了一座城），这次加载就没资格动界面了 —— 进度回调也要先问一句。
+        if (seq !== S.loadSeq) return;
         // 已经显示旧数据时，状态栏要**一直**说清楚"你看的是什么时候的数据"。
         // 直接写 m 的话，那句提示只活一个 tick —— loadCity 第一步就把它覆盖成"正在拉取…"了，
         // 用户根本来不及看见自己看的是旧数据。
@@ -1332,6 +1349,16 @@
         // 已经在显示旧数据了，就别再拿加载遮罩把它盖住 —— 那正是要避免的"进去先看一片空"
         if (!snap) Chart.showLoading(m);
       });
+      inflight[id] = loadP;
+      let d;
+      try {
+        d = await loadP;
+      } finally {
+        if (inflight[id] === loadP) delete inflight[id];
+      }
+      /* 这一份是不是**我这次**要的？被抢占的那次到这儿就结束 ——
+         数据已经进了 Store 的城市缓存（下次点它立刻就能显示），但界面归当前那次管。 */
+      if (seq !== S.loadSeq) return;
 
       /* 降级合并：新拿回来的这份**只有气象局那几路是好的**，逐小时/K 线是空的（Open-Meteo 429）。
        * 屏上如果还留着上次那份好曲线，就把**实时的行情栏字段**贴上去、曲线继续用旧的 ——
@@ -1364,6 +1391,7 @@
         const b = await briefOf(c, 600000);
         if (b) S.briefs[id] = b;
       }
+      if (seq !== S.loadSeq) return;      // 这一步也可能等很久，同样要重新确认一次
       Chart.hideLoading();
       renderQuoteHead(); renderOrderbook(); renderTape(); renderChart();
       renderStatus();
@@ -1390,6 +1418,7 @@
         toast('已切换到 ' + c.name + ' ' + c.id);
       }
     } catch (e) {
+      if (seq !== S.loadSeq) return;      // 被抢占的那次连一句报错都不许画
       Chart.hideLoading();
       // 有上次的快照就**留着它** —— 与其把已经画好的行情换成一句报错，不如让用户继续看
       // 上次那份（状态栏说清是什么时候的数据）。2026-10-07 网页端就是栽在这里：
@@ -1404,16 +1433,36 @@
         $('#statusLeft').textContent = '加载失败：' + e.message;
       }
     } finally {
+      // 只有**当前这一次**有资格收尾。被抢占的那次直接走人 ——
+      // 它要是把 S.loading 清成 false，正在加载的这座城就会被心跳/预热当成"闲着了"。
+      if (seq !== S.loadSeq) return;
       S.loading = false;
-      // 加载期间用户点过的城市**排在这儿补切**。
-      // 以前是 `if (S.loading) return;` 直接丢掉 —— 额度用尽时一次加载要等六路请求，
-      // 这期间点谁都没反应（使用者："点双江它根本就没有滚动"，其实压根没切过去）。
-      if (S.pendingCity) {
-        const p = S.pendingCity;
-        S.pendingCity = null;
-        selectCity(p);
-      }
+      S.loadingId = null;
+      drainOrphans();
     }
+  }
+
+  /** 把被抢占的城市在**后台**把数据取完 —— 只暖缓存，不抢视图、不碰状态栏。
+      使用者原话：「等到我切到这座城市之后再继续完成被中断的加载」。
+      ⚠ 已经在飞的那次（inflight）绝不能再发一遍：一次 loadCity 是**七路请求**，
+        额度按 IP 计，同一座城同时发两轮基本就是自己把自己打到 429。
+        所以只有"没人拉了、又没有快照"才补，并且错开 400ms 一座，别一口气全放出去。 */
+  function drainOrphans() {
+    if (!S.orphans.length) return;
+    const ids = S.orphans.slice();
+    S.orphans.length = 0;
+    ids.forEach((oid, i) => {
+      if (!oid || oid === (S.cur && S.cur.id)) return;
+      const c2 = API.Cities.get(oid);
+      if (!c2 || !API.Store.loadCity) return;
+      if (API.Store.peekCity && API.Store.peekCity(c2)) return;   // 已经有快照，显示不缺东西
+      setTimeout(() => {
+        // 这 400ms 里可能又切过去了、或者已经在拉了 —— 那就交给正常路径去拉
+        if (S.loading || (S.cur && S.cur.id === oid) || inflight[oid]) return;
+        if (API.Store.peekCity && API.Store.peekCity(c2)) return;
+        try { API.Store.loadCity(c2, function () { }).catch(function () { }); } catch (e) { }
+      }, 400 * (i + 1));
+    });
   }
 
   /* ═══════════ 行情轮询 ═══════════ */

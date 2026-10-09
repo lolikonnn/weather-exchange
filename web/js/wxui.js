@@ -116,10 +116,20 @@
         splitLine: { lineStyle: { color: TH.line, type: 'dashed' } }
       }
     };
-    // K 线主图带 dataZoom，副图如果不带，两块图可见的区间根本不是同一段。
+    // 主图带 dataZoom，副图如果不带，两块图可见的区间根本不是同一段。
     // 用 Chart.zoomStart() 算同一个 start，主图拖到哪儿副图就跟到哪儿。
-    if (!hourly && CH && view) {
-      const start = CH.zoomStart(xs.length, view);
+    // ⚠ 这里原来写的是 `if (!hourly && CH && view)` —— 把逐小时那两档**排除在外**了。
+    //   那时候主图自己也没有 dataZoom，两边"都没有"看着还算齐；
+    //   后来主图补上了（chart.js 的 optTrend），副图没跟着补，于是：
+    //     K 线：主图有、副图有 → `echarts.connect('tjs')` 能把缩放传过去；
+    //     分时 / 7日：主图有、副图**没有 dataZoom 组件** → 没有东西可接收，
+    //                 主图怎么拉伸副图都纹丝不动（使用者报的正是这一条）。
+    //   逐小时那两档的起点必须取**主图当前的起点**（Chart._mainStart，optTrend 里就是全展 0），
+    //   不能用 zoomStart(xs.length, view) —— view 是"K 线默认显示多少根"，逐小时档给的是 0，
+    //   而 xs 是 24 / 168 个时次，拿它算出来的根本不是主图那一段。
+    if (CH) {
+      const start = hourly ? (CH._mainStart != null ? CH._mainStart : 0)
+        : (view ? CH.zoomStart(xs.length, view) : 0);
       o.dataZoom = [
         { type: 'inside', xAxisIndex: [0], start: start, end: 100, zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
         { type: 'slider', xAxisIndex: [0], start: start, end: 100, show: false }
