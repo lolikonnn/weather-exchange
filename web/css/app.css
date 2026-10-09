@@ -1407,3 +1407,15 @@ body.fullchart .mtabs{visibility:hidden}
 .wx-as-tide-now{stroke:var(--txt-hi);stroke-width:1;stroke-dasharray:2 2;vector-effect:non-scaling-stroke;opacity:.7}
 .wx-as-tide-nowt{fill:var(--txt-hi);font-size:9.5px;font-family:var(--mono);opacity:.85}
 
+/* 潮汐页那两张表的两格。**判据还是"贴近不变的那一侧"**（见上面 .wc-e / .wc-d2 那两段）：
+   潮位写成 `-0.62 米` / `0.73 米` / `-1.05 米`，不变的是末尾那个「米」和等宽字体的对齐，
+   变的是前面的位数与符号 —— 所以**右对齐 + 定宽**。第一版直接复用了 `.wc-t2`
+   （118px、左对齐，那是「日月」页给 `06:16 → 17:45` 那种时段用的），
+   于是 `-0.62` 与 `0.73` 的左缘随位数漂、右缘的「米」也对不齐 —— 使用者一眼看出来。 */
+.wx-as-cols .wc-tv{width:82px;text-align:right}
+/* 「高平潮 / 低平潮」标签定宽（两个都是三个字，但定下来值列的起点才绝对稳） */
+.wx-as-cols .wc-tl{width:52px}
+/* 「本周最大」那一格**每一行都要占位**（没有标记的行也留空）——
+   跟 `.wc-x` 同一个道理：空格子比省掉更整齐，否则后面那格会左右跳。 */
+.wx-as-cols .wc-tn{width:56px;color:var(--accent)}
+

@@ -2182,8 +2182,8 @@
             const d = e.time;
             const day = (new Date(now).getDate() === d.getDate()) ? '' : ((d.getMonth() + 1) + '/' + d.getDate() + ' ');
             return '<div class="wx-as-row2"><b>' + day + asHM(d) + '</b><span class="wx-as-cols">' +
-              '<i style="color:' + (e.high ? 'var(--accent)' : 'var(--dim)') + '">' +
-              (e.high ? '高平潮' : '低平潮') + '</i><i class="wc-t2">' + e.level.toFixed(2) + ' 米</i>' +
+              '<i class="wc-tl" style="color:' + (e.high ? 'var(--accent)' : 'var(--dim)') + '">' +
+              (e.high ? '高平潮' : '低平潮') + '</i><i class="wc-tv">' + e.level.toFixed(2) + ' 米</i>' +
               '</span></div>';
           }).join('') + '</div>';
       }
@@ -2209,8 +2209,8 @@
         html += '<div class="wx-as-h2">未来 7 天</div><div class="wx-as-list">' +
           days.map((d, i) => '<div class="wx-as-row2"><b>' + (d.t.getMonth() + 1) + '/' + d.t.getDate() +
             '　' + (d.hi ? asHM(d.hi) + ' 首次高潮' : '—') + '</b><span class="wx-as-cols">' +
-            '<i class="wc-t2">潮差 ' + rng[i].toFixed(2) + ' 米</i>' +
-            (rng[i] >= maxR - 0.05 ? '<i style="color:var(--accent)">本周最大</i>' : '') +
+            '<i class="wc-tv">潮差 ' + rng[i].toFixed(2) + ' 米</i>' +
+            '<i class="wc-tn">' + (rng[i] >= maxR - 0.05 ? '本周最大' : '') + '</i>' +
             '</span></div>').join('') + '</div>' +
           '<div class="wx-as-note">「潮差」＝当天最高减最低。高潮时刻每天比前一天<b>晚约 50 分钟</b>' +
           '（月亮每天晚约 50 分钟回到同一位置），潮差则随朔望起落 —— 朔望那几天最大。</div>';
