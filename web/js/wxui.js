@@ -804,6 +804,70 @@
        动画走 CSS（`translateX(0 → -50%)`），内容**铺两遍**，滚过一半正好接上开头，所以看不出接缝；
        只有内容确实比可视区宽才铺第二遍（否则静态摆着更清楚，不至于看见同一条并排出现两次）；
        跑的时长按内容实际宽度算（`TICK_PPS` 像素/秒），内容长短不影响观感速度。 */
+    /* ── 一条预警该不该算在「这座城」头上 ──
+       气象局的标题是「<省>[<市>[<区>]]发布…」，所以归属必须**从省往下判**，
+       不能拿市名在全国标题里 indexOf —— 同名的省市县满中国都是：海南（海南省 /
+       青海海南藏族自治州 / 内蒙古乌海市海南区）、吉林（省 / 市）、朝阳（辽宁省 /
+       北京市朝阳区）、通州、鼓楼、西湖……拿名字当全站唯一键一定会串。
+
+       旧写法正是纯子串 `t.indexOf('海南') >= 0` ⇒「海南省发布暴雨蓝色预警」会落到
+       青海省海南藏族自治州头上，而海南省自己的海口/三亚/儋州一条都收不到
+       （真数据实测：海口 0 条、青海海南 3 条；改后 海口 3 条、青海海南 0 条）。
+
+       规则三段：
+       ① 标题开头能认出省 → 必须是**本城的省**，否则直接否掉（同名混淆就死在这一步）；
+       ② 同省内：省名之后点了市/区名 → 名字要落在标题里（区一级连上级市一起认）；
+          只点了省（「海南省发布…」）⇒ 那是**省级预警**，**全省的地级市与区县都该看见** ——
+          这也是为什么海南省的城市以前一条都收不到（标题里根本没有"海口"两个字）。
+          ⚠ 判据看的是**标题里**有没有市/区名，不是"当前在看谁"，所以区县同样收得到省级预警；
+       ③ 标题开头认不出省（少见）→ 退回子串法，但要求经纬度距离 ≤ 400 公里兜底。 */
+    _provs: null,
+    provinces() {
+      if (this._provs) return this._provs;
+      const all = (global.API && API.Cities && API.Cities.all) || [];
+      const set = {};
+      for (let i = 0; i < all.length; i++) if (all[i].prov) set[all[i].prov] = 1;
+      // 按字数从多到少：不然「内蒙古自治区」会被某个短名抢先认掉
+      this._provs = Object.keys(set).sort((a, b) => b.length - a.length);
+      return this._provs;
+    },
+    /** 标题里的省（认不出返回 ''）。 */
+    warnProv(title) {
+      const t = String(title || ''), ps = this.provinces();
+      for (let i = 0; i < ps.length; i++) if (t.indexOf(ps[i]) === 0) return ps[i];
+      for (let i = 0; i < ps.length; i++) {      // 「海南省气象台发布…」这类省名稍微靠前的
+        const j = t.indexOf(ps[i]);
+        if (j > 0 && j <= 6) return ps[i];
+      }
+      return '';
+    },
+    /** 这条预警是不是当前这座城的（w 来自 Weather.warnings()）。 */
+    warnFor(w, cur) {
+      if (!w || !cur || !cur.name) return false;
+      const t = String(w.title || '');
+      const names = [cur.name];
+      if (cur.city && cur.city !== cur.name) names.push(cur.city);
+      if (cur.district && cur.district !== cur.name) names.push(cur.district);
+      const p = this.warnProv(t);
+      if (p && cur.prov) {                       // ⚠ 本城省不明时**不硬否**（定位反查失败会没有 prov）
+        if (p !== cur.prov) return false;        //    那种情况交给下面的 ③ 子串 + 距离兜底
+        const base = t.slice(p.length).split(/发布|气象台/)[0];
+        for (let i = 0; i < names.length; i++) {
+          if (names[i] && base.indexOf(names[i]) >= 0) return true;  // ② 点名了本城/本区
+        }
+        // ② 只点了省 ⇒ 省级预警：**省内所有地级市与区县都算**
+        //   （区县也一样 —— 判据看的是**标题里**有没有市/区名，不是"当前在看谁"）
+        return !/[市州盟区县旗]/.test(base);
+      }
+      for (let i = 0; i < names.length; i++) {
+        const n = names[i];
+        if (!n || n.length < 2 || t.indexOf(n) < 0) continue;
+        if (w.lat == null || cur.lat == null || !isFinite(w.lat) || !isFinite(cur.lat)) return true;
+        return qkDist(cur.lat, cur.lon, w.lat, w.lon) <= 400;        // ③ 兜底：还得够近
+      }
+      return false;
+    },
+
     _tk: { MAX: 10, PPS: 26, PERIOD: 300000 },
     _tkTimer: 0,
     _tkSig: '',
@@ -827,14 +891,7 @@
       // 滚的是**当前正在看的那个城市**的预警（不是定位所在的城市）：
       // 自选里换了哪一座，条子就跟着换。以前按定位筛，人切到别的城市看行情时，
       // 条子还停在"我家门口"，和上面那块行情头说的不是同一个地方。
-      const keys = [];
-      if (cur && cur.name) {
-        keys.push(cur.name);
-        // 在看的是「区 / 定位到的那一块」时把上级市也带上：区一级常常没有自己的预警，
-        // 气象局的标题写的是「广东省广州市发布…」。地级市自己不带上（会串到隔壁）。
-        if ((cur.loc || cur.lev === 3) && cur.city && cur.city !== cur.name) keys.push(cur.city);
-      }
-      if (!keys.length) { hide(); return; }
+      if (!cur || !cur.name) { hide(); return; }
 
       let ws;
       try { ws = await W.warnings(); }
@@ -842,13 +899,8 @@
       if (token !== this._tkSeq) return;          // 这一趟过期了，交给后来那趟
       if (!ws || !ws.length) { hide(); return; }
 
-      // 气象局的预警标题自己就点了地名：「广东省韶关市发布森林火险黄色预警信号」
-      // 「广东省广州市天河区发布暴雨橙色预警信号」—— 所以按地名把标题筛一遍就是"这个区市的预警"，
-      // 不需要额外请求，也不用猜坐标半径（半径法会把隔壁市的预警一起卷进来）。
-      const hit = ws.filter(w => {
-        const t = w.title || '';
-        return keys.some(k => k && k.length >= 2 && t.indexOf(k) >= 0);
-      });
+      // 归属判定见上面 warnFor()：**先认省**，再在同省内认市/区，省级预警全省都算。
+      const hit = ws.filter(w => this.warnFor(w, cur));
       // 这个区市一条都没有 —— 整条收起来（用户选的行为），不留"暂无预警"占位。
       if (!hit.length) { hide(); return; }
 
@@ -859,7 +911,7 @@
       const list = hit.slice(0, this._tk.MAX);
 
       // 数据没变就别重画 —— 重画会把动画打回开头，看着像一直在闪。
-      const sig = keys.join(',') + '|' + ((cur && cur.name) || '') + '|' + hit.length + '|' + list.map(w => w.title).join('~');
+      const sig = (cur.id || '') + '|' + (cur.name || '') + '|' + hit.length + '|' + list.map(w => w.title).join('~');
       if (sig === this._tkSig) {
         // 但**可见性要补上**：上一次可能是被"这个城市没预警"收起来的，
         // 只比签名就 return 的话，条子永远回不来。
