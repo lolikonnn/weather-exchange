@@ -328,7 +328,15 @@ body{
 .tabbar .mini{align-self:center}
 .chart-box{flex:1;min-height:0;position:relative;background:var(--panel)}
 .chart-box.sub{flex:0 0 132px}
-.chart{position:absolute;inset:0}
+.chart{position:absolute;inset:0;z-index:0}
+/* ↑ 那个 z-index:0 不是装饰，是**必须**的：ECharts 的信息框（tooltip）是自己往图表容器里
+   插的一个 div，内联样式写死了 `z-index:9999999`（见 vendor/echarts.min.js）。容器若
+   z-index 是 auto（默认）就不构成层叠上下文，这个 9999999 会跑到**根**层叠上下文里跟
+   抽屉 .drawer(z-index:200) 比大小 —— 于是"点图表弹出信息框、再去点上方功能模块"时
+   抽屉盖不住它，信息框一直浮在最上面（用户报的现象，手机端最容易撞上）。
+   给了 z-index:0 之后 9999999 被关在图表这一层里，抽屉/工具栏/弹窗一律压在它上面。
+   ⚠ 别再删这一行 —— 只靠 JS 的 Chart.hideTips() 不够：ECharts 的 hideTip 动作在某些
+     状态下会变成空操作（探针实测：同一个实例连派两次 hideTip，DOM 的 opacity 还是 1）。 */
 
 /* ───────────────── 盘口 ───────────────── */
 .orderbook{padding:3px 0;flex:none}

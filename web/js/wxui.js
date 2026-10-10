@@ -1250,6 +1250,10 @@
 
     /* 通用开关 */
     open(id) {
+      // 抽屉一开就把图表的信息框收掉。chart.js 里那个"点在图表外面就收"的监听已经能
+      // 覆盖鼠标/触屏的手动点击，这里是给**代码路径**兜底（比如预警 ticker 自己叫开的
+      // 那一句 WXUI.open('wxWarn')），免得信息框盖在抽屉上面。
+      if (global.Chart && global.Chart.hideTips) global.Chart.hideTips();
       const el = document.getElementById(id);
       if (el) el.hidden = false;
       // 不传参：让 openRadar 自己决定（沿用上次的区域，或按当前城市自动定位到单站）。
@@ -1266,6 +1270,7 @@
       if (id === 'wxAstro') this.openAstro();
     },
     close(id) {
+      if (global.Chart && global.Chart.hideTips) global.Chart.hideTips();
       const el = document.getElementById(id);
       if (el) el.hidden = true;
       if (this._timer) { clearInterval(this._timer); this._timer = null; }

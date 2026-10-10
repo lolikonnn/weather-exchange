@@ -819,6 +819,16 @@
       window.addEventListener('resize', U.debounce(() => { main.resize(); sub.resize(); }, 120));
       follow(mainEl, () => main);
       follow(subEl, () => sub);
+      // 点在图表**外面**（顶栏按钮、页签、抽屉、游戏…）就把 tooltip 收掉。
+      // 理由见 hideTips()：触屏上这类事件根本到不了 canvas，ECharts 自己不会收。
+      // 用捕获阶段 —— 抽屉里有些按钮会在自己的 handler 里把 body 整个重画，
+      // 等冒泡到 document 时 e.target 已经脱离文档，closest() 就判断不出来了。
+      const EV = global.PointerEvent ? 'pointerdown' : 'touchstart';
+      document.addEventListener(EV, e => {
+        const t = e.target;
+        if (t && t.closest && t.closest('#mainChart,#subChart')) return;
+        this.hideTips();
+      }, true);
       return this;
     },
     setTheme() { readTheme(); },
@@ -856,7 +866,18 @@
     showLoading(txt) {
       if (main) main.showLoading('default', { text: txt || '加载中', color: C.avg, textColor: '#8b919e', maskColor: 'rgba(14,16,21,.6)', fontSize: 13, spinnerRadius: 9, lineWidth: 2 });
     },
-    hideLoading() { if (main) main.hideLoading(); }
+    hideLoading() { if (main) main.hideLoading(); },
+    /* 把两图的 tooltip 收起来。
+       为什么要专门收：ECharts 的 tooltip 是个 `position:absolute;z-index:9999999` 的
+       div（echarts.min.js 里 dV 那段就是它），而抽屉 .drawer 只有 z-index:200，两者又
+       都直接挂在根层叠上下文里比大小 —— 于是"点图表弹出信息框、再去点顶栏功能按钮"时，
+       抽屉根本盖不住那个信息框，它会一直浮在抽屉上面（用户报的"有概率不会隐藏"）。
+       触屏上点图表外面的事件到不了 canvas，ECharts 不会自己收，只能我们主动收。
+       dispatchAction 在已经隐藏的情况下是空操作，可以放心随便调。 */
+    hideTips() {
+      if (main) main.dispatchAction({ type: 'hideTip' });
+      if (sub) sub.dispatchAction({ type: 'hideTip' });
+    }
   };
 
   global.Chart = Chart;
